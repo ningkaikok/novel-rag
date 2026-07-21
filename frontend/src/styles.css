@@ -1,0 +1,277 @@
+:root {
+  --text: rgba(0, 0, 0, 0.88);
+  --muted: rgba(0, 0, 0, 0.55);
+  --primary: #1677ff;
+  --border: #d9d9d9;
+  --card: #ffffff;
+  --sidebar-bg: #fafafa;
+  --user-bubble: #e6f4ff;
+  --serif: "Songti SC", "STSong", Georgia, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: rgba(255, 255, 255, 0.85);
+    --muted: rgba(255, 255, 255, 0.5);
+    --primary: #4096ff;
+    --border: #303030;
+    --card: #1f1f1f;
+    --sidebar-bg: #1f1f1f;
+    --user-bubble: #111a2c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+
+/* ---------------- 侧边栏 ---------------- */
+.sidebar {
+  background: var(--sidebar-bg) !important;
+  border-right: 1px solid var(--border);
+}
+.sidebar-inner {
+  padding: 1.4rem 1.1rem;
+  height: 100vh;
+  overflow-y: auto;
+}
+.shelf-title {
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  margin: 0 0 0.8rem;
+}
+.section-label {
+  font-size: 1rem;
+  margin: 1.4rem 0 0.6rem;
+  font-weight: 600;
+}
+.book-list {
+  margin-bottom: 0.4rem;
+}
+.book-name {
+  font-size: 0.92rem;
+}
+.settings {
+  margin-top: 1rem;
+}
+.slider-label {
+  font-size: 0.88rem;
+  margin-bottom: 0.2rem;
+}
+.privacy {
+  font-size: 0.78rem !important;
+  margin-top: 1.4rem !important;
+  line-height: 1.6;
+}
+.cloud-warning {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+.cloud-warning .ant-alert-message {
+  font-size: 0.82rem;
+}
+.cloud-warning .ant-alert-description {
+  font-size: 0.76rem;
+}
+
+/* ---------------- 主区 ---------------- */
+.main-wrap {
+  display: flex;
+  justify-content: center;
+}
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1.6rem 2rem 1rem;
+  max-width: 900px;
+  width: 100%;
+  height: 100vh;
+}
+.hero-title {
+  font-family: var(--serif);
+  font-size: 2.4rem;
+  margin: 0;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+.hero-sub {
+  color: var(--muted);
+  margin: 0.2rem 0 1rem;
+}
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+/* 欢迎 & 示例 */
+.welcome-card h3 {
+  margin: 0 0 0.4rem;
+  color: var(--primary);
+  font-family: var(--serif);
+  font-size: 1.2rem;
+}
+.welcome-card p {
+  margin: 0;
+  color: var(--muted);
+}
+.examples {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+/* 消息 */
+.row {
+  display: flex;
+  gap: 0.7rem;
+  margin: 1.1rem 0;
+  align-items: flex-start;
+}
+.row-user {
+  flex-direction: row-reverse;
+}
+.avatar {
+  flex-shrink: 0;
+  background: var(--card) !important;
+}
+.bubble {
+  max-width: 78%;
+}
+.row-user .bubble {
+  background: var(--user-bubble);
+  border-radius: 14px;
+  padding: 0.6rem 0.95rem;
+}
+.content {
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  background: var(--primary);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-start infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 原文出处：一排可点击的引用链接 */
+.sources-links {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sources-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-right: 0.1rem;
+}
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem 0.15rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.source-link:hover {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.source-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.source-popover {
+  max-width: 420px;
+  max-height: 340px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  line-height: 1.75;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+/* 输入区上方的工具栏：上传 + 模型切换 + 隐私状态 */
+.composer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.8rem;
+}
+.model-select-compact {
+  min-width: 150px;
+}
+.privacy-chip {
+  font-size: 0.78rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  cursor: default;
+  white-space: nowrap;
+}
+.privacy-chip.local {
+  color: #389e0d;
+  background: color-mix(in srgb, #389e0d 12%, transparent);
+}
+.privacy-chip.cloud {
+  color: #d46b08;
+  background: color-mix(in srgb, #d46b08 15%, transparent);
+}
+
+/* 输入区 */
+.composer {
+  display: flex;
+  gap: 0.6rem;
+  padding-top: 0.5rem;
+}
+.footer-note {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.6rem 0 0;
+}
+
+/* 移动端 */
+@media (max-width: 720px) {
+  .main {
+    padding: 1rem;
+  }
+  .examples {
+    grid-template-columns: 1fr;
+  }
+  .bubble {
+    max-width: 88%;
+  }
+}

@@ -1,0 +1,7 @@
+chromadb==0.5.23
+posthog==3.7.4
+sentence-transformers==3.3.1
+requests==2.32.3
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
