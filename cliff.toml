@@ -1,0 +1,61 @@
+# git-cliff 配置：按 CLAUDE.md 的规范从 Conventional Commits 生成 CHANGELOG.md
+#
+# 用法：
+#   git cliff -o CHANGELOG.md                        # 重新生成整个文件
+#   git cliff --unreleased --prepend CHANGELOG.md    # 只把未发布的新提交插到开头
+#   git cliff --tag v0.1.0 -o CHANGELOG.md           # 发版时把未发布段落定为某版本
+
+[changelog]
+header = """
+# 更新日志
+
+本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
+版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+条目从用户视角描述改动。
+
+"""
+
+# Keep a Changelog 结构：## [版本] - 日期 / ### 分组 / - 条目
+# 分组名带 <!-- N --> 数字前缀用于排序，输出时用 striptags 去掉。
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [未发布]
+{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}\
+### {{ group | striptags | trim }}
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}**：{% endif %}{{ commit.message | upper_first }}
+{% endfor %}
+{% endfor %}
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+# 不符合 Conventional Commits 的提交直接跳过（本项目早期的中文提交属于这类）
+filter_unconventional = true
+# 只保留下面 commit_parsers 显式声明的类型
+filter_commits = true
+protect_breaking_commits = true
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "newest"
+
+# type → CHANGELOG 分组。skip = true 的类型不进 CHANGELOG。
+# 分组顺序由 <!-- N --> 前缀决定：Added → Changed → Fixed。
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^perf", group = "<!-- 1 -->Changed" },
+  { message = "^refactor", group = "<!-- 1 -->Changed" },
+  { message = "^fix", group = "<!-- 2 -->Fixed" },
+  # 按规范排除：这几类不写进 CHANGELOG
+  { message = "^docs", skip = true },
+  { message = "^style", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^test", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^build", skip = true },
+]
