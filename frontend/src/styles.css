@@ -309,6 +309,86 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* 思考过程：折叠面板，展示检索每一步的真实动作 */
+.thinking-panel {
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--card));
+}
+.thinking-panel .ant-collapse-header {
+  padding: 0.4rem 0.75rem !important;
+  align-items: center !important;
+}
+.thinking-panel .ant-collapse-content-box {
+  padding: 0 0.75rem 0.5rem !important;
+}
+.thinking-panel-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.thinking-panel-count {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+.thinking-steps {
+  margin: 0.1rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: think;
+}
+.thinking-step {
+  counter-increment: think;
+  position: relative;
+  padding: 0.28rem 0 0.28rem 1.5rem;
+  font-size: 0.84rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+/* 序号小圆点 + 连成一条时间线 */
+.thinking-step::before {
+  content: counter(think);
+  position: absolute;
+  left: 0;
+  top: 0.4rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-size: 0.66rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  background: var(--card);
+}
+.thinking-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 0.52rem;
+  top: 1.5rem;
+  bottom: -0.1rem;
+  width: 1px;
+  background: var(--border-strong);
+}
+.thinking-step-name {
+  font-weight: 600;
+  margin-right: 0.5rem;
+  color: var(--accent);
+}
+.thinking-step-detail {
+  color: var(--muted);
+}
+
 /* 原文出处：一行式，序号 + 书名 + 预览，可展开 */
 .sources-list {
   margin-top: 0.95rem;

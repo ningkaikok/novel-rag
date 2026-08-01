@@ -6,6 +6,12 @@ export interface Source {
   text: string;
 }
 
+// 「思考过程」的一步：检索流水线里某个阶段的真实动作
+export interface TraceStep {
+  step: string;
+  detail: string;
+}
+
 export interface SearchResult extends Source {
   match_count: number;
 }
@@ -82,6 +88,7 @@ export async function setModel(model: string): Promise<void> {
 }
 
 interface AskHandlers {
+  onTrace?: (trace: TraceStep[]) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (token: string) => void;
   onDone?: () => void;
@@ -135,6 +142,7 @@ function handleEvent(raw: string, handlers: AskHandlers) {
     else if (line.startsWith("data:")) data += line.slice(5).trim();
   }
   if (!data) return;
-  if (event === "sources") handlers.onSources?.(JSON.parse(data));
+  if (event === "trace") handlers.onTrace?.(JSON.parse(data));
+  else if (event === "sources") handlers.onSources?.(JSON.parse(data));
   else if (event === "token") handlers.onToken?.(JSON.parse(data));
 }

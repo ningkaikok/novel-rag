@@ -1,13 +1,56 @@
 import { memo } from "react";
-import { Avatar, Typography } from "antd";
-import type { Source } from "../api";
+import { Avatar, Collapse, Typography } from "antd";
+import type { Source, TraceStep } from "../api";
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  trace?: TraceStep[];
   streaming?: boolean;
 }
+
+// 「思考过程」折叠面板：展示检索流水线每一步的真实动作。
+// trace 引用在一次回答里不变，memo 掉避免打字机每帧重渲染。
+const Thinking = memo(function Thinking({
+  trace,
+  live,
+}: {
+  trace: TraceStep[];
+  live: boolean;
+}) {
+  return (
+    <Collapse
+      className="thinking-panel"
+      ghost
+      size="small"
+      // 生成中默认展开（让用户看到检索在做什么）；历史消息默认收起。
+      // 只作用于初次挂载，之后用户可自行展开/收起。
+      defaultActiveKey={live ? ["t"] : []}
+      items={[
+        {
+          key: "t",
+          label: (
+            <span className="thinking-panel-label">
+              🧠 思考过程
+              <span className="thinking-panel-count">{trace.length} 步</span>
+            </span>
+          ),
+          children: (
+            <ol className="thinking-steps">
+              {trace.map((s, i) => (
+                <li className="thinking-step" key={i}>
+                  <span className="thinking-step-name">{s.step}</span>
+                  <span className="thinking-step-detail">{s.detail}</span>
+                </li>
+              ))}
+            </ol>
+          ),
+        },
+      ]}
+    />
+  );
+});
 
 // 从文件名式书名里提取简短标题：优先取《》内的内容，否则截断
 function shortName(novel: string): string {
@@ -51,6 +94,9 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         {isUser ? "🧑" : "📖"}
       </Avatar>
       <div className="bubble">
+        {!isUser && msg.trace && msg.trace.length > 0 && (
+          <Thinking trace={msg.trace} live={!!msg.streaming && !msg.content} />
+        )}
         {msg.streaming && !msg.content ? (
           // 正文还没到（模型思考/检索中）：显示跳动的思考指示，而不是空气泡
           <div className="thinking" aria-live="polite">

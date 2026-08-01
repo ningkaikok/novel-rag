@@ -124,6 +124,32 @@ def _find_ending_anchor(conn, novel: str) -> int | None:
     return int(anchor) if anchor is not None else None
 
 
+def _display_title(novel: str) -> str:
+    """把库里的文件名式书名压成用户认得的短标题，如《诡秘之主》。"""
+    titles = _novel_titles(novel)
+    return f"《{titles[0]}》" if titles else novel
+
+
+def _named_via_typo(question: str, novel: str) -> bool:
+    """这本书是靠错字容错匹配上的（而非精确出现在问题里）——用于思考过程里提示'已纠正错字'。"""
+    titles = _novel_titles(novel)
+    exact = any(title in question for title in titles)
+    return (not exact) and any(_fuzzy_contains(question, t) for t in titles)
+
+
+def _structural_kind(question: str) -> str | None:
+    """判断是不是在问书的结构位置：返回 '结局' / '开头' / None。
+
+    与 positional_retrieve 里的词表保持一致，只是这里对外给出可读的类别名。
+    """
+    text = question.strip()
+    if any(w in text for w in ("结局", "结尾", "最后", "最终", "收尾", "大结局", "结束")):
+        return "结局"
+    if any(w in text for w in ("开头", "开篇", "最初", "一开始", "起初", "开始时")):
+        return "开头"
+    return None
+
+
 def _dominant_novels(sources: list["SourceChunk"]) -> list[str]:
     """从已召回的片段里推断问题主要在问哪本书。
 
@@ -327,29 +353,65 @@ class NovelRAG:
 
     def retrieve_hybrid(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
         """统一的两阶段召回：候选池合并后用轻量 RRF 排序，最终取 top-k。"""
-        candidate_k = max(top_k, RECALL_K)
+        sources, _ = self.retrieve_hybrid_traced(question, top_k)
+        return sources
 
-        # 用户明确点了书名（含错字容错）就把三路召回都限定在那本书内，
-        # 否则别的书的片段会挤占 top-k，把模型带偏。
+    def retrieve_hybrid_traced(
+        self, question: str, top_k: int = TOP_K
+    ) -> tuple[list[SourceChunk], list[dict]]:
+        """同 retrieve_hybrid，但额外返回一份「思考过程」trace，供界面展示每一步。
+
+        trace 是一串 {"step", "detail"} —— 用后端已经算出来的真实数据描述每个阶段，
+        不是装饰性动画。前端只负责渲染，不做任何判断。
+        """
+        candidate_k = max(top_k, RECALL_K)
+        trace: list[dict] = []
+
+        # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
         named_novels = self._named_novels(question)
+        structural = _structural_kind(question)  # "结局" / "开头" / None
+        if named_novels:
+            named_desc = "、".join(_display_title(n) for n in named_novels)
+            corrected = [n for n in named_novels if _named_via_typo(question, n)]
+            hint = "（书名有错别字，已自动纠正）" if corrected else ""
+            detail = f"识别到你在问{named_desc}{hint}"
+        else:
+            detail = "未点明书名，稍后根据检索内容自动判断属于哪本书"
+        if structural:
+            detail += f"，且在问「{structural}」这类结构性问题"
+        trace.append({"step": "理解问题", "detail": detail})
+
+        # 阶段二：确定检索范围
+        if named_novels:
+            scope_detail = f"只在{'、'.join(_display_title(n) for n in named_novels)}内检索"
+        else:
+            scope_detail = "在全部书里检索"
+        trace.append({"step": "检索范围", "detail": scope_detail})
+
+        # 阶段三：多路召回
         semantic_sources = self.retrieve(
             question, top_k=candidate_k, only_novels=named_novels
         )
         keyword_sources = self.keyword_retrieve(
             question, top_k=candidate_k, only_novels=named_novels
         )
-
-        # 没点明书名时，用前两路召回推断问题属于哪本书，再据此做结构性召回。
-        # 这样"韩立的结局"这类只提人物、不提书名的问题也能定位到正确的书。
         hint_novels = named_novels or _dominant_novels(
             semantic_sources + keyword_sources
         )
         positional_sources = self.positional_retrieve(
             question, top_k=candidate_k, hint_novels=hint_novels
         )
+        recall_detail = f"语义召回 {len(semantic_sources)} 条 · 关键词召回 {len(keyword_sources)} 条"
+        if positional_sources:
+            ids = sorted(s.chunk_id for s in positional_sources)
+            span = f"#{ids[0]}" if len(ids) == 1 else f"#{ids[0]}–{ids[-1]}"
+            where = "结尾" if structural == "结局" else "开头" if structural == "开头" else "位置"
+            recall_detail += f" · 结构性召回 {len(positional_sources)} 条（定位到{where} {span}）"
+        if not named_novels and hint_novels:
+            recall_detail += f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
+        trace.append({"step": "多路召回", "detail": recall_detail})
 
-        # Reciprocal Rank Fusion：两个召回来源都贡献分数，不需要额外的重排模型。
-        # 对开放性问题，关键词通常为空，结果自然退化为纯语义检索。
+        # Reciprocal Rank Fusion：多路召回都贡献分数，无需额外重排模型。
         rrf_k = 60
         scores: dict[tuple[str, int], float] = {}
         items: dict[tuple[str, int], SourceChunk] = {}
@@ -360,7 +422,16 @@ class NovelRAG:
                 items.setdefault(key, source)
 
         ranked_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
-        return [items[key] for key in ranked_keys[:top_k]]
+        result = [items[key] for key in ranked_keys[:top_k]]
+
+        # 阶段四：融合排序
+        trace.append(
+            {
+                "step": "融合排序",
+                "detail": f"合并去重后共 {len(scores)} 个候选，取最相关的 {len(result)} 段作为依据",
+            }
+        )
+        return result, trace
 
     def expand_neighbors(
         self,

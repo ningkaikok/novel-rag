@@ -190,13 +190,16 @@ def ask(req: AskRequest):
     if rag is None:
         raise HTTPException(409, "书架为空或索引未建立，请先上传小说")
 
-    # 同时召回关键词和语义相关片段，合并排序后统一交给模型回答。
-    sources = rag.retrieve_hybrid(req.question, top_k=req.top_k)
+    # 同时召回关键词、语义、结构性片段，合并排序后统一交给模型回答。
+    # trace 记录每一步的真实动作，前端展示为可折叠的「思考过程」。
+    sources, trace = rag.retrieve_hybrid_traced(req.question, top_k=req.top_k)
     context_sources = rag.expand_neighbors(sources)
     model = state["model"]
 
     def event_stream():
-        # 先把来源作为一个事件发出，前端可立即渲染出处
+        # 先把「思考过程」发出去，让用户在等生成时就能看到检索是怎么做的
+        yield f"event: trace\ndata: {json.dumps(trace, ensure_ascii=False)}\n\n"
+        # 再把来源发出，前端可立即渲染出处
         payload = [
             {"novel": s.novel, "chunk_id": s.chunk_id, "text": s.text}
             for s in sources

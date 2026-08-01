@@ -266,6 +266,7 @@ function Main() {
     ensureTyping();
 
     await askStream(question, topK, {
+      onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
       onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
       // 不直接落到界面上，先进队列，由定时器按字吐出
       onToken: (t) => {
