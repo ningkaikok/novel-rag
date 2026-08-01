@@ -1,0 +1,22 @@
+# https://editorconfig.org  跨编辑器统一基本风格
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Python：PEP 8，4 空格
+[*.py]
+indent_style = space
+indent_size = 4
+
+# 前端（TS/JS/JSON/CSS/HTML）：2 空格
+[*.{ts,tsx,js,jsx,json,css,html}]
+indent_style = space
+indent_size = 2
+
+# Markdown：行尾空格有语义（硬换行），不要裁剪
+[*.md]
+trim_trailing_whitespace = false
