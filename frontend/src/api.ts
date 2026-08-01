@@ -6,6 +6,35 @@ export interface Source {
   text: string;
 }
 
+export interface SearchResult extends Source {
+  match_count: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  total: number;
+  results: SearchResult[];
+}
+
+export async function searchBooks(
+  query: string,
+  book?: string,
+  limit = 20,
+  offset = 0
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (book) params.set("book", book);
+  const res = await fetch(`/api/search?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).detail ?? "全文搜索失败");
+  }
+  return await res.json();
+}
+
 export async function listBooks(): Promise<string[]> {
   const res = await fetch("/api/books");
   if (!res.ok) throw new Error("获取书架失败");

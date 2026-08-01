@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -18,10 +18,18 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from backend import claude_cli  # noqa: E402
+# 先加载 .env，再导入下面读环境变量的模块（config 在导入时就会读取），
+# 这样密钥写在 .env 里即可，不必每次启动手动 export。
+from backend.dotenv_lite import load_env  # noqa: E402
+
+_ENV_KEYS = load_env(ROOT / ".env")
+
+from backend import claude_cli, zhipu  # noqa: E402
 import ingest  # noqa: E402
 from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL, TOP_K  # noqa: E402
 from rag import NovelRAG  # noqa: E402
+from loader import load_novel_chunks  # noqa: E402
+from postgres import connect, has_index  # noqa: E402
 from sentence_transformers import SentenceTransformer  # noqa: E402
 from config import EMBEDDING_MODEL  # noqa: E402
 
@@ -31,9 +39,17 @@ state: dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时加载一次 embedding 模型，并尝试连接向量库
+    # 只打变量名不打值：既能确认密钥已加载，又不会把密钥写进日志
+    if _ENV_KEYS:
+        print(f"[env] 已从 .env 加载：{', '.join(_ENV_KEYS)}")
+    print(
+        "[models] 云端可选："
+        f"{claude_cli.claude_model_options() + zhipu.model_options()}"
+    )
+    # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = SentenceTransformer(EMBEDDING_MODEL)
     state["rag"] = _try_load_rag()
+    state["chunks"] = load_novel_chunks(NOVELS_DIR)
     state["model"] = OLLAMA_MODEL  # 当前用于生成回答的模型，可通过 /api/model 动态切换
     yield
     state.clear()
@@ -43,7 +59,7 @@ def _try_load_rag() -> NovelRAG | None:
     try:
         return NovelRAG(embedder=state["embedder"])
     except Exception:
-        return None  # 向量库还没建立
+        return None  # PostgreSQL 索引还没建立
 
 
 app = FastAPI(title="书虫 · Novel RAG API", lifespan=lifespan)
@@ -110,9 +126,62 @@ def reindex():
 
 def _reindex() -> dict:
     result = ingest.build_index(model=state["embedder"])
+    state["chunks"] = load_novel_chunks(NOVELS_DIR)
     # 重建后刷新 RAG 句柄，使新库生效
     state["rag"] = _try_load_rag() if result["chunk_count"] else None
     return result
+
+
+# ----------------------------------------------------------------- 全文搜索
+@app.get("/api/search")
+def search(
+    q: str = Query(min_length=1, max_length=200),
+    book: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """在本地小说原文中做精确全文搜索，不经过大模型。"""
+    needle = q.strip().casefold()
+    if not needle:
+        return {"query": q, "total": 0, "results": []}
+
+    if not has_index():
+        raise HTTPException(409, "PostgreSQL 索引未建立，请先重新整理书架")
+
+    if book:
+        where_sql = "novel = %s AND position(lower(%s) in lower(text)) > 0"
+        query_params = (book, needle)
+    else:
+        where_sql = "position(lower(%s) in lower(text)) > 0"
+        query_params = (needle,)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT novel, chunk_id, text
+            FROM novel_chunks
+            WHERE {where_sql}
+            ORDER BY novel, chunk_id
+            """,
+            query_params,
+        ).fetchall()
+
+    matches = []
+    for row in rows:
+        count = row["text"].casefold().count(needle)
+        matches.append(
+            {
+                "novel": row["novel"],
+                "chunk_id": int(row["chunk_id"]),
+                "text": row["text"],
+                "match_count": count,
+            }
+        )
+
+    return {
+        "query": q,
+        "total": len(matches),
+        "results": matches[offset : offset + limit],
+    }
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
@@ -122,7 +191,9 @@ def ask(req: AskRequest):
     if rag is None:
         raise HTTPException(409, "书架为空或索引未建立，请先上传小说")
 
-    sources = rag.retrieve(req.question, top_k=req.top_k)
+    # 同时召回关键词和语义相关片段，合并排序后统一交给模型回答。
+    sources = rag.retrieve_hybrid(req.question, top_k=req.top_k)
+    context_sources = rag.expand_neighbors(sources)
     model = state["model"]
 
     def event_stream():
@@ -132,13 +203,20 @@ def ask(req: AskRequest):
             for s in sources
         ]
         yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        # 再逐 token 流式推送答案：claude:xxx 走本地 Claude Code CLI（用户自己的订阅），
-        # 其余走本地 Ollama
+        # 再逐 token 流式推送答案：按模型名前缀路由到对应的生成后端
+        # claude:xxx → 本地 Claude Code CLI（用户自己的订阅）
+        # glm:xxx    → 智谱开放平台（用户自己的 ZHIPU_API_KEY）
+        # 其余       → 本地 Ollama
         if model.startswith(claude_cli.MODEL_PREFIX):
-            prompt = rag.build_prompt(req.question, sources)
-            token_iter = claude_cli.generate_stream(prompt, model)
+            token_iter = claude_cli.generate_stream(
+                rag.build_prompt(req.question, context_sources), model
+            )
+        elif model.startswith(zhipu.MODEL_PREFIX):
+            token_iter = zhipu.generate_stream(
+                rag.build_prompt(req.question, context_sources), model
+            )
         else:
-            token_iter = rag.generate_stream(req.question, sources, model=model)
+            token_iter = rag.generate_stream(req.question, context_sources, model=model)
         for chunk in token_iter:
             yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         yield "event: done\ndata: {}\n\n"
@@ -156,17 +234,23 @@ def _list_ollama_models() -> list[str]:
         return []  # Ollama 没跑起来也不阻塞——Claude 选项照样可用
 
 
+def _available_models() -> list[str]:
+    """本地 Ollama 已安装的 + 装了 claude CLI 时的 Claude 订阅 + 配了 ZHIPU_API_KEY 时的 GLM。"""
+    return (
+        _list_ollama_models()
+        + claude_cli.claude_model_options()
+        + zhipu.model_options()
+    )
+
+
 @app.get("/api/models")
 def list_models():
-    """列出可选模型：本地 Ollama 已安装的 + （如果本机装了 claude CLI）用户自己的 Claude 订阅。"""
-    models = _list_ollama_models() + claude_cli.claude_model_options()
-    return {"models": models, "current": state["model"]}
+    return {"models": _available_models(), "current": state["model"]}
 
 
 @app.post("/api/model")
 def set_model(req: SetModelRequest):
-    available = _list_ollama_models() + claude_cli.claude_model_options()
-    if req.model not in available:
+    if req.model not in _available_models():
         raise HTTPException(400, f"模型 {req.model} 当前不可用")
     state["model"] = req.model
     return {"current": state["model"]}

@@ -5,7 +5,7 @@
 技术栈：
 - **文本切分**：按段落聚合成约 500 字的片段，片段间有重叠，避免切断语义。
 - **Embedding**：`sentence-transformers`，本地模型 `BAAI/bge-small-zh-v1.5`（中文效果较好，体积约 95MB）。
-- **向量库**：Chroma，持久化存储在 `chroma_db/` 目录。
+- **数据库**：PostgreSQL + pgvector，片段、原文和 embedding 存储在 `novel_rag` 数据库的 `novel_chunks` 表中。
 - **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型，或切到你自己的 Claude 订阅（云端，需额外知情——见下文）。
 - **后端**：FastAPI（`backend/main.py`），把检索/生成逻辑包成 HTTP 接口，回答用 SSE 逐字流式返回。
 - **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。用 antd 组件 + `ConfigProvider` 主题令牌保留藏青主色与暖底书卷气，支持浅色/深色主题、上传/删除书籍、示例问题、流式回答，以及可点击的原文出处引用。
@@ -15,11 +15,11 @@
 ```
 novel-rag/
 ├── src/           # 核心业务逻辑（config/loader/ingest/rag），前后端共享
-├── backend/       # FastAPI 后端（main.py + claude_cli.py）
+├── backend/       # FastAPI 后端（main.py + claude_cli.py + zhipu.py）
 ├── frontend/      # React + Vite 前端
 ├── tests/         # 问答测试集与脚本
 ├── data/novels/   # 放小说 .txt 文件
-└── chroma_db/     # 向量库持久化目录
+└── chroma_db/     # 旧 Chroma 数据目录（迁移后不再使用）
 ```
 
 ## 环境准备
@@ -32,7 +32,22 @@ novel-rag/
    ollama pull qwen2.5:7b
    ```
 
-2. 创建 Python 虚拟环境并安装依赖（**注意：需要 Python 3.11/3.12/3.13**，3.14 太新，`tokenizers` 等库还没有对应的预编译包）：
+2. 安装 PostgreSQL 和 pgvector，并创建数据库（如果使用本机 Homebrew 安装）：
+
+   ```bash
+   brew install postgresql@18 pgvector
+   brew services start postgresql@18
+   createdb novel_rag
+   psql -d novel_rag -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+   ```
+
+   如果数据库地址、用户名或密码不同，设置 `DATABASE_URL`，例如：
+
+   ```bash
+   export DATABASE_URL=postgresql://user:password@127.0.0.1:5432/novel_rag
+   ```
+
+3. 创建 Python 虚拟环境并安装依赖（**注意：需要 Python 3.11/3.12/3.13**，3.14 太新，`tokenizers` 等库还没有对应的预编译包）：
 
    ```bash
    python3.12 -m venv venv
@@ -40,7 +55,7 @@ novel-rag/
    pip install -r requirements.txt
    ```
 
-3. 安装前端依赖（需要 Node.js 18+）：
+4. 安装前端依赖（需要 Node.js 18+）：
 
    ```bash
    cd frontend
@@ -75,24 +90,44 @@ cd frontend
 npm run dev
 ```
 
-浏览器打开 `http://localhost:5173`。左侧「我的书架」可上传/删除小说、在「更多设置」里重建索引和调整参考原文数量；在输入框提问，回答会逐字流式显示，展开「看看原文是怎么写的」可核实依据。前端 `/api` 请求由 Vite 代理到后端 `127.0.0.1:8000`。
+浏览器打开 `http://localhost:5173`。左侧「我的书架」可上传/删除小说、在「更多设置」里重建索引和调整参考原文数量；底部输入框会同时召回关键词和语义相关片段，合并排序后交给模型生成回答。问答命中片段后会自动带入同一本书前后相邻片段，回答会逐字流式显示，展开出处卡片可核实依据。前端 `/api` 请求由 Vite 代理到后端 `127.0.0.1:8000`。
 
 > 生产部署：`cd frontend && npm run build` 生成静态文件，再由 FastAPI 或 Nginx 托管，即可单端口对外。
 
-## 切换生成模型（本地 Ollama / 你的 Claude 订阅）
+## 切换生成模型（本地 Ollama / Claude 订阅 / 智谱 GLM）
 
-「更多设置」里的"🤖 回答用的模型"下拉框支持两类来源，选完立即生效，不需要重启服务：
+输入框上方的模型下拉框支持三类来源，选完立即生效，不需要重启服务：
 
 - **💻 本地（Ollama，完全离线）**：自动列出 `ollama list` 里已安装的模型（如 `qwen2.5:3b`、`qwen2.5:7b`）。
 - **☁️ 我的 Claude 订阅（云端）**：如果本机装了 [Claude Code CLI](https://claude.com/claude-code) 并已登录，会额外出现 `haiku`/`sonnet`/`opus` 三档，**不需要单独配置 `ANTHROPIC_API_KEY`**——直接复用你本地已登录的 Claude 订阅（后端通过 `claude --print` 非交互调用）。
+- **☁️ 智谱 GLM（云端）**：设置了环境变量 `ZHIPU_API_KEY` 时出现 `glm-4-flash`/`glm-4.5-air`/`glm-4.5`/`glm-4.6` 四档。
 
-选择云端 Claude 模型时请注意（界面上也会显示同样的提示）：
+选择任何云端模型时请注意（界面上的胶囊标签和 Tooltip 也会显示同样的提示）：
 
-- **不再是"完全本地"**：检索到的原文片段和你的问题会发送到 Anthropic 的服务器。
-- **计入你自己的 Claude 订阅用量**，不是免费的。
-- 由于 CLI 没有"跳过 CLAUDE.md/记忆加载但仍用 OAuth 登录"的组合选项，回答风格可能会受你本机全局 `~/.claude/CLAUDE.md` 配置的轻微影响（例如强制用中文回复）。
+- **不再是"完全本地"**：检索到的原文片段和你的问题会发送到对应厂商（Anthropic / 智谱）的服务器。
+- **计入你自己的账号用量**，不是免费的（`glm-4-flash` 除外）。
+- Claude 这条路径由于 CLI 没有"跳过 CLAUDE.md/记忆加载但仍用 OAuth 登录"的组合选项，回答风格可能会受你本机全局 `~/.claude/CLAUDE.md` 配置的轻微影响（例如强制用中文回复）。
 
-实现细节见 [backend/claude_cli.py](backend/claude_cli.py)。
+### 配置智谱 GLM 的 API Key
+
+Key **存在项目根目录的 `.env` 里，后端启动时自动加载**（`backend/dotenv_lite.py`，零依赖），不需要每次手动 export，也不会进版本库（`.env` 已被 `.gitignore` 忽略）：
+
+```bash
+cp .env.example .env   # 然后编辑 .env 填入你的 key
+uvicorn backend.main:app --port 8000
+```
+
+启动日志会打印一行 `[env] 已从 .env 加载：ZHIPU_API_KEY`（只打变量名、不打值）确认生效。
+
+优先级：**真实环境变量 > `.env`**，所以想临时换个 key 或模型，启动前 export 同名变量即可覆盖：
+
+```bash
+ZHIPU_API_KEY=另一个key uvicorn backend.main:app --port 8000
+```
+
+没配置这个 key 时，下拉框里不会出现 GLM 分组，其他功能不受影响。Key 在[智谱开放平台](https://open.bigmodel.cn/usercenter/apikeys)申请和吊销——**不要把 key 贴到聊天、issue 或截图里**，一旦泄露立即到该页面吊销重建。
+
+实现细节见 [backend/claude_cli.py](backend/claude_cli.py) 和 [backend/zhipu.py](backend/zhipu.py)。
 
 ## 单独重建索引（命令行）
 
@@ -103,7 +138,7 @@ source venv/bin/activate
 python src/ingest.py
 ```
 
-这一步会清空并重建 `chroma_db/` 里的向量库。
+这一步会清空并重建 PostgreSQL `novel_chunks` 表里的向量索引；不会删除 `data/novels/` 原文，也不会删除旧的 `chroma_db/` 目录。
 
 ## 可调参数（环境变量）
 
@@ -114,7 +149,12 @@ python src/ingest.py
 | `CHUNK_OVERLAP` | `80` | 相邻片段的重叠字符数 |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama 服务地址 |
 | `OLLAMA_MODEL` | `qwen2.5:7b` | 生成用的模型名 |
+| `DATABASE_URL` | 当前用户本机 `novel_rag` | PostgreSQL 连接字符串 |
 | `TOP_K` | `5` | 每次检索的片段数量 |
+| `RECALL_K` | `20` | 关键词和向量检索各自召回的候选片段数量 |
+| `CONTEXT_NEIGHBORS` | `1` | 问答时每个命中片段前后额外带入的相邻片段数 |
+| `ZHIPU_API_KEY` | 空 | 智谱开放平台 API Key，设置后界面出现 GLM 模型分组 |
+| `ZHIPU_API_URL` | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | 智谱 chat completions 接口地址 |
 
 例如临时换用更小的模型作为默认值启动后端：
 

@@ -5,6 +5,12 @@ chroma_db/
 frontend/node_modules/
 frontend/dist/
 
+# 本地密钥（如 ZHIPU_API_KEY），绝不进版本库
+.env
+.env.*
+# 例外：不含真实密钥的模板，需要提交供他人参考
+!.env.example
+
 # 有版权的小说原文，不进版本库；只保留原创的 demo 小说 雾隐山庄.txt
 data/novels/*
 !data/novels/雾隐山庄.txt
