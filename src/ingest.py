@@ -4,7 +4,8 @@
 """
 from sentence_transformers import SentenceTransformer
 
-from config import EMBEDDING_MODEL, NOVELS_DIR
+from config import NOVELS_DIR
+from embedder import load_embedder
 from loader import load_novel_chunks
 from postgres import connect, recreate_schema, vector_literal
 
@@ -20,7 +21,7 @@ def build_index(model: SentenceTransformer | None = None) -> dict:
 
     novels = sorted({c.novel for c in chunks})
     if model is None:
-        model = SentenceTransformer(EMBEDDING_MODEL)
+        model = load_embedder()
 
     texts = [c.text for c in chunks]
     embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=True)

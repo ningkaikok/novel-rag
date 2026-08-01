@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import requests
 from sentence_transformers import SentenceTransformer
 
+from embedder import load_embedder
 from config import (
-    EMBEDDING_MODEL,
     CONTEXT_NEIGHBORS,
     OLLAMA_HOST,
     OLLAMA_MODEL,
@@ -28,18 +28,75 @@ PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供�
 回答："""
 
 
-def _mentions_novel(question: str, novel: str) -> bool:
-    """判断问题里是否提到了这本书。
+def _novel_titles(novel: str) -> list[str]:
+    """从库里的书名（文件名）提取用户可能说出的标题。
 
-    库里的书名是文件名（如"《凡人修仙传》（校对版全本+番外）作者：忘语"），
-    用户只会说"凡人修仙传"，所以取《》内的标题、去掉修饰后做包含匹配。
+    文件名形如"《凡人修仙传》（校对版全本+番外）作者：忘语"，用户只会说"凡人修仙传"。
     """
     inner = re.findall(r"《([^》]+)》", novel)
-    candidates = [name.strip() for name in inner if name.strip()]
-    if not candidates:
+    titles = [name.strip() for name in inner if name.strip()]
+    if not titles:
         # 没有书名号就退化为用文件名主体（截断，避免整串带作者名匹配不上）
-        candidates = [novel.split("（")[0].split("作者")[0].strip()]
-    return any(name and name in question for name in candidates)
+        titles = [novel.split("（")[0].split("作者")[0].strip()]
+    return [t for t in titles if t]
+
+
+def _edit_distance(a: str, b: str, limit: int) -> int:
+    """两字符串的 Levenshtein 距离；一旦确定超过 limit 就提前返回 limit + 1。
+
+    书名很短（通常 3~6 字），这里用滚动数组的朴素实现足够快，不引入额外依赖。
+    """
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > limit:
+        return limit + 1
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        current = [i] + [0] * len(b)
+        for j, cb in enumerate(b, start=1):
+            current[j] = min(
+                previous[j] + 1,  # 删除
+                current[j - 1] + 1,  # 插入
+                previous[j - 1] + (ca != cb),  # 替换
+            )
+        # 整行都超过阈值，后面只会更大，可以提前结束
+        if min(current) > limit:
+            return limit + 1
+        previous = current
+    return previous[-1]
+
+
+def _fuzzy_contains(question: str, title: str) -> bool:
+    """问题里是否有一个与 title 近似的片段（容忍少量错字）。
+
+    用户常打出同音错字，例如把"诡秘之主"打成"闺蜜之主"（guǐ mì / guī mì）。
+    精确子串匹配会失败，进而把问题归到别的书上。这里在问题里滑动一个与书名
+    等长的窗口，只要某个窗口与书名的编辑距离在容差内就算提到了这本书。
+
+    容差按标题长度取：3 字标题最多错 1 个字，4 字及以上最多错 2 个字
+    （"闺蜜之主"→"诡秘之主"就错了 2 个字）。距离上限约为标题长度的一半，
+    不同的书之间差异远大于此，不会互相误判。
+    """
+    n = len(title)
+    if n < 3:
+        # 标题太短，模糊匹配极易误判，只接受精确包含
+        return title in question
+    tolerance = 1 if n == 3 else 2
+    # 窗口长度允许有 ±tolerance 的浮动，覆盖多字/漏字的情况
+    for width in range(max(3, n - tolerance), n + tolerance + 1):
+        for start in range(0, len(question) - width + 1):
+            window = question[start : start + width]
+            if _edit_distance(window, title, tolerance) <= tolerance:
+                return True
+    return False
+
+
+def _mentions_novel(question: str, novel: str) -> bool:
+    """判断问题里是否提到了这本书（先精确匹配，失败再容错匹配错字）。"""
+    titles = _novel_titles(novel)
+    if any(title in question for title in titles):
+        return True
+    return any(_fuzzy_contains(question, title) for title in titles)
 
 
 # 正文收尾的结构标记。网上流传的 txt 常是"全本+番外"，文件最末往往是番外或
@@ -92,23 +149,35 @@ class SourceChunk:
 
 class NovelRAG:
     def __init__(self, embedder: SentenceTransformer | None = None):
-        self.embedder = embedder or SentenceTransformer(EMBEDDING_MODEL)
+        self.embedder = embedder or load_embedder()
         if not has_index():
             raise RuntimeError("PostgreSQL novel_chunks 表不存在，请先重建索引")
 
-    def retrieve(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
+    def retrieve(
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        only_novels: list[str] | None = None,
+    ) -> list[SourceChunk]:
+        """向量检索。only_novels 非空时把搜索范围限定在这些书内。"""
         query_embedding = self.embedder.encode([question], normalize_embeddings=True)
         query_vector = vector_literal(query_embedding[0])
+        scope = "WHERE novel = ANY(%s)" if only_novels else ""
+        params: list = [query_vector]
+        if only_novels:
+            params.append(only_novels)
+        params.extend([query_vector, top_k])
         with connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT novel, chunk_id, text,
                        embedding <=> %s::vector AS distance
                 FROM novel_chunks
+                {scope}
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (query_vector, query_vector, top_k),
+                params,
             ).fetchall()
         return [
             SourceChunk(
@@ -120,21 +189,35 @@ class NovelRAG:
             for row in rows
         ]
 
-    def keyword_retrieve(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
-        """先用原文关键词查找，确保人物名、专有名词和原句不会被向量检索漏掉。"""
+    def keyword_retrieve(
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        only_novels: list[str] | None = None,
+    ) -> list[SourceChunk]:
+        """先用原文关键词查找，确保人物名、专有名词和原句不会被向量检索漏掉。
+
+        only_novels 非空时把搜索范围限定在这些书内。
+        """
         needle = question.strip().casefold()
         if not needle:
             return []
+        scope = "AND novel = ANY(%s)" if only_novels else ""
+        params: list = [needle]
+        if only_novels:
+            params.append(only_novels)
+        params.append(top_k)
         with connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT novel, chunk_id, text
                 FROM novel_chunks
                 WHERE position(lower(%s) in lower(text)) > 0
+                {scope}
                 ORDER BY novel, chunk_id
                 LIMIT %s
                 """,
-                (needle, top_k),
+                params,
             ).fetchall()
         return [
             SourceChunk(
@@ -231,15 +314,36 @@ class NovelRAG:
                     )
         return results
 
+    def _named_novels(self, question: str) -> list[str]:
+        """问题里明确提到的书（书名精确或容错匹配）；没提到则返回空列表。"""
+        with connect() as conn:
+            novels = [
+                row["novel"]
+                for row in conn.execute(
+                    "SELECT DISTINCT novel FROM novel_chunks"
+                ).fetchall()
+            ]
+        return [n for n in novels if _mentions_novel(question, n)]
+
     def retrieve_hybrid(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
         """统一的两阶段召回：候选池合并后用轻量 RRF 排序，最终取 top-k。"""
         candidate_k = max(top_k, RECALL_K)
-        semantic_sources = self.retrieve(question, top_k=candidate_k)
-        keyword_sources = self.keyword_retrieve(question, top_k=candidate_k)
 
-        # 先用前两路召回推断问题属于哪本书，再据此做结构性召回。
+        # 用户明确点了书名（含错字容错）就把三路召回都限定在那本书内，
+        # 否则别的书的片段会挤占 top-k，把模型带偏。
+        named_novels = self._named_novels(question)
+        semantic_sources = self.retrieve(
+            question, top_k=candidate_k, only_novels=named_novels
+        )
+        keyword_sources = self.keyword_retrieve(
+            question, top_k=candidate_k, only_novels=named_novels
+        )
+
+        # 没点明书名时，用前两路召回推断问题属于哪本书，再据此做结构性召回。
         # 这样"韩立的结局"这类只提人物、不提书名的问题也能定位到正确的书。
-        hint_novels = _dominant_novels(semantic_sources + keyword_sources)
+        hint_novels = named_novels or _dominant_novels(
+            semantic_sources + keyword_sources
+        )
         positional_sources = self.positional_retrieve(
             question, top_k=candidate_k, hint_novels=hint_novels
         )

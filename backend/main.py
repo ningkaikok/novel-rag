@@ -30,8 +30,7 @@ from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL, TOP_K  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
 from postgres import connect, has_index  # noqa: E402
-from sentence_transformers import SentenceTransformer  # noqa: E402
-from config import EMBEDDING_MODEL  # noqa: E402
+from embedder import load_embedder  # noqa: E402
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
@@ -47,7 +46,7 @@ async def lifespan(app: FastAPI):
         f"{claude_cli.claude_model_options() + zhipu.model_options()}"
     )
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
-    state["embedder"] = SentenceTransformer(EMBEDDING_MODEL)
+    state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
     state["chunks"] = load_novel_chunks(NOVELS_DIR)
     state["model"] = OLLAMA_MODEL  # 当前用于生成回答的模型，可通过 /api/model 动态切换

@@ -18,6 +18,10 @@ import requests
 API = "http://127.0.0.1:8000"
 ROOT = Path(__file__).resolve().parent.parent
 
+# 结果文件里每段来源只保留这么多字的摘录，足够人工核对是否检索对了，
+# 又不至于把整本版权小说抄进版本库。
+SOURCE_EXCERPT_CHARS = 80
+
 
 def ask(question: str, top_k: int = 5) -> dict:
     """调用 /api/ask，消费 SSE，返回 {"answer": str, "sources": [...]}。"""
@@ -74,8 +78,16 @@ def main():
             {
                 **q,
                 "answer": r["answer"],
+                # 只留定位信息 + 短摘录：结果文件要能进版本库，不能把版权原文
+                # 整段写进去（之前每次跑测试会写入十几万字原文）。
+                # 需要核对完整原文时，按 novel + chunk_id 去库里查即可。
                 "sources": [
-                    {"novel": s["novel"], "chunk_id": s["chunk_id"], "text": s["text"]}
+                    {
+                        "novel": s["novel"],
+                        "chunk_id": s["chunk_id"],
+                        "excerpt": s["text"][:SOURCE_EXCERPT_CHARS],
+                        "text_chars": len(s["text"]),
+                    }
                     for s in r["sources"]
                 ],
                 "elapsed_seconds": round(elapsed, 1),
