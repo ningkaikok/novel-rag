@@ -35,21 +35,71 @@ def _clean_text(raw: str) -> str:
 
 
 def _split_paragraphs(text: str) -> list[str]:
-    parts = [p.strip() for p in text.split("\n\n")]
+    """按段落切分。
+
+    注意：不能只按空行（\\n\\n）切——国内小说站的 txt 大多用**单个换行**分段，
+    整本书可能只有几千个空行。只按空行切会得到平均数千字的巨块，
+    远超 embedding 模型的长度上限（bge-small-zh 为 512 token），
+    导致片段后半部分在向量里完全没有表示、检索不到。
+    因此按任意换行切分，段落间关系交由 _chunk_paragraphs 重新聚合。
+    """
+    parts = [p.strip() for p in re.split(r"\n+", text)]
     return [p for p in parts if p]
 
 
+def _split_long_paragraph(para: str) -> list[str]:
+    """把单段就超过 CHUNK_SIZE 的长段落按句末标点切成不超限的小片。
+
+    优先在句末标点处断开以保住语义；实在没有标点可断（如超长无标点文本）
+    则硬切，保证每片都不超过 CHUNK_SIZE。
+    """
+    if len(para) <= CHUNK_SIZE:
+        return [para]
+
+    # 在句末标点后断句，标点保留在前一句末尾
+    sentences = re.findall(r"[^。！？…；\n]*[。！？…；]+|[^。！？…；\n]+", para)
+    pieces: list[str] = []
+    current = ""
+    for sentence in sentences:
+        # 单句本身就超限：先收掉已积累的内容，再把这句硬切
+        if len(sentence) > CHUNK_SIZE:
+            if current:
+                pieces.append(current)
+                current = ""
+            for i in range(0, len(sentence), CHUNK_SIZE):
+                pieces.append(sentence[i : i + CHUNK_SIZE])
+            continue
+        if len(current) + len(sentence) <= CHUNK_SIZE:
+            current += sentence
+        else:
+            if current:
+                pieces.append(current)
+            current = sentence
+    if current:
+        pieces.append(current)
+    return pieces
+
+
 def _chunk_paragraphs(paragraphs: list[str]) -> list[str]:
+    """把段落聚合成约 CHUNK_SIZE 字的片段，片段间保留 CHUNK_OVERLAP 字重叠。
+
+    硬保证：任何片段都不超过 CHUNK_SIZE，否则超出部分不会进入 embedding。
+    """
     chunks: list[str] = []
     current = ""
     for para in paragraphs:
-        candidate = f"{current}\n\n{para}" if current else para
-        if len(candidate) <= CHUNK_SIZE or not current:
-            current = candidate
-        else:
-            chunks.append(current)
+        # 先把超长段落拆开，避免"单段直接成为一个超限片段"
+        for piece in _split_long_paragraph(para):
+            candidate = f"{current}\n\n{piece}" if current else piece
+            if len(candidate) <= CHUNK_SIZE:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
             overlap_tail = current[-CHUNK_OVERLAP:] if CHUNK_OVERLAP else ""
-            current = f"{overlap_tail}\n\n{para}" if overlap_tail else para
+            # 重叠 + 新片仍可能超限，超了就丢弃重叠只保留新片
+            merged = f"{overlap_tail}\n\n{piece}" if overlap_tail else piece
+            current = merged if len(merged) <= CHUNK_SIZE else piece
     if current:
         chunks.append(current)
     return chunks
