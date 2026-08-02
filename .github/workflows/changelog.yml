@@ -1,0 +1,56 @@
+name: 更新 CHANGELOG
+
+# 合并到 main 后自动跑 git-cliff，把新提交整理进 CHANGELOG.md。
+#
+# 为什么是"开 PR"而不是"直接 push"：
+# main 分支开了保护且 enforce_admins=true，任何直接 push（包括 Actions 的 bot）
+# 都会被 protected branch hook 拒绝（GH006）。与其为了自动化去削弱分支保护，
+# 不如让 bot 提一个 PR——保护规则一行不用改，你点一下 merge 即可。
+on:
+  push:
+    branches: [main]
+
+# 只读 + 开 PR 需要的最小权限；不需要 admin 之类的大权限。
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  changelog:
+    name: 生成 CHANGELOG 更新 PR
+    runs-on: ubuntu-latest
+    # 跳过 bot 自己合并 CHANGELOG PR 触发的这次 push，避免无限循环：
+    # bot 合并 PR → 触发 push → 又生成 PR → ……
+    if: "!startsWith(github.event.head_commit.message, 'docs(changelog):')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-cliff 需要完整历史和 tag 才能正确分段，浅克隆会漏掉早期提交
+          fetch-depth: 0
+
+      - name: 运行 git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --unreleased --prepend CHANGELOG.md
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: 有变化就开 PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "docs(changelog): 自动更新 CHANGELOG"
+          title: "docs(changelog): 自动更新 CHANGELOG"
+          body: |
+            由 [changelog workflow](../blob/main/.github/workflows/changelog.yml)
+            自动生成：`git cliff --unreleased --prepend CHANGELOG.md`。
+
+            按 [CLAUDE.md](../blob/main/CLAUDE.md) 的规范，条目直接取自 commit
+            description，所以**合并前请扫一眼**：太技术的表述改成用户看得懂的话
+            （"从用户视角写"这条规范要靠人把关，工具做不到）。
+
+            没有新的 feat/fix/perf/refactor 提交时不会创建这个 PR。
+          branch: chore/auto-changelog
+          # 同一个分支反复更新，不会堆积一堆 PR
+          delete-branch: true
+          add-paths: CHANGELOG.md
