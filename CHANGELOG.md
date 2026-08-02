@@ -1,5 +1,22 @@
 # 更新日志
 
+本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
+版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+条目从用户视角描述改动。
+
+## [未发布]
+
+### Added
+- **ci**：增加飞书机器人构建通知 (#6)
+
+### Changed
+- **ci**：飞书通知改用独立 Action (#7)
+
+### Fixed
+- **ci**：修正 changelog workflow 的 git-cliff 参数冲突 (#9)
+
+# 更新日志
+
 本项目所有值得记录的改动都写在这里。日期为绝对日期（YYYY-MM-DD）。
 分类：`新增` / `修复` / `优化` / `文档`。
 
