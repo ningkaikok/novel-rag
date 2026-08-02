@@ -51,8 +51,10 @@ python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
 ## CI 构建通知（飞书，可选）
 
 每次 CI 跑完（不管成功还是失败）都会尝试把结果推到飞书群，由 `.github/workflows/ci.yml`
-里的 `notify` job 和 `.github/scripts/notify_feishu.py` 实现。**默认不配置也没事**——
-脚本检测不到 webhook 地址会直接跳过，不会让 CI 变红。
+里的 `notify` job 调用独立的
+[`ningkaikok/feishu-notify-action`](https://github.com/ningkaikok/feishu-notify-action)
+实现（通用逻辑抽成了 Action，方便其他项目复用）。**默认不配置也没事**——
+没配 webhook 地址时会直接跳过，不会让 CI 变红。
 
 配置步骤：
 

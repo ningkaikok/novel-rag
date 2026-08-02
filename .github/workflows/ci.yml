@@ -78,14 +78,17 @@ jobs:
     needs: [frontend, e2e, backend]
     if: always()
     steps:
-      - uses: actions/checkout@v4
-      - name: 发送飞书通知
-        env:
-          # 没配置这两个 repo secret 时脚本会直接跳过（exit 0），不会让这个 job 变红。
-          # 配置方法见 CONTRIBUTING.md「CI 构建通知」。
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
-          FRONTEND_RESULT: ${{ needs.frontend.result }}
-          E2E_RESULT: ${{ needs.e2e.result }}
-          BACKEND_RESULT: ${{ needs.backend.result }}
-        run: python3 .github/scripts/notify_feishu.py
+      # 通用逻辑抽成了独立仓库，方便其他项目复用：
+      # https://github.com/ningkaikok/feishu-notify-action
+      # 没配置这两个 repo secret 时会直接跳过（exit 0），不会让这个 job 变红。
+      # 配置方法见 CONTRIBUTING.md「CI 构建通知」。
+      - uses: ningkaikok/feishu-notify-action@v1
+        with:
+          webhook-url: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          webhook-secret: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
+          results: |
+            {
+              "前端类型检查": "${{ needs.frontend.result }}",
+              "前端 e2e 测试": "${{ needs.e2e.result }}",
+              "后端导入检查": "${{ needs.backend.result }}"
+            }
