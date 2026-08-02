@@ -191,6 +191,32 @@ body {
   box-shadow: var(--shadow-lift);
 }
 
+/* 「有新回复」：主色实心 + 轻微呼吸，让用户注意到下面来了没看过的内容。
+   上面的 .jump-to-latest 写死了 background/color，这里要用 !important 盖掉，
+   否则 antd 的 primary 实心样式会被覆盖成和普通状态一样。 */
+.jump-to-latest.has-new,
+.jump-to-latest.has-new:hover {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
+  animation: jump-pulse 2s var(--ease) infinite;
+}
+@keyframes jump-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-md);
+  }
+  50% {
+    box-shadow: var(--shadow-lift), 0 0 0 5px var(--accent-soft);
+  }
+}
+/* 尊重系统的"减少动画"偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .jump-to-latest.has-new {
+    animation: none;
+  }
+}
+
 /* 欢迎 & 示例 */
 .welcome {
   padding-top: 1.4rem;

@@ -82,6 +82,9 @@ function buildModelOptions(models: string[]) {
 // 所以统一在前端排队按字输出，视觉上才是匀速打字。
 // 用 ~33ms（≈30fps）而非 16ms：打字机不需要 60fps，帧率减半就把重渲染次数砍掉一半，
 // 明显降低长回答时的卡顿。
+// 离底部超过这个距离（px）就认为用户"翻到别处去了"，显示回到底部的浮动按钮
+const JUMP_THRESHOLD = 200;
+
 const TICK_MS = 33;
 // 每次至少吐 2 个字；积压越多吐越快，避免生成快时字幕越落越远
 const MIN_CHARS_PER_TICK = 2;
@@ -169,6 +172,9 @@ function Main() {
   const scrollRef = useRef<HTMLDivElement>(null);
   // 是否显示「跳到最近回答」浮动按钮：用户往上翻看历史/出处、离底部较远时出现
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  // 离开底部期间下面是否来了新内容：用来把按钮文案从"跳到最近回答"换成"有新回复"，
+  // 区分"我自己翻上来的"和"下面真有我没看到的东西"
+  const [hasNewBelow, setHasNewBelow] = useState(false);
   // 打字机队列：待输出的字符、定时器、以及"后端已推完"的标记
   const queueRef = useRef("");
   const timerRef = useRef<number | null>(null);
@@ -178,6 +184,11 @@ function Main() {
   // 用户主动中断的标记：用来区分「点了停止」和「真的出错了」，两者提示文案不同
   const userStoppedRef = useRef(false);
   const sessionIdRef = useRef<string>(getOrCreateSessionId());
+  // 历史恢复那一次 setMessages 不算"新内容"：只是刷新页面后把旧对话摆出来，
+  // 用户还没来得及滚下去而已，不该被当成"有新回复"提示。只需要跳过紧接着的那一次
+  // messages 变化检查，不用担心时序——这次赋值和下面 effect 之间没有其他会改 messages
+  // 的调用插进来，所以同步置真、在 effect 里读到时必然还是真。
+  const skipNextNewBelowRef = useRef(false);
 
   useEffect(() => {
     refreshBooks();
@@ -202,26 +213,49 @@ function Main() {
     return () => cancelAnimationFrame(id);
   }, [messages]);
 
-  // 监听手动滚动：离底部较远时出现「跳到最近回答」按钮，方便翻看历史后一键回到底部
+  // 监听手动滚动：离底部较远时出现「跳到最近回答」按钮，方便翻看历史后一键回到底部。
+  // 滚回底部时同时清掉"有新回复"标记——人已经看到了，不该继续提示。
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const JUMP_THRESHOLD = 200;
     function handleScroll() {
       const el = scrollRef.current;
       if (!el) return;
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setShowJumpToLatest(distanceFromBottom > JUMP_THRESHOLD);
+      const away = el.scrollHeight - el.scrollTop - el.clientHeight > JUMP_THRESHOLD;
+      setShowJumpToLatest(away);
+      if (!away) setHasNewBelow(false);
     }
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => el.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // 内容更新但用户没在底部时，标记"下面有新回复"。
+  // 单靠上面的 scroll 监听不够——新回答流入时用户并没有滚动，
+  // 不主动检查的话按钮状态和提示文案都不会更新，用户就完全不知道有新内容。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || messages.length === 0) return;
+    const away = el.scrollHeight - el.scrollTop - el.clientHeight > JUMP_THRESHOLD;
+    if (!away) return;
+    // 离底部远就先显示普通的"跳到最近回答"——历史恢复导致的也算，这是合理的导航提示
+    setShowJumpToLatest(true);
+    if (skipNextNewBelowRef.current) {
+      // 历史恢复：内容是旧的，只是还没滚过去，不算"新"
+      skipNextNewBelowRef.current = false;
+      return;
+    }
+    setHasNewBelow(true);
+  }, [messages]);
+
   function jumpToLatest() {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    const el = scrollRef.current;
+    if (!el) return;
+    // 生成中内容每帧都在变长，smooth 平滑滚动追不上增长速度，
+    // 用户点了却到不了底、按钮一直亮着反而更烦。所以生成期间直接跳到底，
+    // 到位之后由"贴底就自动跟随"的逻辑接管；空闲时才用平滑滚动。
+    el.scrollTo({ top: el.scrollHeight, behavior: busy ? "auto" : "smooth" });
+    // 点了就算已读；不等滚动动画结束再清，避免按钮在滑动过程中还闪着"有新回复"
+    setHasNewBelow(false);
   }
 
   // 刷新页面后把这个会话之前的对话捞回来。
@@ -230,6 +264,7 @@ function Main() {
     try {
       const turns = await loadSession(sessionIdRef.current);
       if (turns.length === 0) return;
+      skipNextNewBelowRef.current = true;
       setMessages(
         turns.map((t) => ({
           role: t.role,
@@ -452,12 +487,14 @@ function Main() {
             </div>
             {showJumpToLatest && messages.length > 0 && (
               <Button
-                className="jump-to-latest"
+                className={`jump-to-latest${hasNewBelow ? " has-new" : ""}`}
                 shape="round"
                 size="small"
+                // 有新内容时用主色实心按钮，更显眼；否则只是普通的"回到底部"
+                type={hasNewBelow ? "primary" : "default"}
                 onClick={jumpToLatest}
               >
-                ↓ 跳到最近回答
+                {hasNewBelow ? "↓ 有新回复" : "↓ 跳到最近回答"}
               </Button>
             )}
           </div>
