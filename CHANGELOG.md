@@ -5,6 +5,17 @@
 
 ## [未发布]
 
+### Added
+- **ci**：增加飞书机器人构建通知 (#6)
+
+### Changed
+- **ci**：CHANGELOG 改为只替换「未发布」段，不再用 --prepend (#11)
+- **ci**：飞书通知改用独立 Action (#7)
+
+### Fixed
+- **ci**：让 CI 在自动 changelog 分支上也跑，解开 bot PR 卡死 (#13)
+- **ci**：修正 changelog workflow 的 git-cliff 参数冲突 (#9)
+
 ## [0.1.0] - 2026-08-02
 
 首个正式版本：本地小说 RAG 问答 + 三档生成模型（本地 Ollama / Claude 订阅 / 智谱 GLM），
