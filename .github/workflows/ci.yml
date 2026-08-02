@@ -3,7 +3,13 @@ name: CI
 # push 到 main、以及所有指向 main 的 PR 时自动跑，挡住破坏构建的改动。
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # changelog workflow 里 bot 用默认 GITHUB_TOKEN 开的 PR 不会触发
+      # pull_request 事件（GitHub 的防递归设计），导致那个 PR 上一个检查都没有、
+      # 而 main 又要求必需检查通过 → 永久卡在 BLOCKED 无法合并。
+      # 这里显式监听该分支的 push，让 bot 推分支时 CI 就跑起来，检查有了就能合并。
+      - chore/auto-changelog
   pull_request:
     branches: [main]
 
