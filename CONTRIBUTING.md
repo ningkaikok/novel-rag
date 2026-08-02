@@ -48,6 +48,39 @@ python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
 
 改到前端流式渲染时，参考 [tests/PERF_CHECK.md](tests/PERF_CHECK.md) 确认无卡顿。
 
+## CI 构建通知（飞书，可选）
+
+每次 CI 跑完（不管成功还是失败）都会尝试把结果推到飞书群，由 `.github/workflows/ci.yml`
+里的 `notify` job 和 `.github/scripts/notify_feishu.py` 实现。**默认不配置也没事**——
+脚本检测不到 webhook 地址会直接跳过，不会让 CI 变红。
+
+配置步骤：
+
+1. 飞书群「设置」→「群机器人」→「添加机器人」→「自定义机器人」，拿到 Webhook 地址。
+   建议同时勾选「签名校验」，多要一个签名密钥，防止别人拿着地址冒充机器人发消息。
+2. **不要把这两个值贴在 issue、PR、聊天记录里**——跟 API key 一样，一旦出现在任何
+   聊天/日志里就该视为已泄露，去飞书机器人设置里重置。在自己终端里执行：
+
+   ```bash
+   gh secret set FEISHU_WEBHOOK_URL       # 粘贴 Webhook 地址，回车确认
+   gh secret set FEISHU_WEBHOOK_SECRET    # 如果开了签名校验，同样设置
+   ```
+
+3. 下一次 push 或 PR 触发 CI 时就会收到消息，格式类似：
+
+   ```
+   【ningkaikok/novel-rag】CI ❌ 有检查未通过
+   分支/PR：main　提交：abcdef1　触发人：ningkaikok（push）
+   ✅ 前端类型检查：success
+   ✅ 前端 e2e 测试：success
+   ❌ 后端导入检查：failure
+   详情：https://github.com/ningkaikok/novel-rag/actions/runs/xxxxx
+   ```
+
+`notify` job 没有被列入 main 分支保护的必需检查（见下方「main 已开启保护」），
+所以就算飞书配置错了（比如密钥填错、机器人被移出群），也只会让这一个 job 显示失败，
+不会挡住任何 PR 合并。
+
 ## 提交规范
 
 本项目用 [Conventional Commits](https://www.conventionalcommits.org/)，

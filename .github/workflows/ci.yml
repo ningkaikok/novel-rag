@@ -69,3 +69,23 @@ jobs:
         # backend.main 在导入时不会连数据库、也不会下载模型，
         # 这两件事都发生在 FastAPI lifespan 里，所以纯导入是安全且快速的冒烟检查。
         run: python -c "import backend.main; print('backend import OK')"
+
+  notify:
+    name: 飞书通知
+    runs-on: ubuntu-latest
+    # needs 三个检查 job 的结果；if: always() 保证不管它们成功/失败/取消都会执行，
+    # 这样失败也能通知到，不只是成功才通知。
+    needs: [frontend, e2e, backend]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: 发送飞书通知
+        env:
+          # 没配置这两个 repo secret 时脚本会直接跳过（exit 0），不会让这个 job 变红。
+          # 配置方法见 CONTRIBUTING.md「CI 构建通知」。
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: python3 .github/scripts/notify_feishu.py
