@@ -64,10 +64,16 @@ export async function mockApi(
     books?: string[];
     models?: typeof MOCK_MODELS;
     ask?: MockAskOptions;
+    /** 会话历史：模拟刷新页面后从后端读回的对话 */
+    sessionTurns?: unknown[];
   } = {}
 ) {
   const books = opts.books ?? MOCK_BOOKS;
   const models = opts.models ?? MOCK_MODELS;
+
+  await page.route("**/api/sessions/**", async (route) => {
+    await route.fulfill({ json: { turns: opts.sessionTurns ?? [] } });
+  });
 
   await page.route("**/api/books", async (route) => {
     if (route.request().method() === "GET") {
@@ -92,5 +98,22 @@ export async function mockApi(
       contentType: "text/event-stream",
       body: buildSseBody(opts.ask ?? {}),
     });
+  });
+}
+
+/**
+ * 拦截 /api/ask 成一个长时间挂起的请求：迟迟不返回响应。
+ *
+ * 用来测「停止」按钮：普通 mock 一次性返回完整 body，请求瞬间结束、
+ * 界面立刻收尾，根本来不及点停止。这里让 handler 长时间不 fulfill，
+ * 请求就一直 pending，界面稳定停在"生成中"，可以从容点停止按钮。
+ *
+ * 前端 abort() 之后这个请求会被取消，handler 里的等待随之作废——
+ * 这正是真实的中断路径。
+ */
+export async function mockHangingAsk(page: Page) {
+  await page.route("**/api/ask", async () => {
+    // 故意不调用 route.fulfill()：请求保持 pending 直到被 abort 或测试结束。
+    // 不需要 sleep，handler 不返回就等于挂住。
   });
 }

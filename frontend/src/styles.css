@@ -336,6 +336,25 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* 「已停止生成」标记：跟在部分内容末尾，明确告知这不是完整答案 */
+.interrupted-tag {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* 停止按钮：和发送键同宽，切换时输入区不跳动 */
+.stop-button {
+  min-width: 88px;
+}
+
 /* 思考过程：折叠面板，展示检索每一步的真实动作 */
 .thinking-panel {
   margin-bottom: 0.6rem;

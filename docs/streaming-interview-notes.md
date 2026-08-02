@@ -88,8 +88,7 @@ new PerformanceObserver(l => l.getEntries().forEach(e => __lt.push(e.duration)))
 
 ## 第一题：中断与上下文感知恢复
 
-> ⚠️ **本项目目前没有实现这部分**，下面是"如果要做，在这个项目里长什么样"。
-> 面试时如实说"设计过但没落地"比含糊带过更好。
+> ✅ **已实现**（2026-08-02）。下面每条都有对应代码和实测结果。
 
 ### 那句话拆开看
 
@@ -100,10 +99,10 @@ new PerformanceObserver(l => l.getEntries().forEach(e => __lt.push(e.duration)))
 
 | 层 | 关键词 | 管什么 | 本项目现状 |
 | --- | --- | --- | --- |
-| 生成 | 检查点、状态机 | 生成到哪一步了，能不能存档 | ❌ 无状态，纯函数式一次性生成 |
-| 传输 | 事件流、断线重连 | 数据怎么送到浏览器，断了怎么办 | ⚠️ 有 SSE，但断了不能重连 |
-| 取消 | 协作式信号 | 点 Stop 之后，整条链路怎么一起停 | ❌ 没有 Stop 按钮 |
-| 恢复 | partial + 新意图 | 下次接着来时，上下文怎么拼 | ❌ 刷新页面历史全丢 |
+| 生成 | 检查点、状态机 | 生成到哪一步了，能不能存档 | ✅ `chat_turns` 表存 partial + `interrupted` 状态 |
+| 传输 | 事件流、断线重连 | 数据怎么送到浏览器，断了怎么办 | ⚠️ SSE + 中断可用；**断线自动重连未做** |
+| 取消 | 协作式信号 | 点 Stop 之后，整条链路怎么一起停 | ✅ AbortSignal → 断连检测 → 停止索取 token |
+| 恢复 | partial + 新意图 | 下次接着来时，上下文怎么拼 | ✅ 刷新按 sessionId 拉回历史（含 partial） |
 
 ### 为什么是"协作式"而不是"强杀"
 
@@ -124,54 +123,65 @@ GLM token 额度）、消息状态卡在 `streaming: true` 永远收不到结束
 
 ### 本项目现在的真实缺口
 
-**① 前端没有 AbortSignal** — [`api.ts`](../frontend/src/api.ts) 的 `askStream` 用裸
-`fetch()`，没传 `signal`。想中断只能关标签页。
+**① 前端：AbortController** — [`api.ts`](../frontend/src/api.ts) 的 `askStream` 接受
+`signal`，[`App.tsx`](../frontend/src/App.tsx) 每次提问建一个 `AbortController` 存进 ref，
+生成中发送键变成「■ 停止」，点它调 `abort()`。
 
-**② 后端是同步生成器，客户端断了它还在跑** — [`main.py`](../backend/main.py) 的
-`event_stream()` 是 `def` 不是 `async def`，FastAPI 丢进线程池。前端 `abort()` 之后，
-这个任务**不会自动停**，会继续拿着 Ollama/GLM 的连接跑到底。
+**② 后端：async + 断连检测** — [`main.py`](../backend/main.py) 的 `ask` 改成了
+`async def`，`event_stream` 循环里每吐一个 token 就 `await request.is_disconnected()`，
+断了就 `token_iter.close()` 并跳出。
 
-> 这不是锦上添花，是**防止"用户点了 Stop，你还在偷偷扣他 GLM 的费用"**。
-> 要真正生效得改 `async def` + 循环里 `await request.is_disconnected()`。
-
-**③ 没有 session/检查点** — 消息只存在 React 的 `useState` 里，刷新页面就没了。
-数据库里只有 `novel_chunks`（小说片段），没有对话历史表。
-
-**④ 幂等** — 目前 `/api/ask` 不写库（检索只读、生成不落盘），暂时没坑。但一旦加了
-③ 的持久化，"存中断时的部分内容"这个写操作必须是 `UPSERT`，否则重试会主键冲突。
-
-### 如果要做，长这样
-
-```sql
--- 检查点表：一个 session 一串 turn
-CREATE TABLE chat_turns (
-  session_id  UUID,
-  turn_index  INT,
-  role        TEXT,           -- user / assistant
-  content     TEXT,
-  sources     JSONB,
-  status      TEXT,           -- complete / interrupted
-  PRIMARY KEY (session_id, turn_index)   -- 主键即幂等保障
-);
-```
-
-```ts
-// 前端：AbortController + Stop 按钮
-const ctrl = new AbortController();
-abortRef.current = ctrl;
-await askStream(question, topK, handlers, ctrl.signal);
-// Stop 按钮：abortRef.current?.abort()
-```
+三个生成后端（Ollama / Claude CLI / GLM）都是**同步**生成器，直接在协程里 `for` 会阻塞
+事件循环、导致断连检查永远轮不到执行。所以用 `run_in_threadpool` 逐个取 token，
+每个 `await` 都是一次让出控制权的机会：
 
 ```python
-# 后端：改成 async，循环里检测断连
-async def event_stream():
-    async for chunk in token_iter:
-        if await request.is_disconnected():
-            save_checkpoint(session_id, partial_text, status="interrupted")
-            break   # 同时关闭到 Ollama/GLM 的上游连接
-        yield f"event: token\ndata: {json.dumps(chunk)}\n\n"
+chunk = await run_in_threadpool(_next_or_sentinel, token_iter)
+if chunk is _SENTINEL:
+    break
+...
+if await request.is_disconnected():
+    interrupted = True
+    break
 ```
+
+> 用哨兵而不是捕获 `StopIteration`：后者不能穿过 `await` 边界（会变成 `RuntimeError`）。
+
+**③ 检查点：`chat_turns` 表** — [`postgres.py`](../src/postgres.py) 的
+`ensure_chat_schema()`。刻意和 `recreate_schema()` 分开——那个函数重建向量索引时会
+`DROP TABLE`，聊天记录不该因为「重新整理书架」被清空。
+
+**④ 幂等：主键 + UPSERT** — `(session_id, turn_index)` 做主键，`save_turn()` 用
+`ON CONFLICT DO UPDATE`。中断保存可能被重复触发（连点停止、网络抖动），
+覆盖同一行而不是插重复数据。
+
+### 实测结果
+
+**中断真的省下了额度**（这是整件事的核心价值）。用 `curl --max-time 4` 提前断开，
+然后隔 12 秒观察数据库：
+
+```
+断开瞬间：  还没写库
+12 秒后：   102 字 / interrupted   ← 不再增长
+```
+
+如果上游没停，GLM 会继续吐几千字。**内容停在 102 字不动，证明协作式取消生效了。**
+
+浏览器端验证（浅色/深色都测过）：点停止后出现「已停止生成」标记、光标消失、
+停止键换回发送键、**没有 ⚠️ 报错图标**（主动停止不是错误）、已生成内容保留；
+刷新页面后提问/回答/出处/思考过程全部恢复，被中断那轮仍标记为已停止。
+
+e2e 覆盖 5 条用例（[`interrupt-and-resume.spec.ts`](../frontend/e2e/interrupt-and-resume.spec.ts)）：
+停止按钮出现与生效、主动停止 vs 真出错的区分、历史恢复、中断状态恢复、无历史时显示欢迎页。
+
+### 踩到的一个真坑
+
+第一版只在 `onError` 里处理中断标记，结果点了停止**界面卡在生成中**——光标还转、
+停止键还在。原因是 **`abort()` 后 `reader.read()` 不一定抛异常，可能直接返回
+`done: true`**，于是走的是正常结束路径（`onDone` → `finishTyping`）而不是 `onError`。
+
+修法：`finishTyping()` 里也读 `userStoppedRef`。另外让 `stopGenerating()` 直接调
+`finishTyping()` 立即收尾——不然打字机会把积压的字慢慢吐完，用户按了停止却还在打字。
 
 ### 关于 tool_call 半截的问题
 
@@ -208,7 +218,14 @@ async def event_stream():
 都在回答同一个问题：**流式输出是一个"过程"，不是一次"结果"，所以每一层都要能处理
 "中间状态"。**
 
-- UI 层：中间状态会来几百次 → 别每次都全量重绘（**已做**）
-- 传输层：中间状态可能断在任何一刻 → 要能重连、要能优雅收场（**部分**）
-- 生成层：中间状态要能存档 → 检查点（**未做**）
-- 数据层：中间状态可能被重复写入 → 幂等（**未做，但目前不写库所以没坑**）
+- UI 层：中间状态会来几百次 → 别每次都全量重绘（✅ 30fps 节流 + memo 隔离）
+- 传输层：中间状态可能断在任何一刻 → 要能优雅收场（✅ AbortSignal + 断连检测）
+- 生成层：中间状态要能存档 → 检查点（✅ `chat_turns` 存 partial + status）
+- 数据层：中间状态可能被重复写入 → 幂等（✅ 主键 + `ON CONFLICT DO UPDATE`）
+
+### 还没做的
+
+**断线自动重连**。现在网络断了（不是用户主动停）不会自动续上，只会当作一次中断
+收尾。要做需要给 SSE 事件加序号，重连时带 `Last-Event-ID` 让后端从那之后继续推——
+但受限于「模型不支持从半截继续生成」，重连能恢复的只是**传输**，不是**生成**。
+对本地单人使用的场景收益有限，所以没做。

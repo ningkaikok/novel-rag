@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -29,7 +30,14 @@ import ingest  # noqa: E402
 from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL, TOP_K  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
-from postgres import connect, has_index  # noqa: E402
+from postgres import (  # noqa: E402
+    connect,
+    ensure_chat_schema,
+    has_index,
+    load_turns,
+    next_turn_index,
+    save_turn,
+)
 from embedder import load_embedder  # noqa: E402
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
@@ -45,6 +53,12 @@ async def lifespan(app: FastAPI):
         "[models] 云端可选："
         f"{claude_cli.claude_model_options() + zhipu.model_options()}"
     )
+    # 对话历史表（幂等建表，和向量索引分开，重建索引不会清空聊天记录）
+    try:
+        ensure_chat_schema()
+    except Exception as exc:
+        # 建表失败只影响"刷新后恢复历史"，问答本身不受影响，所以不阻断启动
+        print(f"[chat] 对话历史表初始化失败（会话持久化不可用）：{exc}")
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
@@ -76,6 +90,9 @@ app.add_middleware(
 class AskRequest(BaseModel):
     question: str
     top_k: int = TOP_K
+    # 可选：带上会话 ID 就把这一轮问答落库，刷新页面后能恢复。
+    # 不传则完全不落库，行为跟以前一致（纯内存对话）。
+    session_id: str | None = None
 
 
 class BookList(BaseModel):
@@ -184,8 +201,26 @@ def search(
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
+_SENTINEL = object()  # 线程池里取不到下一个 token 时的哨兵，区别于"取到了 None"
+
+
+def _next_or_sentinel(iterator):
+    """在线程里取生成器的下一个元素；取完返回哨兵而不是抛 StopIteration。
+
+    StopIteration 不能穿过 await 边界（会变成 RuntimeError），所以用哨兵传递结束。
+    """
+    return next(iterator, _SENTINEL)
+
+
 @app.post("/api/ask")
-def ask(req: AskRequest):
+async def ask(req: AskRequest, request: Request):
+    """流式回答。支持用户中断：前端 abort 后，这里会停止向上游模型要 token。
+
+    刻意写成 async def（而不是同步 def）：只有在协程里才能 await 出让控制权，
+    从而定期检查 `request.is_disconnected()`。写成同步函数时 FastAPI 会丢进线程池，
+    客户端断开后那个线程仍会把生成跑到底——白烧本地 GPU，或继续消耗用户的
+    Claude/GLM 付费额度。这不是优化，是避免"用户点了停止还在扣他的钱"。
+    """
     rag: NovelRAG | None = state.get("rag")
     if rag is None:
         raise HTTPException(409, "书架为空或索引未建立，请先上传小说")
@@ -195,17 +230,29 @@ def ask(req: AskRequest):
     sources, trace = rag.retrieve_hybrid_traced(req.question, top_k=req.top_k)
     context_sources = rag.expand_neighbors(sources)
     model = state["model"]
+    payload = [
+        {"novel": s.novel, "chunk_id": s.chunk_id, "text": s.text} for s in sources
+    ]
 
-    def event_stream():
+    # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
+    session_id = req.session_id
+    user_index = assistant_index = None
+    if session_id:
+        try:
+            user_index = next_turn_index(session_id)
+            assistant_index = user_index + 1
+            save_turn(session_id, user_index, "user", req.question)
+        except Exception as exc:  # 落库失败不该让提问功能不可用
+            print(f"[chat] 保存提问失败（忽略，不影响回答）：{exc}")
+            session_id = None
+
+    async def event_stream():
         # 先把「思考过程」发出去，让用户在等生成时就能看到检索是怎么做的
         yield f"event: trace\ndata: {json.dumps(trace, ensure_ascii=False)}\n\n"
         # 再把来源发出，前端可立即渲染出处
-        payload = [
-            {"novel": s.novel, "chunk_id": s.chunk_id, "text": s.text}
-            for s in sources
-        ]
         yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        # 再逐 token 流式推送答案：按模型名前缀路由到对应的生成后端
+
+        # 逐 token 流式推送答案：按模型名前缀路由到对应的生成后端
         # claude:xxx → 本地 Claude Code CLI（用户自己的订阅）
         # glm:xxx    → 智谱开放平台（用户自己的 ZHIPU_API_KEY）
         # 其余       → 本地 Ollama
@@ -219,11 +266,59 @@ def ask(req: AskRequest):
             )
         else:
             token_iter = rag.generate_stream(req.question, context_sources, model=model)
-        for chunk in token_iter:
-            yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        yield "event: done\ndata: {}\n\n"
+
+        parts: list[str] = []
+        interrupted = False
+        try:
+            while True:
+                # 三个生成后端都是同步生成器，直接在协程里 for 会阻塞事件循环、
+                # 导致下面的断连检查永远等不到机会执行。放线程池里逐个取，
+                # 每个 await 都是一次让出控制权的机会。
+                chunk = await run_in_threadpool(_next_or_sentinel, token_iter)
+                if chunk is _SENTINEL:
+                    break
+                if not chunk:
+                    continue
+                parts.append(chunk)
+                yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                # 协作式取消：不强杀线程，而是发现客户端走了就自己收手，
+                # 并且关掉生成器（close() 会让上游 requests/subprocess 连接断开，
+                # 停止继续向 Ollama/GLM 索取 token）。
+                if await request.is_disconnected():
+                    interrupted = True
+                    break
+        finally:
+            if interrupted:
+                token_iter.close()
+            if session_id and assistant_index is not None:
+                try:
+                    save_turn(
+                        session_id,
+                        assistant_index,
+                        "assistant",
+                        "".join(parts),
+                        sources=payload,
+                        trace=trace,
+                        status="interrupted" if interrupted else "complete",
+                    )
+                except Exception as exc:
+                    print(f"[chat] 保存回答失败（忽略）：{exc}")
+
+        if not interrupted:
+            yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ----------------------------------------------------------------- 会话历史
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str):
+    """读回某个会话的全部对话，用于刷新页面后恢复界面。"""
+    try:
+        turns = load_turns(session_id)
+    except Exception as exc:
+        raise HTTPException(500, f"读取会话失败：{exc}") from exc
+    return {"session_id": session_id, "turns": turns}
 
 
 # ----------------------------------------------------------------- 模型切换
