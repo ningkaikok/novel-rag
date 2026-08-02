@@ -149,6 +149,8 @@ function Main() {
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 是否显示「跳到最近回答」浮动按钮：用户往上翻看历史/出处、离底部较远时出现
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   // 打字机队列：待输出的字符、定时器、以及"后端已推完"的标记
   const queueRef = useRef("");
   const timerRef = useRef<number | null>(null);
@@ -175,6 +177,28 @@ function Main() {
     });
     return () => cancelAnimationFrame(id);
   }, [messages]);
+
+  // 监听手动滚动：离底部较远时出现「跳到最近回答」按钮，方便翻看历史后一键回到底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const JUMP_THRESHOLD = 200;
+    function handleScroll() {
+      const el = scrollRef.current;
+      if (!el) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowJumpToLatest(distanceFromBottom > JUMP_THRESHOLD);
+    }
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  function jumpToLatest() {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }
 
   async function refreshBooks() {
     try {
@@ -341,11 +365,23 @@ function Main() {
             <p className="hero-sub">读过的小说，随时问它 —— 你的私人阅读助手</p>
           </header>
 
-          <div className="chat" ref={scrollRef}>
-            {messages.length === 0 ? (
-              <Welcome onPick={ask} />
-            ) : (
-              messages.map((m, i) => <MessageBubble key={i} msg={m} />)
+          <div className="chat-wrap">
+            <div className="chat" ref={scrollRef}>
+              {messages.length === 0 ? (
+                <Welcome onPick={ask} />
+              ) : (
+                messages.map((m, i) => <MessageBubble key={i} msg={m} />)
+              )}
+            </div>
+            {showJumpToLatest && messages.length > 0 && (
+              <Button
+                className="jump-to-latest"
+                shape="round"
+                size="small"
+                onClick={jumpToLatest}
+              >
+                ↓ 跳到最近回答
+              </Button>
             )}
           </div>
 
