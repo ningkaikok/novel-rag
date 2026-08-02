@@ -90,7 +90,8 @@ python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
 
 - 前缀 `<type>(<scope>):` 用英文小写，description 可以用中文。
 - 只有 `feat` / `fix` / `perf` / `refactor` 会进 CHANGELOG。
-- CHANGELOG 从用户视角写，可用 `git cliff --unreleased --prepend CHANGELOG.md` 生成后再润色。
+- CHANGELOG 从用户视角写。生成命令见 [CLAUDE.md](CLAUDE.md)（用 `--output` 到临时文件
+  再跑 `scripts/merge_changelog.py`，**不要用 `--prepend`**），生成后仍需润色。
 
 ## 版权红线
 
