@@ -32,9 +32,9 @@ jobs:
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
+          # --prepend 自身就会把结果写回该文件，所以不要再设 env.OUTPUT——
+          # 那会额外传一个 -o，git-cliff 拒绝 -o 和 -p 指向同一个文件并直接报错。
           args: --unreleased --prepend CHANGELOG.md
-        env:
-          OUTPUT: CHANGELOG.md
 
       - name: 有变化就开 PR
         uses: peter-evans/create-pull-request@v8
