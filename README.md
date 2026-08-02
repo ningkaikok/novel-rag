@@ -1,5 +1,10 @@
 # 小说 RAG 查询系统
 
+[![CI](https://img.shields.io/github/actions/workflow/status/ningkaikok/novel-rag/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ningkaikok/novel-rag/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/ningkaikok/novel-rag?label=License&color=blue)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](requirements.txt)
+[![React](https://img.shields.io/badge/React-18-20232a?logo=react&logoColor=61DAFB)](frontend/package.json)
+
 基于本地向量检索的小说问答 demo。检索和 Embedding 全部在本机运行；生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅（见下文"切换生成模型"）。
 
 技术栈：
