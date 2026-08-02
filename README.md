@@ -1,6 +1,7 @@
 # 小说 RAG 查询系统
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ningkaikok/novel-rag/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ningkaikok/novel-rag/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ningkaikok/novel-rag?label=release&color=orange)](https://github.com/ningkaikok/novel-rag/releases/latest)
 [![License](https://img.shields.io/github/license/ningkaikok/novel-rag?label=License&color=blue)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](requirements.txt)
 [![React](https://img.shields.io/badge/React-18-20232a?logo=react&logoColor=61DAFB)](frontend/package.json)
