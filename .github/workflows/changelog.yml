@@ -9,6 +9,8 @@ name: 更新 CHANGELOG
 on:
   push:
     branches: [main]
+  # 也允许在 GitHub 网页上手动触发（Actions 页面的 "Run workflow" 按钮）
+  workflow_dispatch:
 
 # 只读 + 开 PR 需要的最小权限；不需要 admin 之类的大权限。
 permissions:
@@ -21,20 +23,27 @@ jobs:
     runs-on: ubuntu-latest
     # 跳过 bot 自己合并 CHANGELOG PR 触发的这次 push，避免无限循环：
     # bot 合并 PR → 触发 push → 又生成 PR → ……
-    if: "!startsWith(github.event.head_commit.message, 'docs(changelog):')"
+    # 手动触发（workflow_dispatch）时没有 head_commit，用 || 兜住让它照常执行。
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'docs(changelog):')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # git-cliff 需要完整历史和 tag 才能正确分段，浅克隆会漏掉早期提交
           fetch-depth: 0
 
-      - name: 运行 git-cliff
+      # 先把生成结果吐到临时文件，再用脚本只替换「未发布」段。
+      # 不用 --prepend：它会往文件最前面硬插一整块（含重复的「# 更新日志」标题），
+      # 把手写的格式说明挤下去，跑几次结构就乱了——实测确认过这个问题。
+      - name: 运行 git-cliff 生成「未发布」段
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          # --prepend 自身就会把结果写回该文件，所以不要再设 env.OUTPUT——
-          # 那会额外传一个 -o，git-cliff 拒绝 -o 和 -p 指向同一个文件并直接报错。
-          args: --unreleased --prepend CHANGELOG.md
+          args: --unreleased --strip header --output /tmp/unreleased.md
+
+      - name: 只替换 CHANGELOG 的「未发布」段
+        run: python3 scripts/merge_changelog.py /tmp/unreleased.md CHANGELOG.md
 
       - name: 有变化就开 PR
         uses: peter-evans/create-pull-request@v8
@@ -42,14 +51,17 @@ jobs:
           commit-message: "docs(changelog): 自动更新 CHANGELOG"
           title: "docs(changelog): 自动更新 CHANGELOG"
           body: |
-            由 [changelog workflow](../blob/main/.github/workflows/changelog.yml)
-            自动生成：`git cliff --unreleased --prepend CHANGELOG.md`。
+            由 [changelog workflow](../blob/main/.github/workflows/changelog.yml) 自动生成：
+            `git cliff --unreleased --strip header` 生成「未发布」段，再由
+            [`scripts/merge_changelog.py`](../blob/main/scripts/merge_changelog.py)
+            只替换 CHANGELOG.md 里的这一段，手写的说明和历史记录不会被动。
 
             按 [CLAUDE.md](../blob/main/CLAUDE.md) 的规范，条目直接取自 commit
             description，所以**合并前请扫一眼**：太技术的表述改成用户看得懂的话
             （"从用户视角写"这条规范要靠人把关，工具做不到）。
 
-            没有新的 feat/fix/perf/refactor 提交时不会创建这个 PR。
+            只有 `feat`/`fix`/`perf`/`refactor` 提交会进 CHANGELOG；
+            没有这类新提交时内容无变化，不会创建这个 PR。
           branch: chore/auto-changelog
           # 同一个分支反复更新，不会堆积一堆 PR
           delete-branch: true
