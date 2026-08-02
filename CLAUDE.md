@@ -1,5 +1,26 @@
 # 项目约定
 
+## 分支与合并流程
+
+`main` 分支已开启保护（2026-08-01 起）：禁止 force push、禁止删除，且**必须走 PR
+并通过 CI 才能合并**——`git push origin main` 直推会被拒绝，这不是配置错误，是
+GitHub 的既定行为：required status checks 只在 PR 合并时生效，因为一个刚创建、
+从未跑过 CI 的 commit 天然没有"检查通过"的记录，直推必然被拒。
+
+因此改动流程固定为：
+
+```bash
+git checkout -b feat/xxx                    # 从 main 切新分支，分支名建议对应 commit 的 type/scope
+# ...改代码、按 Conventional Commits 提交...
+git push -u origin feat/xxx
+gh pr create --fill                         # 或写清楚标题正文
+# 等 GitHub Actions 的两个检查（前端类型检查、后端导入检查）跑绿
+gh pr merge --squash --delete-branch        # 通过后合并，squash 保持 main 历史整洁
+```
+
+**不要试图先推到 main 探路**——会被 protected branch hook 拒绝，属于预期行为，
+不用怀疑是不是权限或网络问题，直接切分支走 PR 即可。
+
 ## Git 提交规范
 
 使用 [Conventional Commits](https://www.conventionalcommits.org/)。
