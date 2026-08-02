@@ -15,6 +15,7 @@ import {
   deleteBook,
   listBooks,
   listModels,
+  loadSession,
   reindex,
   setModel as apiSetModel,
   uploadBooks,
@@ -86,6 +87,23 @@ const TICK_MS = 33;
 const MIN_CHARS_PER_TICK = 2;
 const CATCH_UP_TICKS = 42; // 目标：约 42 帧（≈1.4s）内清空当前积压
 
+// 会话 ID 存在 localStorage：刷新页面后还能拿同一个 ID 把历史捞回来。
+// 用 sessionStorage 会在关标签页时丢失，用 localStorage 更符合"我的阅读记录"的预期。
+const SESSION_KEY = "novel-rag-session-id";
+
+function getOrCreateSessionId(): string {
+  try {
+    const saved = localStorage.getItem(SESSION_KEY);
+    if (saved) return saved;
+    const fresh = crypto.randomUUID();
+    localStorage.setItem(SESSION_KEY, fresh);
+    return fresh;
+  } catch {
+    // 隐私模式等禁用 storage 的场景：退化成一次性会话，不落库也不报错
+    return crypto.randomUUID();
+  }
+}
+
 function usePrefersDark() {
   const [isDark, setIsDark] = useState(
     () =>
@@ -155,10 +173,16 @@ function Main() {
   const queueRef = useRef("");
   const timerRef = useRef<number | null>(null);
   const streamEndedRef = useRef(false);
+  // 当前这次生成的中断句柄；Stop 按钮调它的 abort()
+  const abortRef = useRef<AbortController | null>(null);
+  // 用户主动中断的标记：用来区分「点了停止」和「真的出错了」，两者提示文案不同
+  const userStoppedRef = useRef(false);
+  const sessionIdRef = useRef<string>(getOrCreateSessionId());
 
   useEffect(() => {
     refreshBooks();
     refreshModels();
+    restoreHistory();
   }, []);
 
   // 卸载时清掉定时器，避免在已销毁的组件上 setState
@@ -198,6 +222,28 @@ function Main() {
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
+  }
+
+  // 刷新页面后把这个会话之前的对话捞回来。
+  // 失败不提示：历史恢复是增强功能，拿不到就当新会话，不该打扰用户。
+  async function restoreHistory() {
+    try {
+      const turns = await loadSession(sessionIdRef.current);
+      if (turns.length === 0) return;
+      setMessages(
+        turns.map((t) => ({
+          role: t.role,
+          content: t.content,
+          sources: t.sources ?? undefined,
+          trace: t.trace ?? undefined,
+          // 历史消息一定不在流式中；被中断的那轮标出来，让用户知道内容不完整
+          streaming: false,
+          interrupted: t.status === "interrupted",
+        }))
+      );
+    } catch {
+      // 忽略：当作没有历史
+    }
   }
 
   async function refreshBooks() {
@@ -250,10 +296,16 @@ function Main() {
     stopTyping();
     const rest = queueRef.current;
     queueRef.current = "";
+    // 用户点过停止就标记为已中断——内容不完整，界面上要如实告知。
+    // 注意：abort 后 reader.read() 可能直接返回 done 而不抛异常，
+    // 于是走的是正常结束路径（onDone → finishTyping）而不是 onError，
+    // 所以中断标记必须在这里也处理，不能只放在 onError 里。
+    const stopped = userStoppedRef.current;
     patchLast((m) => ({
       ...m,
       content: m.content + rest,
       streaming: false,
+      interrupted: stopped || m.interrupted,
     }));
     setBusy(false);
   }
@@ -276,6 +328,19 @@ function Main() {
     }, TICK_MS);
   }
 
+  /** 用户点「停止」：切断网络层，后端随之停止向上游模型索取 token。
+   *
+   * 同时立刻收尾界面——不让打字机把积压的字慢慢吐完。用户按了停止就该马上停住，
+   * 已经收到的内容一次性补齐显示，不丢内容也不假装还在生成。
+   */
+  function stopGenerating() {
+    if (!busy) return;
+    userStoppedRef.current = true;
+    abortRef.current?.abort();
+    streamEndedRef.current = true;
+    finishTyping();
+  }
+
   async function ask(question: string) {
     if (busy || !question.trim()) return;
     setInput("");
@@ -287,36 +352,48 @@ function Main() {
     setBusy(true);
     queueRef.current = "";
     streamEndedRef.current = false;
+    userStoppedRef.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
     ensureTyping();
 
-    await askStream(question, topK, {
-      onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
-      onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
-      // 不直接落到界面上，先进队列，由定时器按字吐出
-      onToken: (t) => {
-        queueRef.current += t;
-        ensureTyping();
+    await askStream(
+      question,
+      topK,
+      {
+        onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
+        onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
+        // 不直接落到界面上，先进队列，由定时器按字吐出
+        onToken: (t) => {
+          queueRef.current += t;
+          ensureTyping();
+        },
+        onDone: () => {
+          streamEndedRef.current = true; // 队列吐完后由定时器收尾
+        },
+        onError: (e) => {
+          // 不再慢慢打了，把已收到的内容一次补齐
+          streamEndedRef.current = true;
+          stopTyping();
+          const rest = queueRef.current;
+          queueRef.current = "";
+          // 用户主动停止不是错误：保留已生成的内容、标记为已中断，不显示报错文案。
+          // 只有真的失败（网络、后端 5xx）才显示 ⚠️。
+          const stopped = userStoppedRef.current || e.name === "AbortError";
+          patchLast((m) => {
+            const content = m.content + rest;
+            return {
+              ...m,
+              streaming: false,
+              interrupted: stopped,
+              content: stopped ? content : content || `⚠️ ${e.message}`,
+            };
+          });
+          setBusy(false);
+        },
       },
-      onDone: () => {
-        streamEndedRef.current = true; // 队列吐完后由定时器收尾
-      },
-      onError: (e) => {
-        // 出错就不再慢慢打了，直接把已有内容补齐并显示错误
-        streamEndedRef.current = true;
-        stopTyping();
-        const rest = queueRef.current;
-        queueRef.current = "";
-        patchLast((m) => {
-          const content = m.content + rest;
-          return {
-            ...m,
-            streaming: false,
-            content: content || `⚠️ ${e.message}`,
-          };
-        });
-        setBusy(false);
-      },
-    });
+      { signal: controller.signal, sessionId: sessionIdRef.current }
+    );
   }
 
   async function withShelfToast(action: () => Promise<void>, done: string) {
@@ -436,15 +513,26 @@ function Main() {
               onChange={(e) => setInput(e.target.value)}
               onPressEnter={() => ask(input)}
             />
-            <Button
-              type="primary"
-              size="large"
-              disabled={busy || !input.trim()}
-              loading={busy}
-              onClick={() => ask(input)}
-            >
-              发送
-            </Button>
+            {busy ? (
+              // 生成中把发送键换成停止键：切断网络层，后端随之停止索取 token
+              <Button
+                size="large"
+                danger
+                className="stop-button"
+                onClick={stopGenerating}
+              >
+                ■ 停止
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                size="large"
+                disabled={!input.trim()}
+                onClick={() => ask(input)}
+              >
+                发送
+              </Button>
+            )}
           </div>
           <p className="footer-note">book worm · 基于你本地的小说，答案有据可查</p>
         </main>

@@ -95,17 +95,28 @@ interface AskHandlers {
   onError?: (err: Error) => void;
 }
 
-/** 发起提问并消费 SSE 流：先收到 sources，再逐 token 收 answer。 */
+/** 发起提问并消费 SSE 流：先收到 trace / sources，再逐 token 收 answer。
+ *
+ * signal 用于用户中断（Stop 按钮）：abort 后 fetch 抛 AbortError，
+ * 同时连接断开，后端检测到就会停止向上游模型索取 token。
+ * sessionId 传了就落库，刷新页面能恢复历史。
+ */
 export async function askStream(
   question: string,
   topK: number,
-  handlers: AskHandlers
+  handlers: AskHandlers,
+  options: { signal?: AbortSignal; sessionId?: string } = {}
 ): Promise<void> {
   try {
     const res = await fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, top_k: topK }),
+      body: JSON.stringify({
+        question,
+        top_k: topK,
+        session_id: options.sessionId,
+      }),
+      signal: options.signal,
     });
     if (!res.ok || !res.body) {
       throw new Error((await res.json().catch(() => ({}))).detail ?? "请求失败");
@@ -132,6 +143,23 @@ export async function askStream(
   } catch (err) {
     handlers.onError?.(err as Error);
   }
+}
+
+// 后端存下来的一轮对话（用于刷新页面后恢复）
+export interface StoredTurn {
+  turn_index: number;
+  role: "user" | "assistant";
+  content: string;
+  sources: Source[] | null;
+  trace: TraceStep[] | null;
+  status: "complete" | "interrupted";
+}
+
+/** 读回某个会话的历史对话。会话不存在时返回空数组，不算错误。 */
+export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  if (!res.ok) throw new Error("读取会话历史失败");
+  return (await res.json()).turns ?? [];
 }
 
 function handleEvent(raw: string, handlers: AskHandlers) {

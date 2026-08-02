@@ -8,6 +8,8 @@ export interface ChatMessage {
   sources?: Source[];
   trace?: TraceStep[];
   streaming?: boolean;
+  // 用户点了「停止」：内容是不完整的，界面上要明确告知，别让人以为这就是完整答案
+  interrupted?: boolean;
 }
 
 // 「思考过程」折叠面板：展示检索流水线每一步的真实动作。
@@ -126,6 +128,9 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           <div className="content">
             {msg.content}
             {msg.streaming && <span className="caret" />}
+            {msg.interrupted && (
+              <span className="interrupted-tag">已停止生成</span>
+            )}
           </div>
         )}
 
