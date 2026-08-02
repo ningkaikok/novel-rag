@@ -32,8 +32,17 @@ const Thinking = memo(function Thinking({
           key: "t",
           label: (
             <span className="thinking-panel-label">
-              🧠 思考过程
-              <span className="thinking-panel-count">{trace.length} 步</span>
+              🔍 思考过程
+              {live ? (
+                // 还在生成：标题右侧显示跳动的点（把原本独立的「正在翻书思考」合并进来）
+                <span className="thinking-dots" aria-label="生成中">
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                </span>
+              ) : (
+                <span className="thinking-panel-count">{trace.length} 步</span>
+              )}
             </span>
           ),
           children: (
@@ -88,25 +97,31 @@ const Sources = memo(function Sources({ sources }: { sources: Source[] }) {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
+  const hasTrace = !isUser && !!msg.trace && msg.trace.length > 0;
+  // 「等待正文」：流式中但正文还没到（模型推理/检索中）
+  const waiting = !!msg.streaming && !msg.content;
   return (
     <div className={`row ${isUser ? "row-user" : "row-bot"}`}>
       <Avatar className="avatar" size={36}>
         {isUser ? "🧑" : "📖"}
       </Avatar>
       <div className="bubble">
-        {!isUser && msg.trace && msg.trace.length > 0 && (
-          <Thinking trace={msg.trace} live={!!msg.streaming && !msg.content} />
+        {!isUser && hasTrace && (
+          <Thinking trace={msg.trace!} live={waiting} />
         )}
-        {msg.streaming && !msg.content ? (
-          // 正文还没到（模型思考/检索中）：显示跳动的思考指示，而不是空气泡
-          <div className="thinking" aria-live="polite">
-            <span className="thinking-dots">
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-              <span className="thinking-dot" />
-            </span>
-            <span className="thinking-label">正在翻书思考…</span>
-          </div>
+        {waiting ? (
+          // 正文还没到。trace 已经在的话，「生成中」由思考过程面板标题里的动画点表示，
+          // 这里不再重复；只有 trace 还没到的那一瞬（检索中）才显示独立的思考指示，避免空气泡。
+          !hasTrace && (
+            <div className="thinking" aria-live="polite">
+              <span className="thinking-dots">
+                <span className="thinking-dot" />
+                <span className="thinking-dot" />
+                <span className="thinking-dot" />
+              </span>
+              <span className="thinking-label">正在翻书思考…</span>
+            </div>
+          )
         ) : (
           <div className="content">
             {msg.content}
