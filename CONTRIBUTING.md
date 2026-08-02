@@ -18,15 +18,27 @@ cd frontend && npm run dev
 
 ## 提交前自查
 
-CI 会在每个 PR 上跑这两项，本地先过一遍能省一个来回：
+CI 会在每个 PR 上跑这三项，本地先过一遍能省一个来回：
 
 ```bash
 # 前端类型检查
 cd frontend && npx tsc --noEmit
 
+# 前端 e2e 测试（首次要装一次浏览器内核）
+cd frontend && npx playwright install --with-deps chromium   # 只需装一次
+cd frontend && npx playwright test
+
 # 后端导入（能抓语法错误、坏 import）
 python -c "import backend.main"
 ```
+
+e2e 测试在 `frontend/e2e/`，所有 `/api/*` 请求都在 `e2e/mock-api.ts` 里被拦截、
+返回固定假数据——**不需要真实后端、PostgreSQL、Ollama 或任何云端 key**，也不会消耗
+任何账号额度。改到 `App.tsx` / `MessageBubble.tsx` 这类前端交互逻辑时，顺手加一条
+对应的 e2e 用例；只改样式/文案一般不需要。
+
+> `@playwright/test` 版本锁定在 `1.50.0`（`package.json` 里不带 `^`），因为更新的版本
+> 要求 Node 20+，而本项目文档写的是 Node 18+。升级前先确认 Node 版本要求是否放宽。
 
 改到检索/切分逻辑时，跑一遍问答自查（需要先起后端）：
 
