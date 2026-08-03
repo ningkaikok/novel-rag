@@ -34,3 +34,6 @@ KEYWORD_GENERIC_LIMIT = int(os.environ.get("KEYWORD_GENERIC_LIMIT", 300))
 KEYWORD_MAX_TERMS = int(os.environ.get("KEYWORD_MAX_TERMS", 6))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
+
+# 后端日志级别（DEBUG/INFO/WARNING/ERROR）
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

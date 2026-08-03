@@ -24,7 +24,14 @@ from backend.dotenv_lite import load_env  # noqa: E402
 
 _ENV_KEYS = load_env(ROOT / ".env")
 
+# 尽早配置好 logging，确保下面（以及 lifespan 里）任何一条日志都带上格式和级别
+from backend.logging_config import configure_logging, get_logger  # noqa: E402
+
+configure_logging()
+logger = get_logger("main")
+
 from backend import claude_cli, zhipu  # noqa: E402
+from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AskRequest,
     BookList,
@@ -64,17 +71,16 @@ state: dict = {}
 async def lifespan(app: FastAPI):
     # 只打变量名不打值：既能确认密钥已加载，又不会把密钥写进日志
     if _ENV_KEYS:
-        print(f"[env] 已从 .env 加载：{', '.join(_ENV_KEYS)}")
-    print(
-        "[models] 云端可选："
-        f"{claude_cli.claude_model_options() + zhipu.model_options()}"
+        logger.info(f"已从 .env 加载：{', '.join(_ENV_KEYS)}")
+    logger.info(
+        f"云端可选模型：{claude_cli.claude_model_options() + zhipu.model_options()}"
     )
     # 对话历史表（幂等建表，和向量索引分开，重建索引不会清空聊天记录）
     try:
         ensure_chat_schema()
     except Exception as exc:
         # 建表失败只影响"刷新后恢复历史"，问答本身不受影响，所以不阻断启动
-        print(f"[chat] 对话历史表初始化失败（会话持久化不可用）：{exc}")
+        logger.warning(f"对话历史表初始化失败（会话持久化不可用）：{exc}")
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
@@ -100,6 +106,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 最后加的中间件在最外层（Starlette 的顺序），让 request-id 覆盖整个请求生命周期
+# （包括 CORS 预检），且不是 BaseHTTPMiddleware——不会缓冲 /api/ask 的 SSE 响应体。
+app.add_middleware(RequestIDMiddleware)
 
 
 # ----------------------------------------------------------------- 书架
@@ -244,7 +253,7 @@ async def ask(req: AskRequest, request: Request):
             assistant_index = user_index + 1
             save_turn(session_id, user_index, "user", req.question)
         except Exception as exc:  # 落库失败不该让提问功能不可用
-            print(f"[chat] 保存提问失败（忽略，不影响回答）：{exc}")
+            logger.warning(f"保存提问失败（忽略，不影响回答）：{exc}")
             session_id = None
 
     async def event_stream():
@@ -303,7 +312,7 @@ async def ask(req: AskRequest, request: Request):
                         status="interrupted" if interrupted else "complete",
                     )
                 except Exception as exc:
-                    print(f"[chat] 保存回答失败（忽略）：{exc}")
+                    logger.warning(f"保存回答失败（忽略）：{exc}")
 
         if not interrupted:
             yield "event: done\ndata: {}\n\n"
