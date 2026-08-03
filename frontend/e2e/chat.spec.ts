@@ -64,7 +64,10 @@ test.describe("提问与流式回答", () => {
     await mockApi(page);
     // 单独覆盖 /api/ask，让它返回失败
     await page.route("**/api/ask", async (route) => {
-      await route.fulfill({ status: 500, json: { detail: "书架为空或索引未建立" } });
+      await route.fulfill({
+        status: 500,
+        json: { error: { code: "index_not_ready", message: "书架为空或索引未建立" } },
+      });
     });
     await page.goto("/");
 

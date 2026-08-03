@@ -55,8 +55,9 @@ def test_set_model_rejects_unavailable_model(client, monkeypatch):
     resp = client.post("/api/model", json={"model": "不存在的模型"})
 
     assert resp.status_code == 400
-    # 目前还是 FastAPI 默认的 {"detail": "..."} 形状——统一错误 schema 是另一项改造
-    assert "不可用" in resp.json()["detail"]
+    body = resp.json()
+    assert body["error"]["code"] == "model_unavailable"
+    assert "不可用" in body["error"]["message"]
 
 
 def test_set_model_accepts_available_model(client, monkeypatch):

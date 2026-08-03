@@ -32,7 +32,10 @@ test.describe("上传小说", () => {
     await mockApi(page);
     await page.route("**/api/books", async (route) => {
       if (route.request().method() === "POST") {
-        await route.fulfill({ status: 400, json: { detail: "没有有效的 .txt 文件" } });
+        await route.fulfill({
+          status: 400,
+          json: { error: { code: "no_valid_files", message: "没有有效的 .txt 文件" } },
+        });
       } else {
         await route.fulfill({ json: { books: [] } });
       }
