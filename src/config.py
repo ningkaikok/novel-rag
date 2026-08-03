@@ -24,5 +24,13 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 TOP_K = int(os.environ.get("TOP_K", 5))
 # 召回候选数量。候选池大于最终上下文，避免过早截断相关片段。
 RECALL_K = int(os.environ.get("RECALL_K", 20))
+# 关键词召回按问题分词后逐词匹配；某个词命中的片段数超过这个值就跳过它——
+# 太常见的词（比如主角名，几乎每页都出现）起不到筛选作用，反而会把结果
+# 变成"这本书随便哪几段"，不如不用它做关键词。
+KEYWORD_GENERIC_LIMIT = int(os.environ.get("KEYWORD_GENERIC_LIMIT", 300))
+# 问题分词后最多取几个词去查——每个候选词都要先查一次命中数（判断是否太常见），
+# 问题很长、分词很碎时词数可能到十几个，全部都查会让一次问答多花好几秒。
+# 封顶后优先保留更长的词（通常是人名、专有名词，比短的虚词/动词更有筛选价值）。
+KEYWORD_MAX_TERMS = int(os.environ.get("KEYWORD_MAX_TERMS", 6))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))

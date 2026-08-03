@@ -160,6 +160,8 @@ python src/ingest.py
 | `TOP_K` | `5` | 每次检索的片段数量 |
 | `RECALL_K` | `20` | 关键词和向量检索各自召回的候选片段数量 |
 | `CONTEXT_NEIGHBORS` | `1` | 问答时每个命中片段前后额外带入的相邻片段数 |
+| `KEYWORD_GENERIC_LIMIT` | `300` | 分词后的关键词命中片段数超过这个值就跳过（太常见起不到筛选作用） |
+| `KEYWORD_MAX_TERMS` | `6` | 分词后最多取几个关键词去检索，问题很长时避免逐词查询拖慢响应 |
 | `ZHIPU_API_KEY` | 空 | 智谱开放平台 API Key，设置后界面出现 GLM 模型分组 |
 | `ZHIPU_API_URL` | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | 智谱 chat completions 接口地址 |
 

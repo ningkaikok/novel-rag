@@ -4,18 +4,60 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+import jieba
 import requests
 from sentence_transformers import SentenceTransformer
 
 from embedder import load_embedder
 from config import (
     CONTEXT_NEIGHBORS,
+    KEYWORD_GENERIC_LIMIT,
+    KEYWORD_MAX_TERMS,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     RECALL_K,
     TOP_K,
 )
 from postgres import connect, has_index, vector_literal
+
+# 分词后过滤掉的常见虚词/疑问词——这些词本身不携带查找价值，留着只会拉低
+# 关键词质量（比如"哪些"在任何问题里都可能出现，对定位原文毫无帮助）。
+# 只是一份实用够用的手工列表，不追求学术级别的停用词覆盖率。
+_STOPWORDS = frozenset({
+    "的", "了", "是", "在", "有", "和", "与", "就", "都", "而", "及", "或",
+    "着", "过", "也", "还", "又", "但", "却", "让", "被", "把", "从", "到",
+    "对", "给", "向", "以", "为", "之", "其中", "这", "那", "一下", "一些",
+    "自己", "没有", "这些", "那些",
+    "什么", "哪些", "怎么", "为什么", "吗", "呢", "啊", "吧",
+    "可以", "可能", "应该", "会不会", "是不是", "有没有", "多少", "怎样",
+    "如何", "为何", "何时", "哪里", "哪个", "以及", "还有", "然后", "讲讲",
+    "详细", "介绍",
+})
+
+
+def _extract_keywords(question: str) -> list[str]:
+    """把问题分词，过滤掉虚词和过短的词，得到用于关键词检索的候选词表。
+
+    "韩立有哪些伴侣"分词后是 ["韩立", "有", "哪些", "伴侣"]，去掉虚词/疑问词后
+    剩 ["韩立", "伴侣"]——这两个词才是原文里真正可能逐字出现的内容词。
+    单字词一律跳过：中文单字（"的""了"之类）几乎都是虚词，即使不是虚词，
+    单字检索对缩小范围也没有帮助（比如"韩"字命中的片段和"韩立"命中的
+    几乎没区别，但会把不相关的"韩"姓配角片段也拉进来）。
+
+    每个候选词最终都要去数据库里查一次命中数（判断是否太常见，见
+    KEYWORD_GENERIC_LIMIT），问题很长、分词很碎时词数可能到十几个，全部都查
+    会让一次问答多花好几秒。所以按长度降序只保留前 KEYWORD_MAX_TERMS 个——
+    更长的词通常是人名、技能名这类专有名词，比短的动词/连接词更有筛选价值。
+    """
+    seen: list[str] = []
+    for word in jieba.cut(question.strip()):
+        word = word.strip()
+        if len(word) < 2 or word in _STOPWORDS:
+            continue
+        if word not in seen:
+            seen.append(word)
+    seen.sort(key=len, reverse=True)
+    return seen[:KEYWORD_MAX_TERMS]
 
 PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的原文片段回答问题。
 如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
@@ -221,39 +263,98 @@ class NovelRAG:
         top_k: int = TOP_K,
         only_novels: list[str] | None = None,
     ) -> list[SourceChunk]:
-        """先用原文关键词查找，确保人物名、专有名词和原句不会被向量检索漏掉。
+        """关键词检索：整句原文匹配 + 分词后逐词匹配，两路结果合并。
+
+        整句匹配对应"问题本身就是一句原文引用"的场景（少见但零成本，继续保留）。
+        更常见的是问题里含有原文会出现的词、但整句问题不会逐字出现——比如
+        "韩立有哪些伴侣"这句话本身不可能是原文，但"伴侣"两个字会。所以额外
+        把问题分词，找出候选词里命中片段数不算太多的（太常见的词比如主角名
+        起不到筛选作用，见 KEYWORD_GENERIC_LIMIT 的注释），逐个再查一遍。
 
         only_novels 非空时把搜索范围限定在这些书内。
         """
-        needle = question.strip().casefold()
-        if not needle:
+        question = question.strip()
+        if not question:
             return []
-        scope = "AND novel = ANY(%s)" if only_novels else ""
-        params: list = [needle]
-        if only_novels:
-            params.append(only_novels)
-        params.append(top_k)
+        scope_novels = "AND novel = ANY(%s)" if only_novels else ""
+
         with connect() as conn:
-            rows = conn.execute(
+            exact_rows = conn.execute(
                 f"""
                 SELECT novel, chunk_id, text
                 FROM novel_chunks
                 WHERE position(lower(%s) in lower(text)) > 0
-                {scope}
+                {scope_novels}
                 ORDER BY novel, chunk_id
                 LIMIT %s
                 """,
-                params,
+                [question.casefold(), *([only_novels] if only_novels else []), top_k],
             ).fetchall()
-        return [
-            SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                distance=0.0,
+
+            keyword_rows: list = []
+            keywords = _extract_keywords(question)
+            usable_keywords = []
+            if keywords:
+                # 每个候选词都要先知道命中数才能判断是否太常见（见下方过滤），
+                # 但逐词分别 COUNT 等于对全表扫描了 N 次。这里用一条 SQL 里
+                # 多个 SUM(CASE WHEN ...) 同时算出所有词的命中数，只扫一次表——
+                # 问题分词很碎、词数较多时，性能差距是几倍到十倍。
+                count_columns = ", ".join(
+                    f"SUM(CASE WHEN position(lower(%s) in lower(text)) > 0 "
+                    f"THEN 1 ELSE 0 END) AS c{i}"
+                    for i in range(len(keywords))
+                )
+                count_params: list = [kw.casefold() for kw in keywords]
+                if only_novels:
+                    count_params.append(only_novels)
+                counts = conn.execute(
+                    f"SELECT {count_columns} FROM novel_chunks WHERE TRUE {scope_novels}",
+                    count_params,
+                ).fetchone()
+                for i, kw in enumerate(keywords):
+                    count = counts[f"c{i}"] or 0
+                    # 命中太多说明这个词太常见（比如几乎每页都出现的主角名），
+                    # 起不到缩小范围的作用，跳过它，避免结果变成"随便哪几段"。
+                    if 0 < count <= KEYWORD_GENERIC_LIMIT:
+                        usable_keywords.append(kw)
+
+            if usable_keywords:
+                or_clause = " OR ".join(
+                    "position(lower(%s) in lower(text)) > 0" for _ in usable_keywords
+                )
+                params: list = [kw.casefold() for kw in usable_keywords]
+                if only_novels:
+                    params.append(only_novels)
+                params.append(top_k)
+                keyword_rows = conn.execute(
+                    f"""
+                    SELECT novel, chunk_id, text
+                    FROM novel_chunks
+                    WHERE ({or_clause}) {scope_novels}
+                    ORDER BY novel, chunk_id
+                    LIMIT %s
+                    """,
+                    params,
+                ).fetchall()
+
+        results: list[SourceChunk] = []
+        seen: set[tuple[str, int]] = set()
+        for row in [*exact_rows, *keyword_rows]:
+            key = (row["novel"], int(row["chunk_id"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(
+                SourceChunk(
+                    novel=row["novel"],
+                    chunk_id=int(row["chunk_id"]),
+                    text=row["text"],
+                    distance=0.0,
+                )
             )
-            for row in rows
-        ]
+            if len(results) >= top_k:
+                break
+        return results
 
     def positional_retrieve(
         self,
@@ -392,8 +493,14 @@ class NovelRAG:
         semantic_sources = self.retrieve(
             question, top_k=candidate_k, only_novels=named_novels
         )
+        # 关键词检索（分词后逐词匹配）如果不限定书的范围，像"伴侣"这种两本书
+        # 都会用到的常见词，会把不相关小说的片段也拉进来。这里先用语义召回的
+        # 结果猜一次书（没点名书名时），再拿这个猜测去收窄关键词检索——语义
+        # 检索本身不受这个范围限制，全书候选池仍然完整，只是关键词这一路
+        # 收窄了范围。
+        keyword_scope = named_novels or _dominant_novels(semantic_sources)
         keyword_sources = self.keyword_retrieve(
-            question, top_k=candidate_k, only_novels=named_novels
+            question, top_k=candidate_k, only_novels=keyword_scope
         )
         hint_novels = named_novels or _dominant_novels(
             semantic_sources + keyword_sources
