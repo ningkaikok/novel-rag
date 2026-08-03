@@ -37,3 +37,7 @@ CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
 
 # 后端日志级别（DEBUG/INFO/WARNING/ERROR）
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+
+# PostgreSQL 连接池大小（只有 FastAPI 后端会用到；独立脚本不建池子）
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", 1))
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", 10))
