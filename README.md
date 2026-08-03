@@ -163,6 +163,8 @@ python src/ingest.py
 | `KEYWORD_GENERIC_LIMIT` | `300` | 分词后的关键词命中片段数超过这个值就跳过（太常见起不到筛选作用） |
 | `KEYWORD_MAX_TERMS` | `6` | 分词后最多取几个关键词去检索，问题很长时避免逐词查询拖慢响应 |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
+| `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
+| `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |
 | `ZHIPU_API_KEY` | 空 | 智谱开放平台 API Key，设置后界面出现 GLM 模型分组 |
 | `ZHIPU_API_URL` | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | 智谱 chat completions 接口地址 |
 

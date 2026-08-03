@@ -54,9 +54,11 @@ from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
 from postgres import (  # noqa: E402
+    close_pool,
     connect,
     ensure_chat_schema,
     has_index,
+    init_pool,
     load_turns,
     next_turn_index,
     save_turn,
@@ -75,6 +77,15 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"云端可选模型：{claude_cli.claude_model_options() + zhipu.model_options()}"
     )
+    # 连接池要在其他任何用到 connect() 的操作之前建好，这样 ensure_chat_schema、
+    # 后面每次请求的检索/会话持久化都能直接复用池子里的连接，不用逐次握手。
+    try:
+        init_pool()
+        logger.info("PostgreSQL 连接池已就绪")
+    except Exception as exc:
+        # 数据库暂时连不上：不阻断启动，connect() 会退化为逐次新建连接
+        # （行为和引入连接池之前完全一样），书架管理等不依赖索引的功能仍可用。
+        logger.warning(f"PostgreSQL 连接池初始化失败（退化为逐次新建连接）：{exc}")
     # 对话历史表（幂等建表，和向量索引分开，重建索引不会清空聊天记录）
     try:
         ensure_chat_schema()
@@ -88,6 +99,7 @@ async def lifespan(app: FastAPI):
     state["model"] = OLLAMA_MODEL  # 当前用于生成回答的模型，可通过 /api/model 动态切换
     yield
     state.clear()
+    close_pool()
 
 
 def _try_load_rag() -> NovelRAG | None:
