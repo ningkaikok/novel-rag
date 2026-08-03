@@ -68,16 +68,9 @@ python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
    gh secret set FEISHU_WEBHOOK_SECRET    # 如果开了签名校验，同样设置
    ```
 
-3. 下一次 push 或 PR 触发 CI 时就会收到消息，格式类似：
-
-   ```
-   【ningkaikok/novel-rag】CI ❌ 有检查未通过
-   分支/PR：main　提交：abcdef1　触发人：ningkaikok（push）
-   ✅ 前端类型检查：success
-   ✅ 前端 e2e 测试：success
-   ❌ 后端导入检查：failure
-   详情：https://github.com/ningkaikok/novel-rag/actions/runs/xxxxx
-   ```
+3. 下一次 push 或 PR 触发 CI 时就会收到一张卡片消息：全部通过是绿色标题，
+   有检查没过是红色；内容包含分支/PR、提交、触发人，Push 触发时带上这次提交信息，
+   PR 触发时带上 PR 标题和链接，底部有个「查看详情」按钮直接跳到这次运行。
 
 `notify` job 没有被列入 main 分支保护的必需检查（见下方「main 已开启保护」），
 所以就算飞书配置错了（比如密钥填错、机器人被移出群），也只会让这一个 job 显示失败，
