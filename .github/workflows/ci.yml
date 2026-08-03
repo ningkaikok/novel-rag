@@ -69,6 +69,10 @@ jobs:
         # backend.main 在导入时不会连数据库、也不会下载模型，
         # 这两件事都发生在 FastAPI lifespan 里，所以纯导入是安全且快速的冒烟检查。
         run: python -c "import backend.main; print('backend import OK')"
+      - name: 运行 pytest（单元测试，不依赖真实数据库/模型）
+        # tests/backend/ 下的用例全部用 mock/monkeypatch，不需要真实
+        # PostgreSQL、Ollama 或任何云端 key。
+        run: python -m pytest
 
   notify:
     name: 飞书通知

@@ -30,12 +30,19 @@ cd frontend && npx playwright test
 
 # 后端导入（能抓语法错误、坏 import）
 python -c "import backend.main"
+
+# 后端单元测试
+python -m pytest
 ```
 
 e2e 测试在 `frontend/e2e/`，所有 `/api/*` 请求都在 `e2e/mock-api.ts` 里被拦截、
 返回固定假数据——**不需要真实后端、PostgreSQL、Ollama 或任何云端 key**，也不会消耗
 任何账号额度。改到 `App.tsx` / `MessageBubble.tsx` 这类前端交互逻辑时，顺手加一条
 对应的 e2e 用例；只改样式/文案一般不需要。
+
+`tests/backend/` 下是后端的 pytest 单元测试，同样全部用 mock/monkeypatch，
+不需要真实数据库、Ollama 或云端 key。改到 `backend/` 或 `src/` 下的逻辑时，
+顺手补一条对应用例。
 
 > `@playwright/test` 版本锁定在 `1.50.0`（`package.json` 里不带 `^`），因为更新的版本
 > 要求 Node 20+，而本项目文档写的是 Node 18+。升级前先确认 Node 版本要求是否放宽。

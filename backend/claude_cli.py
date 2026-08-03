@@ -72,7 +72,23 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
                     yield text
     finally:
         proc.stdout.close()
-        returncode = proc.wait(timeout=10)
-        if returncode != 0:
+        if proc.poll() is None:
+            # 还在跑——大概率是调用方 token_iter.close() 触发了 GeneratorExit
+            # （用户点了「停止」）。只关我们这端的读管道不够：子进程如果当时
+            # 不在写 stdout（比如正等着 Anthropic 的 API 响应），不会立刻收到
+            # SIGPIPE 退出，可能继续跑到自然结束——那样用户点了停止，
+            # 还在悄悄消耗 Claude 订阅额度。必须主动发信号终止。
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        returncode = proc.returncode
+        # >0 才是 CLI 自己失败退出；0 是正常结束，负数是被信号杀死
+        # （很可能就是上面我们自己发的 terminate/kill）——这两种都不该在这里
+        # 抛异常：中断是预期行为，不是失败，抛出去只会掩盖调用方的 GeneratorExit，
+        # 让 token_iter.close() 意外抛错。
+        if returncode is not None and returncode > 0:
             err = proc.stderr.read()
             raise RuntimeError(f"claude CLI 调用失败（exit {returncode}）：{err.strip()}")
