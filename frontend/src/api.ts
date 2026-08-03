@@ -1,5 +1,17 @@
 // 与 FastAPI 后端通信的封装。开发期 /api 由 Vite 代理到 http://localhost:8000
 
+// 后端统一的错误响应形状：{"error": {"code": ..., "message": ...}}。
+// 不管是业务代码主动抛的错误、还是 FastAPI 自己的请求校验错误、
+// 还是完全没预料到的异常，都是这个形状，这里只用得到 message。
+async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    return body?.error?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface Source {
   novel: string;
   chunk_id: number;
@@ -36,7 +48,7 @@ export async function searchBooks(
   if (book) params.set("book", book);
   const res = await fetch(`/api/search?${params.toString()}`);
   if (!res.ok) {
-    throw new Error((await res.json().catch(() => ({}))).detail ?? "全文搜索失败");
+    throw new Error(await extractErrorMessage(res, "全文搜索失败"));
   }
   return await res.json();
 }
@@ -51,14 +63,14 @@ export async function uploadBooks(files: FileList | File[]): Promise<void> {
   const form = new FormData();
   for (const f of Array.from(files)) form.append("files", f);
   const res = await fetch("/api/books", { method: "POST", body: form });
-  if (!res.ok) throw new Error((await res.json()).detail ?? "上传失败");
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "上传失败"));
 }
 
 export async function deleteBook(name: string): Promise<void> {
   const res = await fetch(`/api/books/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error((await res.json()).detail ?? "删除失败");
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "删除失败"));
 }
 
 export async function reindex(): Promise<{ chunk_count: number }> {
@@ -74,7 +86,7 @@ export interface ModelsInfo {
 
 export async function listModels(): Promise<ModelsInfo> {
   const res = await fetch("/api/models");
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? "获取模型列表失败");
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取模型列表失败"));
   return await res.json();
 }
 
@@ -119,7 +131,7 @@ export async function askStream(
       signal: options.signal,
     });
     if (!res.ok || !res.body) {
-      throw new Error((await res.json().catch(() => ({}))).detail ?? "请求失败");
+      throw new Error(await extractErrorMessage(res, "请求失败"));
     }
 
     const reader = res.body.getReader();

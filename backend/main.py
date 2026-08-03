@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -31,6 +31,7 @@ configure_logging()
 logger = get_logger("main")
 
 from backend import claude_cli, zhipu  # noqa: E402
+from backend.errors import APIError, ErrorCode, register_exception_handlers  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AskRequest,
@@ -110,6 +111,7 @@ def _try_load_rag() -> NovelRAG | None:
 
 
 app = FastAPI(title="书虫 · Novel RAG API", lifespan=lifespan)
+register_exception_handlers(app)
 
 # 开发期允许 Vite dev server 跨域访问
 app.add_middleware(
@@ -139,7 +141,7 @@ async def upload_books(files: list[UploadFile]):
         (NOVELS_DIR / name).write_bytes(await f.read())
         saved.append(Path(name).stem)
     if not saved:
-        raise HTTPException(400, "没有有效的 .txt 文件")
+        raise APIError(400, ErrorCode.no_valid_files, "没有有效的 .txt 文件")
     result = _reindex()
     return {"saved": saved, **result}
 
@@ -149,7 +151,7 @@ def delete_book(name: str):
     # 只允许删除 novels 目录下的 txt，拒绝路径穿越
     target = (NOVELS_DIR / f"{Path(name).name}.txt").resolve()
     if target.parent != NOVELS_DIR.resolve() or not target.exists():
-        raise HTTPException(404, "书不存在")
+        raise APIError(404, ErrorCode.book_not_found, "书不存在")
     target.unlink()
     result = _reindex()
     return {"deleted": name, **result}
@@ -182,7 +184,7 @@ def search(
         return SearchResult(query=q, total=0, results=[])
 
     if not has_index():
-        raise HTTPException(409, "PostgreSQL 索引未建立，请先重新整理书架")
+        raise APIError(409, ErrorCode.index_not_ready, "PostgreSQL 索引未建立，请先重新整理书架")
 
     if book:
         where_sql = "novel = %s AND position(lower(%s) in lower(text)) > 0"
@@ -241,7 +243,7 @@ async def ask(req: AskRequest, request: Request):
     """
     rag: NovelRAG | None = state.get("rag")
     if rag is None:
-        raise HTTPException(409, "书架为空或索引未建立，请先上传小说")
+        raise APIError(409, ErrorCode.index_not_ready, "书架为空或索引未建立，请先上传小说")
 
     # 同时召回关键词、语义、结构性片段，合并排序后统一交给模型回答。
     # trace 记录每一步的真实动作，前端展示为可折叠的「思考过程」。
@@ -339,7 +341,7 @@ def get_session(session_id: str):
     try:
         turns = load_turns(session_id)
     except Exception as exc:
-        raise HTTPException(500, f"读取会话失败：{exc}") from exc
+        raise APIError(500, ErrorCode.session_read_failed, f"读取会话失败：{exc}") from exc
     return SessionHistory(session_id=session_id, turns=turns)
 
 
@@ -370,7 +372,7 @@ def list_models():
 @app.post("/api/model", response_model=CurrentModel)
 def set_model(req: SetModelRequest):
     if req.model not in _available_models():
-        raise HTTPException(400, f"模型 {req.model} 当前不可用")
+        raise APIError(400, ErrorCode.model_unavailable, f"模型 {req.model} 当前不可用")
     state["model"] = req.model
     return CurrentModel(current=state["model"])
 

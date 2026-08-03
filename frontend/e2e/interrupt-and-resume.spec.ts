@@ -33,7 +33,10 @@ test.describe("中断生成", () => {
   test("真正出错时仍然显示错误提示（和主动停止区分开）", async ({ page }) => {
     await mockApi(page);
     await page.route("**/api/ask", async (route) => {
-      await route.fulfill({ status: 500, json: { detail: "后端炸了" } });
+      await route.fulfill({
+        status: 500,
+        json: { error: { code: "internal_error", message: "后端炸了" } },
+      });
     });
     await page.goto("/");
 
