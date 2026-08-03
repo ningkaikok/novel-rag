@@ -13,7 +13,6 @@ from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 # 让后端能 import src 下的业务逻辑（完全复用，不改动）
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,8 +25,25 @@ from backend.dotenv_lite import load_env  # noqa: E402
 _ENV_KEYS = load_env(ROOT / ".env")
 
 from backend import claude_cli, zhipu  # noqa: E402
+from backend.schemas import (  # noqa: E402
+    AskRequest,
+    BookList,
+    CurrentModel,
+    DeleteResult,
+    HealthStatus,
+    ModelList,
+    ReindexResult,
+    SearchMatch,
+    SearchResult,
+    SessionHistory,
+    SetModelRequest,
+    SourceItem,
+    StoredTurn,
+    TraceStep,
+    UploadResult,
+)
 import ingest  # noqa: E402
-from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL, TOP_K  # noqa: E402
+from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
 from postgres import (  # noqa: E402
@@ -86,30 +102,13 @@ app.add_middleware(
 )
 
 
-# ----------------------------------------------------------------- 数据模型
-class AskRequest(BaseModel):
-    question: str
-    top_k: int = TOP_K
-    # 可选：带上会话 ID 就把这一轮问答落库，刷新页面后能恢复。
-    # 不传则完全不落库，行为跟以前一致（纯内存对话）。
-    session_id: str | None = None
-
-
-class BookList(BaseModel):
-    books: list[str]
-
-
-class SetModelRequest(BaseModel):
-    model: str
-
-
 # ----------------------------------------------------------------- 书架
 @app.get("/api/books", response_model=BookList)
 def list_books():
     return BookList(books=sorted(p.stem for p in NOVELS_DIR.glob("*.txt")))
 
 
-@app.post("/api/books")
+@app.post("/api/books", response_model=UploadResult)
 async def upload_books(files: list[UploadFile]):
     saved = []
     for f in files:
@@ -124,7 +123,7 @@ async def upload_books(files: list[UploadFile]):
     return {"saved": saved, **result}
 
 
-@app.delete("/api/books/{name}")
+@app.delete("/api/books/{name}", response_model=DeleteResult)
 def delete_book(name: str):
     # 只允许删除 novels 目录下的 txt，拒绝路径穿越
     target = (NOVELS_DIR / f"{Path(name).name}.txt").resolve()
@@ -135,7 +134,7 @@ def delete_book(name: str):
     return {"deleted": name, **result}
 
 
-@app.post("/api/reindex")
+@app.post("/api/reindex", response_model=ReindexResult)
 def reindex():
     return _reindex()
 
@@ -149,7 +148,7 @@ def _reindex() -> dict:
 
 
 # ----------------------------------------------------------------- 全文搜索
-@app.get("/api/search")
+@app.get("/api/search", response_model=SearchResult)
 def search(
     q: str = Query(min_length=1, max_length=200),
     book: str | None = Query(default=None, max_length=200),
@@ -159,7 +158,7 @@ def search(
     """在本地小说原文中做精确全文搜索，不经过大模型。"""
     needle = q.strip().casefold()
     if not needle:
-        return {"query": q, "total": 0, "results": []}
+        return SearchResult(query=q, total=0, results=[])
 
     if not has_index():
         raise HTTPException(409, "PostgreSQL 索引未建立，请先重新整理书架")
@@ -181,23 +180,21 @@ def search(
             query_params,
         ).fetchall()
 
-    matches = []
-    for row in rows:
-        count = row["text"].casefold().count(needle)
-        matches.append(
-            {
-                "novel": row["novel"],
-                "chunk_id": int(row["chunk_id"]),
-                "text": row["text"],
-                "match_count": count,
-            }
+    matches = [
+        SearchMatch(
+            novel=row["novel"],
+            chunk_id=int(row["chunk_id"]),
+            text=row["text"],
+            match_count=row["text"].casefold().count(needle),
         )
+        for row in rows
+    ]
 
-    return {
-        "query": q,
-        "total": len(matches),
-        "results": matches[offset : offset + limit],
-    }
+    return SearchResult(
+        query=q,
+        total=len(matches),
+        results=matches[offset : offset + limit],
+    )
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
@@ -230,8 +227,12 @@ async def ask(req: AskRequest, request: Request):
     sources, trace = rag.retrieve_hybrid_traced(req.question, top_k=req.top_k)
     context_sources = rag.expand_neighbors(sources)
     model = state["model"]
+    # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 本身不支持声明
+    # response_model，这里手动保证发到前端和存进数据库的形状不会手滑写错字段。
+    trace_payload = [TraceStep(**t).model_dump() for t in trace]
     payload = [
-        {"novel": s.novel, "chunk_id": s.chunk_id, "text": s.text} for s in sources
+        SourceItem(novel=s.novel, chunk_id=s.chunk_id, text=s.text).model_dump()
+        for s in sources
     ]
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
@@ -248,7 +249,7 @@ async def ask(req: AskRequest, request: Request):
 
     async def event_stream():
         # 先把「思考过程」发出去，让用户在等生成时就能看到检索是怎么做的
-        yield f"event: trace\ndata: {json.dumps(trace, ensure_ascii=False)}\n\n"
+        yield f"event: trace\ndata: {json.dumps(trace_payload, ensure_ascii=False)}\n\n"
         # 再把来源发出，前端可立即渲染出处
         yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -298,7 +299,7 @@ async def ask(req: AskRequest, request: Request):
                         "assistant",
                         "".join(parts),
                         sources=payload,
-                        trace=trace,
+                        trace=trace_payload,
                         status="interrupted" if interrupted else "complete",
                     )
                 except Exception as exc:
@@ -311,14 +312,14 @@ async def ask(req: AskRequest, request: Request):
 
 
 # ----------------------------------------------------------------- 会话历史
-@app.get("/api/sessions/{session_id}")
+@app.get("/api/sessions/{session_id}", response_model=SessionHistory)
 def get_session(session_id: str):
     """读回某个会话的全部对话，用于刷新页面后恢复界面。"""
     try:
         turns = load_turns(session_id)
     except Exception as exc:
         raise HTTPException(500, f"读取会话失败：{exc}") from exc
-    return {"session_id": session_id, "turns": turns}
+    return SessionHistory(session_id=session_id, turns=turns)
 
 
 # ----------------------------------------------------------------- 模型切换
@@ -340,19 +341,19 @@ def _available_models() -> list[str]:
     )
 
 
-@app.get("/api/models")
+@app.get("/api/models", response_model=ModelList)
 def list_models():
-    return {"models": _available_models(), "current": state["model"]}
+    return ModelList(models=_available_models(), current=state["model"])
 
 
-@app.post("/api/model")
+@app.post("/api/model", response_model=CurrentModel)
 def set_model(req: SetModelRequest):
     if req.model not in _available_models():
         raise HTTPException(400, f"模型 {req.model} 当前不可用")
     state["model"] = req.model
-    return {"current": state["model"]}
+    return CurrentModel(current=state["model"])
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthStatus)
 def health():
-    return {"ok": True, "ready": state.get("rag") is not None}
+    return HealthStatus(ok=True, ready=state.get("rag") is not None)
