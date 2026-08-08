@@ -434,9 +434,10 @@ function Main() {
   async function ask(question: string) {
     if (busy || !question.trim()) return;
     setInput("");
-    // 自己发问就是明确要看这一轮的结果，无条件恢复跟随——
-    // 哪怕上一轮翻到一半停在半空中也一样。
-    pinnedRef.current = true;
+    // 注意：这里**不**强制恢复跟随。发问时如果人正翻在历史上面（gap 很大），
+    // 新回答应该像任何"下面来了新内容"一样走「有新回复」提示，而不是把人
+    // 直接拽回底部——那样反而打断了他正在看的东西。跟随与否仍然只由
+    // 用户自己的滚动动作决定（见下面的 wheel/touch/keydown 监听）。
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
