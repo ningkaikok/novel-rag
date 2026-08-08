@@ -92,6 +92,14 @@ def recreate_schema(dimension: int) -> None:
                 -- 长片段天然更容易碰巧包含查询词，不做归一化的话长片段会系统性
                 -- 地占便宜。
                 token_count INTEGER NOT NULL DEFAULT 0,
+                -- Contextual Retrieval 生成的上下文说明（没做增强的片段是空串）。
+                -- **必须和 text 分开存**：索引和重排要用「说明 + 原文」，
+                -- 但送给大模型生成时只用原文，不把 AI 生成的说明混进正文当依据。
+                -- 踩过的坑：一开始只把说明拼进索引、没有单独存，结果重排拿
+                -- text 列的原文重新打分，看不到说明——同一个片段，重排给原文
+                -- 打 0.0055、给「说明+原文」打 0.9990，把上下文增强的效果
+                -- 整个抵消掉了（Q18 因此从第 5 名掉出 top-20）。
+                context TEXT NOT NULL DEFAULT '',
                 UNIQUE (novel, chunk_id)
             )
             """

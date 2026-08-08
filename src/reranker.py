@@ -81,8 +81,18 @@ def rerank(
         return []
     model = model or load_reranker()
 
-    # 交叉编码器的输入是「问题-文档」对，模型内部会把两者拼起来做注意力交互
-    pairs = [(question, c.text) for c in candidates]
+    # 交叉编码器的输入是「问题-文档」对，模型内部会把两者拼起来做注意力交互。
+    #
+    # **用 indexed_text 而不是 text**——这是踩过的坑：Contextual Retrieval
+    # 把上下文说明加进了索引（所以召回变好了），但重排如果拿原文重新打分，
+    # 就看不到那些说明，等于把增强的效果整个抵消。实测同一个片段：
+    #     重排给【原文】       0.0055
+    #     重排给【说明+原文】  0.9990    ← 差 180 倍
+    # 结果就是正确片段被重排从第 5 名压到 top-20 之外。
+    #
+    # 没有 context 的片段（没做增强、或没开这个功能），indexed_text 就等于 text，
+    # 行为和以前完全一样。
+    pairs = [(question, getattr(c, "indexed_text", c.text)) for c in candidates]
     scores = model.predict(pairs)
 
     ranked = sorted(zip(candidates, scores), key=lambda pair: pair[1], reverse=True)
