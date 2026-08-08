@@ -67,11 +67,18 @@ def vector_literal(values: Iterable[float]) -> str:
 
 
 def recreate_schema(dimension: int) -> None:
-    """重建小说片段表和向量索引。重建索引本来就是全量操作，因此可安全清空。"""
+    """重建小说片段表、向量索引和 BM25 倒排索引。
+
+    这三样都是从同一批原文派生出来的，必须一起重建——只重建其中一个会导致
+    向量索引和倒排索引对应的是不同版本的文本，检索结果互相矛盾。
+    重建索引本来就是全量操作，因此可安全清空。
+    """
     if dimension <= 0:
         raise ValueError("embedding dimension must be positive")
     with connect() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        # chunk_terms 有外键概念上依赖 novel_chunks，先删它
+        conn.execute("DROP TABLE IF EXISTS chunk_terms")
         conn.execute("DROP TABLE IF EXISTS novel_chunks")
         conn.execute(
             f"""
@@ -81,10 +88,32 @@ def recreate_schema(dimension: int) -> None:
                 chunk_id INTEGER NOT NULL,
                 text TEXT NOT NULL,
                 embedding vector({dimension}) NOT NULL,
+                -- 这个片段有多少个词（分词后）。BM25 的「文档长度归一化」要用：
+                -- 长片段天然更容易碰巧包含查询词，不做归一化的话长片段会系统性
+                -- 地占便宜。
+                token_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (novel, chunk_id)
             )
             """
         )
+        # BM25 倒排索引：一行 = 「某个词」在「某个片段」里出现了几次。
+        # 全库约 390 万行（3.3 万个片段 × 每个约 118 个不重复的词）。
+        conn.execute(
+            """
+            CREATE TABLE chunk_terms (
+                novel    TEXT    NOT NULL,
+                chunk_id INTEGER NOT NULL,
+                term     TEXT    NOT NULL,
+                -- term frequency：这个词在这个片段里出现几次。
+                -- 出现多次说明这个片段更可能真的在讲这个词，是 BM25 的核心信号。
+                tf       INTEGER NOT NULL,
+                PRIMARY KEY (novel, chunk_id, term)
+            )
+            """
+        )
+        # 查询时是「给定几个词，找出所有含这些词的片段」，所以按 term 建索引。
+        # 没有这个索引，每次查询都要全表扫 390 万行。
+        conn.execute("CREATE INDEX chunk_terms_term_idx ON chunk_terms (term)")
         conn.execute(
             "CREATE INDEX novel_chunks_novel_chunk_idx "
             "ON novel_chunks (novel, chunk_id)"
