@@ -201,6 +201,19 @@ class SourceChunk:
     chunk_id: int
     text: str
     distance: float
+    # Contextual Retrieval 生成的上下文说明（没做增强时是空串）。
+    # 重排要用它（见 reranker.rerank 里 indexed_text 的说明），
+    # 但 build_prompt 只用 text——不把 AI 生成的说明当原文依据给模型。
+    context: str = ""
+
+    @property
+    def indexed_text(self) -> str:
+        """建索引时用的文本，也是重排该看到的文本。
+
+        必须和索引保持一致：索引的是「说明 + 原文」，重排如果只看原文，
+        就会把上下文增强的效果整个抵消掉。
+        """
+        return f"{self.context}\n{self.text}" if self.context else self.text
 
 
 class NovelRAG:
@@ -226,7 +239,7 @@ class NovelRAG:
         with connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT novel, chunk_id, text,
+                SELECT novel, chunk_id, text, context,
                        embedding <=> %s::vector AS distance
                 FROM novel_chunks
                 {scope}
@@ -241,6 +254,7 @@ class NovelRAG:
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
                 distance=float(row["distance"]),
+                context=row.get("context") or "",
             )
             for row in rows
         ]
@@ -330,7 +344,7 @@ class NovelRAG:
                 WHERE TRUE {scope_and.replace("novel", "ct.novel")}
                 GROUP BY ct.term
             )
-            SELECT nc.novel, nc.chunk_id, nc.text,
+            SELECT nc.novel, nc.chunk_id, nc.text, nc.context,
                    SUM(
                        ln((c.n - d.df + 0.5) / (d.df + 0.5) + 1)
                        * (ct.tf * ({k1} + 1))
@@ -343,7 +357,7 @@ class NovelRAG:
               ON nc.novel = ct.novel AND nc.chunk_id = ct.chunk_id
             CROSS JOIN corpus c
             WHERE TRUE {scope_and.replace("novel", "nc.novel")}
-            GROUP BY nc.novel, nc.chunk_id, nc.text
+            GROUP BY nc.novel, nc.chunk_id, nc.text, nc.context
             ORDER BY score DESC
             LIMIT %s
         """
@@ -357,6 +371,7 @@ class NovelRAG:
                 novel=row["novel"],
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
+                context=row.get("context") or "",
                 # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
                 # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
                 # 按同一个字段排序时把最相关的排到最后。
@@ -418,7 +433,7 @@ class NovelRAG:
                     # 番外、后记当成结局（很多"全本+番外"的 txt 末尾都不是正文结局）。
                     rows = conn.execute(
                         """
-                        SELECT novel, chunk_id, text
+                        SELECT novel, chunk_id, text, context
                         FROM novel_chunks
                         WHERE novel = %s AND chunk_id <= %s
                         ORDER BY chunk_id DESC
@@ -429,7 +444,7 @@ class NovelRAG:
                 else:
                     rows = conn.execute(
                         f"""
-                        SELECT novel, chunk_id, text
+                        SELECT novel, chunk_id, text, context
                         FROM novel_chunks
                         WHERE novel = %s
                         ORDER BY chunk_id {order}
@@ -446,6 +461,7 @@ class NovelRAG:
                             chunk_id=int(row["chunk_id"]),
                             text=row["text"],
                             distance=0.0,
+                            context=row.get("context") or "",
                         )
                     )
         return results
@@ -617,7 +633,7 @@ class NovelRAG:
         params = [value for item in ranges for value in item]
         with connect() as conn:
             rows = conn.execute(
-                f"SELECT novel, chunk_id, text FROM novel_chunks WHERE {conditions}",
+                f"SELECT novel, chunk_id, text, context FROM novel_chunks WHERE {conditions}",
                 params,
             ).fetchall()
         by_key: dict[tuple[str, int], SourceChunk] = {}
@@ -628,6 +644,7 @@ class NovelRAG:
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
                 distance=0.0,
+                context=row.get("context") or "",
             )
 
         expanded: list[SourceChunk] = []

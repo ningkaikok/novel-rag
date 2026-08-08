@@ -188,15 +188,25 @@ def build_index(model: SentenceTransformer | None = None) -> dict:
 
     recreate_schema(dimension)
 
+    # context 单独存一列：索引和重排用「说明 + 原文」，但生成时只用原文。
+    # 不存的话重排会拿原文重新打分、看不到说明，把增强效果整个抵消掉。
     rows = [
-        (c.novel, c.chunk_id, c.text, vector_literal(embedding), token_count)
+        (
+            c.novel,
+            c.chunk_id,
+            c.text,
+            vector_literal(embedding),
+            token_count,
+            contexts.get(text_hash(c.text), ""),
+        )
         for c, embedding, token_count in zip(chunks, embeddings, token_counts)
     ]
     with connect() as conn:
         with conn.cursor() as cursor:
             cursor.executemany(
-                "INSERT INTO novel_chunks (novel, chunk_id, text, embedding, token_count) "
-                "VALUES (%s, %s, %s, %s::vector, %s)",
+                "INSERT INTO novel_chunks "
+                "(novel, chunk_id, text, embedding, token_count, context) "
+                "VALUES (%s, %s, %s, %s::vector, %s, %s)",
                 rows,
             )
 

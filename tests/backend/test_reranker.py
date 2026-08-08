@@ -63,6 +63,47 @@ def test_empty_candidates_short_circuits():
     assert rerank("问题", [], top_k=5) == []
 
 
+@dataclass
+class FakeContextualChunk:
+    """带上下文说明的片段，模拟 SourceChunk 的 indexed_text 行为。"""
+
+    text: str
+    context: str = ""
+
+    @property
+    def indexed_text(self) -> str:
+        return f"{self.context}\n{self.text}" if self.context else self.text
+
+
+def test_rerank_sees_contextual_enhancement():
+    """重排必须看到 Contextual Retrieval 加的上下文说明，不能只看原文。
+
+    踩过的坑：上下文说明只进了索引（所以召回变好了），但重排拿 text 列的原文
+    重新打分、看不到说明，等于把增强效果整个抵消。实测同一个片段：
+        重排给【原文】       0.0055
+        重排给【说明+原文】  0.9990    ← 差 180 倍
+    结果正确片段被从第 5 名压到 top-20 之外。
+    """
+    chunk = FakeContextualChunk(text="那汉子来到门前", context="王慎在铁匠铺教训牛三")
+    model = FakeCrossEncoder([0.9])
+
+    rerank("王慎在铁匠铺遇到谁", [chunk], top_k=1, model=model)
+
+    scored_doc = model.received_pairs[0][1]
+    assert "王慎在铁匠铺教训牛三" in scored_doc, "重排必须看到上下文说明"
+    assert "那汉子来到门前" in scored_doc, "原文也要保留"
+
+
+def test_rerank_falls_back_to_text_without_context():
+    """没做上下文增强的片段，行为和以前完全一样。"""
+    chunk = FakeContextualChunk(text="纯原文", context="")
+    model = FakeCrossEncoder([0.5])
+
+    rerank("问题", [chunk], top_k=1, model=model)
+
+    assert model.received_pairs[0][1] == "纯原文"
+
+
 def test_returns_original_objects():
     """返回的必须是原对象本身，不是副本——调用方还要用上面的
     novel/chunk_id 等字段去查相邻片段、渲染出处卡片。
