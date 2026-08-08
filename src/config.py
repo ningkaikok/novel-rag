@@ -105,3 +105,18 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 # PostgreSQL 连接池大小（只有 FastAPI 后端会用到；独立脚本不建池子）
 DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", 1))
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", 10))
+
+# --- GraphRAG 人物关系图（见 src/graph.py）---
+# 默认关闭：建图要调 LLM 抽人名。但成本远低于 Contextual Retrieval——
+# 只从「含关系词的片段」里抽，实测《凡人修仙传》的「伴侣」关系只要 11 次调用。
+GRAPH_ENABLED = os.environ.get("GRAPH_ENABLED", "0") == "1"
+# 每个 (书, 关系类型) 最多采样多少个片段去抽人名。成本闸门：
+# 「师父」这类词能命中上千个片段，不设上限会让建图变得和全库抽取一样贵。
+GRAPH_MAX_CHUNKS_PER_RELATION = int(
+    os.environ.get("GRAPH_MAX_CHUNKS_PER_RELATION", 80)
+)
+# 抽人名用的模型（和 Contextual Retrieval 一样，便宜的小模型就够）
+GRAPH_MODEL = os.environ.get("GRAPH_MODEL", "glm:glm-4-flash")
+# 一个人名要在几个批次里都被认作人名，才算数。降噪用：
+# 单次出现的往往是模型偶然把泛称当成了名字。
+GRAPH_MIN_NAME_HITS = int(os.environ.get("GRAPH_MIN_NAME_HITS", 2))

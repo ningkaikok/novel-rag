@@ -20,7 +20,8 @@ from config import (
     RECALL_K,
     TOP_K,
 )
-from postgres import connect, has_index, vector_literal
+from graph import detect_relation_question, format_graph_hint
+from postgres import connect, has_index, query_relations, vector_literal
 from reranker import rerank
 from tokenizer import query_terms
 
@@ -729,11 +730,48 @@ class NovelRAG:
         return expanded or sources
 
     def build_prompt(self, question: str, sources: list[SourceChunk]) -> str:
-        """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。"""
+        """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。
+
+        问到人物关系时，会在原文片段前面加一段「图线索」——那是从全书共现统计
+        推断出来的关系列表，用来补足 top-k 片段覆盖不到的部分（见 graph.py）。
+        线索明确标注了"是统计推断不是确定事实"，让模型拿它当线索去核对原文，
+        而不是直接照抄。
+        """
         context = "\n\n---\n\n".join(
             f"[{s.novel} #{s.chunk_id}]\n{s.text}" for s in sources
         )
+        hint = self._graph_hint(question)
+        if hint:
+            context = f"{hint}\n\n---\n\n{context}"
         return PROMPT_TEMPLATE.format(context=context, question=question)
+
+    def _graph_hint(self, question: str) -> str:
+        """问到人物关系时，从图里查一份补充线索；其余情况返回空串。
+
+        图检索是**补充而不是替代**：普通问题走原来的多路召回就好，
+        没必要多查一次图。任何一步失败都退回空串，不影响正常问答。
+        """
+        relation = detect_relation_question(question)
+        if not relation:
+            return ""
+        try:
+            # 问题里提到的人物名——从图里已有的人物名反查，避免再做一次分词
+            with connect() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT person_a AS name FROM character_relations "
+                    "UNION SELECT DISTINCT person_b FROM character_relations"
+                ).fetchall()
+            subjects = [r["name"] for r in rows if r["name"] in question]
+            if not subjects:
+                return ""
+            # 问题里可能提到多个人名，取最长的那个（最具体）
+            subject = max(subjects, key=len)
+            neighbors = query_relations(subject, relation)
+            return format_graph_hint(subject, relation, neighbors)
+        except Exception:
+            # 图表可能不存在（没开 GRAPH_ENABLED 建过图），静默跳过即可——
+            # 这是纯增强功能，缺了只是回到没有图检索的状态
+            return ""
 
     def generate(
         self, question: str, sources: list[SourceChunk], model: str = OLLAMA_MODEL

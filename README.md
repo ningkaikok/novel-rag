@@ -186,6 +186,9 @@ python src/ingest.py
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
 | `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
+| `GRAPH_ENABLED` | `0` | 设成 `1` 建人物关系图，让"某某有哪些伴侣/师父"这类问题能查图而不是靠碰运气 |
+| `GRAPH_MAX_CHUNKS_PER_RELATION` | `80` | 成本闸门：每个「书×关系」最多采样多少片段去抽人名 |
+| `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名用的模型（便宜的小模型就够） |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
 | `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |
