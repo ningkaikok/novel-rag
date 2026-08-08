@@ -5,7 +5,9 @@
     "question": "《凡人修仙传》里，韩立小时候的绰号是什么？为什么会有这个绰号？",
     "ground_truth_note": "绰号“二愣子”。原文：因为...（村里孩子起绰号的原因，属于开篇背景介绍）。答案应包含“二愣子”三字。",
     "retrieval": {
-      "expect_keywords": ["二愣子"],
+      "expect_keywords": [
+        "二愣子"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "hard",
       "note": "「二愣子」全书只出现 3 次（19501 个片段里），是典型的稀有关键词——语义检索很难命中，主要靠关键词这一路。"
@@ -17,7 +19,10 @@
     "question": "韩立的名字是谁给取的？用什么方式换来的？",
     "ground_truth_note": "村里的老张叔给取的名字，韩父用两个粗粮制成的窝头求来的。答案应提到“老张叔”和“窝头”。",
     "retrieval": {
-      "expect_keywords": ["老张叔", "窝头"],
+      "expect_keywords": [
+        "老张叔",
+        "窝头"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "hard",
       "note": "「窝头」全书只出现 1 次，是整套评测里最难的一条。"
@@ -29,7 +34,9 @@
     "question": "韩立的家里都有谁？",
     "ground_truth_note": "韩父、韩母、二哥韩铸（原文提到的人物）。",
     "retrieval": {
-      "expect_keywords": ["韩铸"],
+      "expect_keywords": [
+        "韩铸"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "hard",
       "note": "「韩铸」只出现 4 次。"
@@ -41,7 +48,9 @@
     "question": "《诡秘之主》开头，周明瑞醒来的时候是什么感觉？发生了什么？",
     "ground_truth_note": "剧烈头痛，半睡半醒，一度以为自己脑溢血/英年早逝，最终挣扎着睁开眼睛，发现自己身处一个陌生房间（书桌、笔记、壁灯等）。",
     "retrieval": {
-      "expect_keywords": ["周明瑞"],
+      "expect_keywords": [
+        "周明瑞"
+      ],
       "expect_novel": "诡秘之主",
       "difficulty": "medium"
     }
@@ -52,7 +61,9 @@
     "question": "《雾隐山庄》里，顾长风得了什么病？最后是谁治好的？",
     "ground_truth_note": "罕见奇毒“蚀骨散”，沈砚之用银针+师父留下的解毒方子治好。回归测试：验证短篇 demo 小说的检索仍然正常（此前多次验证通过）。",
     "retrieval": {
-      "expect_keywords": ["蚀骨散"],
+      "expect_keywords": [
+        "蚀骨散"
+      ],
       "expect_novel": "雾隐山庄",
       "difficulty": "easy",
       "note": "短篇 demo 只有 3 个片段，检索几乎必然命中——用作「基础功能没坏」的回归哨兵。"
@@ -64,7 +75,9 @@
     "question": "这几本书里，谁的绰号叫“二愣子”？他出现在哪一本书里？",
     "ground_truth_note": "韩立，出自《凡人修仙传》。答案不应牵扯到《诡秘之主》或《雾隐山庄》的人物。",
     "retrieval": {
-      "expect_keywords": ["二愣子"],
+      "expect_keywords": [
+        "二愣子"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "hard",
       "note": "《降龙》里也出现过一次「二愣子」，是真实存在的干扰项——能检验路由是否选对了书。"
@@ -116,7 +129,10 @@
     "question": "韩立有哪些伴侣？",
     "ground_truth_note": "南宫婉是最主要的一位。这道题在 2026-08-03 之前会答「根据提供的片段无法确定」——根因是关键词检索拿整句问题做子串匹配，而「韩立有哪些伴侣」这句话不可能逐字出现在原文里。改成分词后逐词匹配才修好。",
     "retrieval": {
-      "expect_keywords": ["双修伴侣", "南宫婉"],
+      "expect_keywords": [
+        "双修伴侣",
+        "南宫婉"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "medium",
       "note": "真实失败案例转成的回归用例。这类「全书范围关系聚合」问题靠 top-k 片段拼凑本来就吃力，是 GraphRAG 想解决的典型场景。"
@@ -128,7 +144,9 @@
     "question": "凡人修仙传的结局是怎样的？",
     "ground_truth_note": "韩立最终飞升。注意文件是「全本+番外」，正文大结局之后还有 28 个番外片段，纯按文件末尾取会拿到番外内容。",
     "retrieval": {
-      "expect_keywords": ["全书完"],
+      "expect_keywords": [
+        "全书完"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "hard",
       "note": "「结局」二字不会出现在结局原文里，纯语义检索必然失败——靠 positional_retrieve 定位「全书完」锚点。「全书完」全书只出现 1 次。"
@@ -140,7 +158,9 @@
     "question": "韩立修炼的功法叫什么名字？",
     "ground_truth_note": "长春功（墨大夫传授）。",
     "retrieval": {
-      "expect_keywords": ["长春功"],
+      "expect_keywords": [
+        "长春功"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "medium"
     }
@@ -151,7 +171,9 @@
     "question": "《诡秘之主》里塔罗会是什么组织？",
     "ground_truth_note": "克莱恩（愚者）创建的秘密结社，成员以塔罗牌代号相称。",
     "retrieval": {
-      "expect_keywords": ["塔罗会"],
+      "expect_keywords": [
+        "塔罗会"
+      ],
       "expect_novel": "诡秘之主",
       "difficulty": "easy"
     }
@@ -162,9 +184,40 @@
     "question": "韩立在七玄门时最好的朋友是谁？",
     "ground_truth_note": "厉飞雨（厉大师兄）。",
     "retrieval": {
-      "expect_keywords": ["厉飞雨"],
+      "expect_keywords": [
+        "厉飞雨"
+      ],
       "expect_novel": "凡人修仙传",
       "difficulty": "medium"
+    }
+  },
+  {
+    "id": "Q17",
+    "category": "上下文增强",
+    "question": "《降龙》里，柳崖村的人在徐猛家发现了什么？",
+    "ground_truth_note": "发现有打斗的痕迹，八弟九弟数日未回，起卦卦象大凶，后来发现烧焦的尸体。",
+    "retrieval": {
+      "expect_keywords": [
+        "打斗的痕迹",
+        "卦象大凶"
+      ],
+      "expect_novel": "降龙",
+      "difficulty": "hard",
+      "note": "专门用来测 Contextual Retrieval：「徐猛」「柳崖村」这两个词**只出现在生成的上下文说明里，原文片段里完全没有**（原文只有「他们」「八弟」这类代称）。没做上下文增强时，用这两个词提问必然召回不到正确片段。"
+    }
+  },
+  {
+    "id": "Q18",
+    "category": "上下文增强",
+    "question": "《降龙》里王慎在铁匠铺遇到谁在骚扰邻居？",
+    "ground_truth_note": "牛三。王慎出手教训了他。",
+    "retrieval": {
+      "expect_keywords": [
+        "牛三"
+      ],
+      "expect_novel": "降龙",
+      "difficulty": "hard",
+      "note": "同 Q17：「王慎」「铁匠铺」只在生成的说明里，原文片段只有「那汉子」这种代称。"
     }
   }
 ]

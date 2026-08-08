@@ -133,6 +133,60 @@ def has_index() -> bool:
     return bool(row and row["table_name"])
 
 
+def ensure_context_cache() -> None:
+    """建 Contextual Retrieval 的上下文缓存表（幂等）。
+
+    **刻意和 recreate_schema 分开**，理由和 chat_turns 一样但更关键：
+    生成这些上下文说明要调 LLM，实测单条约 4.4 秒。如果跟着向量索引一起
+    被 DROP，用户在界面上点一次「重新整理书架」就要重跑几十分钟到几小时。
+    分开存之后，重建索引时能按内容哈希直接复用已有结果。
+
+    主键用**片段原文的哈希**而不是 (书名, chunk_id)：切分参数一变，同一个
+    chunk_id 对应的文本就变了，用位置做键会取到过期的上下文。用内容哈希则
+    天然正确——文本没变就复用，变了自然查不到、会重新生成。
+    """
+    with connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunk_contexts (
+                text_hash  TEXT PRIMARY KEY,
+                context    TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+
+
+def load_cached_contexts(hashes: list[str]) -> dict[str, str]:
+    """批量读回已缓存的上下文说明，返回 {哈希: 说明}。"""
+    if not hashes:
+        return {}
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT text_hash, context FROM chunk_contexts WHERE text_hash = ANY(%s)",
+            (hashes,),
+        ).fetchall()
+    return {row["text_hash"]: row["context"] for row in rows}
+
+
+def save_contexts(items: list[tuple[str, str]]) -> None:
+    """批量写入上下文说明（幂等，重复写同一个哈希只会覆盖）。
+
+    items 是 (哈希, 说明) 列表。空说明（生成失败）不写入——留着下次重试，
+    而不是把失败结果也缓存起来。
+    """
+    rows = [(h, c) for h, c in items if c]
+    if not rows:
+        return
+    with connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO chunk_contexts (text_hash, context) VALUES (%s, %s) "
+                "ON CONFLICT (text_hash) DO UPDATE SET context = EXCLUDED.context",
+                rows,
+            )
+
+
 def ensure_chat_schema() -> None:
     """建对话历史表（幂等，用 IF NOT EXISTS）。
 

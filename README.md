@@ -164,6 +164,10 @@ python src/ingest.py
 | `CONTEXT_NEIGHBORS` | `1` | 问答时每个命中片段前后额外带入的相邻片段数 |
 | `BM25_K1` | `1.2` | BM25 词频饱和速度，越小饱和越快（一般不用动） |
 | `BM25_B` | `0.75` | BM25 文档长度归一化强度，0=不归一化、1=完全按长度惩罚（一般不用动） |
+| `CONTEXTUAL_ENABLED` | `0` | 设成 `1` 开启上下文增强（给缺上下文的片段用 LLM 补一句说明，**会显著拉长重建索引的时间**） |
+| `CONTEXTUAL_MAX_CHUNKS_PER_BOOK` | `2000` | 成本闸门：超过这个片段数的书直接跳过，不做上下文增强 |
+| `CONTEXTUAL_MODEL` | `glm:glm-4-flash` | 生成上下文说明用的模型（用便宜的小模型就够） |
+| `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
 | `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |
