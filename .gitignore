@@ -17,3 +17,6 @@ frontend/blob-report/
 # 有版权的小说原文，不进版本库；只保留原创的 demo 小说 雾隐山庄.txt
 data/novels/*
 !data/novels/雾隐山庄.txt
+
+# Claude Code 本地启动配置（端口/命令因人而异，不入库）
+.claude/

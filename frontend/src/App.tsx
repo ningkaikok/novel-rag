@@ -165,7 +165,10 @@ function Main() {
   const [books, setBooks] = useState<string[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [topK, setTopK] = useState(5);
+  // 和后端 config.TOP_K 保持一致。3 是实测出来的：开了重排之后 3/5/10 三档
+  // 命中率完全相同，取 3 能少送 39% 的字（见 docs/rag-techniques.md 第 5 节）。
+  // 侧栏滑块可以随时调，这里只是默认值。
+  const [topK, setTopK] = useState(3);
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
@@ -189,6 +192,18 @@ function Main() {
   // messages 变化检查，不用担心时序——这次赋值和下面 effect 之间没有其他会改 messages
   // 的调用插进来，所以同步置真、在 effect 里读到时必然还是真。
   const skipNextNewBelowRef = useRef(false);
+  // 是否「粘」在底部跟随最新内容。
+  //
+  // **这是按用户意图记的状态，不是每次内容更新去量距离算出来的**——两者的差别
+  // 在流式输出时非常致命。之前的写法是「内容更新后测一下距底部还有多远，
+  // <120px 才跟随」，问题在于测量发生在内容**已经变长之后**：只要某一帧塞进来
+  // 的东西高过阈值（markdown 重新排版、出处卡片一次性渲染出来、思考过程展开），
+  // 距离瞬间就窜过阈值，自动跟随**从此永久停住**——而用户根本没滚过屏幕，
+  // 只能眼看着答案往下跑，或者去点那个浮动按钮。
+  //
+  // 成熟的聊天应用（ChatGPT、Claude）都是记意图：**只有用户自己往上滚才解除跟随**，
+  // 滚回底部就重新粘上。内容涨得多快都不影响这个状态。
+  const pinnedRef = useRef(true);
 
   useEffect(() => {
     refreshBooks();
@@ -199,31 +214,65 @@ function Main() {
   // 卸载时清掉定时器，避免在已销毁的组件上 setState
   useEffect(() => () => stopTyping(), []);
 
-  // 自动滚到底：只在用户本就贴着底部时才跟随（往上翻看出处时不打断），
+  // 自动滚到底：粘住时才跟随（往上翻看出处时不打断），
   // 并用 rAF 合并同一帧内的多次触发，避免打字机每帧都强制重排。
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (!nearBottom) return;
+    if (!el || !pinnedRef.current) return;
     const id = requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
   }, [messages]);
 
-  // 监听手动滚动：离底部较远时出现「跳到最近回答」按钮，方便翻看历史后一键回到底部。
-  // 滚回底部时同时清掉"有新回复"标记——人已经看到了，不该继续提示。
+  // 用户是不是自己在往上翻。
+  //
+  // 只认这三种**明确来自用户**的输入，不认 scroll 事件——scroll 分不清是人滚的
+  // 还是上面那个自动跟随滚的，拿它判断会自己把自己解除掉。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    function unpinIfScrollingUp(e: WheelEvent) {
+      if (e.deltaY < 0) pinnedRef.current = false;
+    }
+    let touchY = 0;
+    function onTouchStart(e: TouchEvent) {
+      touchY = e.touches[0]?.clientY ?? 0;
+    }
+    function onTouchMove(e: TouchEvent) {
+      // 手指往下划 = 内容往上走 = 在看上面的内容
+      if ((e.touches[0]?.clientY ?? 0) > touchY + 4) pinnedRef.current = false;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (["PageUp", "ArrowUp", "Home"].includes(e.key)) pinnedRef.current = false;
+    }
+    el.addEventListener("wheel", unpinIfScrollingUp, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("keydown", onKeyDown);
+    return () => {
+      el.removeEventListener("wheel", unpinIfScrollingUp);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  // 监听滚动位置：离底部较远时出现「跳到最近回答」按钮，方便翻看历史后一键回到底部。
+  // 回到底部时重新粘上并清掉"有新回复"——人已经看到了，不该继续提示。
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     function handleScroll() {
       const el = scrollRef.current;
       if (!el) return;
-      const away = el.scrollHeight - el.scrollTop - el.clientHeight > JUMP_THRESHOLD;
-      setShowJumpToLatest(away);
-      if (!away) setHasNewBelow(false);
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowJumpToLatest(gap > JUMP_THRESHOLD);
+      if (gap < 40) {
+        // 自己滚回底部了，恢复跟随
+        pinnedRef.current = true;
+        setHasNewBelow(false);
+      }
     }
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => el.removeEventListener("scroll", handleScroll);
@@ -254,6 +303,8 @@ function Main() {
     // 用户点了却到不了底、按钮一直亮着反而更烦。所以生成期间直接跳到底，
     // 到位之后由"贴底就自动跟随"的逻辑接管；空闲时才用平滑滚动。
     el.scrollTo({ top: el.scrollHeight, behavior: busy ? "auto" : "smooth" });
+    // 点这个按钮就是"我要回去看最新的"，重新粘住跟随
+    pinnedRef.current = true;
     // 点了就算已读；不等滚动动画结束再清，避免按钮在滑动过程中还闪着"有新回复"
     setHasNewBelow(false);
   }
@@ -265,6 +316,10 @@ function Main() {
       const turns = await loadSession(sessionIdRef.current);
       if (turns.length === 0) return;
       skipNextNewBelowRef.current = true;
+      // 历史恢复不算"跟随"——这些是刷新页面前就看过的旧内容，一次性灌入时
+      // 不该被当成"粘住底部"而强行拽到最新。用户停在哪就该看到哪，
+      // 由他自己决定要不要滚下去看最近的回答。
+      pinnedRef.current = false;
       setMessages(
         turns.map((t) => ({
           role: t.role,
@@ -379,6 +434,10 @@ function Main() {
   async function ask(question: string) {
     if (busy || !question.trim()) return;
     setInput("");
+    // 注意：这里**不**强制恢复跟随。发问时如果人正翻在历史上面（gap 很大），
+    // 新回答应该像任何"下面来了新内容"一样走「有新回复」提示，而不是把人
+    // 直接拽回底部——那样反而打断了他正在看的东西。跟随与否仍然只由
+    // 用户自己的滚动动作决定（见下面的 wheel/touch/keydown 监听）。
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
@@ -396,6 +455,9 @@ function Main() {
       question,
       topK,
       {
+        // 检索每完成一步就追加一条，思考过程逐条点亮（不是等 2 秒后一次性弹出）
+        onStep: (s) =>
+          patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
         onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
         onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
         // 不直接落到界面上，先进队列，由定时器按字吐出

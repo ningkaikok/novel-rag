@@ -64,6 +64,8 @@ class SearchResult(BaseModel):
 class TraceStep(BaseModel):
     step: str
     detail: str
+    # 本阶段耗时（毫秒）。可选：历史会话里存的旧记录没有这个字段。
+    ms: int | None = None
 
 
 class SourceItem(BaseModel):

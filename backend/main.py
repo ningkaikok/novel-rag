@@ -6,7 +6,7 @@
         ↓
     ① _rewrite_for_search()     多轮追问补全指代（"他"→"李化元"）
         ↓                        ⚠️ 必须在检索之前——检索发生在生成之前
-    ② rag.retrieve_hybrid_traced()
+    ② rag.retrieve_hybrid_stream()   每完成一步就推一条 step 事件
         ├─ 语义检索（向量，pgvector HNSW）
         ├─ BM25 检索（倒排索引）
         ├─ 结构性检索（按 chunk_id 定位开头/结尾）
@@ -19,7 +19,7 @@
         claude: → 本地 Claude CLI ／ glm: → 智谱 ／ 其余 → 本地 Ollama
         ↓
     ⑤ SSE 流式推送
-        event: trace   → 前端的「思考过程」面板
+        event: step    → 「思考过程」的一步（检索期间逐条推，一条一条点亮）
         event: sources → 原文出处卡片
         event: token   → 逐字打字机
         event: done
@@ -324,25 +324,7 @@ async def ask(req: AskRequest, request: Request):
     # 用户original的原话（见下面 save_turn 用的是 req.question）。
     search_question = _rewrite_for_search(req)
 
-    # 同时召回关键词、语义、结构性片段，合并排序后统一交给模型回答。
-    # trace 记录每一步的真实动作，前端展示为可折叠的「思考过程」。
-    sources, trace = rag.retrieve_hybrid_traced(search_question, top_k=req.top_k)
-    if search_question != req.question:
-        # 让用户在「思考过程」里看得见改写发生了——改写是个会改变检索结果的
-        # 隐式步骤，不展示出来的话，用户无法理解"为什么搜出了这些"。
-        trace.insert(
-            0,
-            {"step": "理解追问", "detail": f"补全指代后按「{search_question}」检索"},
-        )
-    context_sources = rag.expand_neighbors(sources)
     model = state["model"]
-    # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 本身不支持声明
-    # response_model，这里手动保证发到前端和存进数据库的形状不会手滑写错字段。
-    trace_payload = [TraceStep(**t).model_dump() for t in trace]
-    payload = [
-        SourceItem(novel=s.novel, chunk_id=s.chunk_id, text=s.text).model_dump()
-        for s in sources
-    ]
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
     session_id = req.session_id
@@ -357,9 +339,50 @@ async def ask(req: AskRequest, request: Request):
             session_id = None
 
     async def event_stream():
-        # 先把「思考过程」发出去，让用户在等生成时就能看到检索是怎么做的
-        yield f"event: trace\ndata: {json.dumps(trace_payload, ensure_ascii=False)}\n\n"
-        # 再把来源发出，前端可立即渲染出处
+        # ---------------------------------------------------------- 检索阶段
+        # 检索放在流里逐步跑，有两个原因：
+        #
+        # 1）**不阻塞事件循环**。之前是在这个 async def 里同步调用检索，
+        #    整整 2 秒（交叉编码器重排占大头）没有任何 await——期间整个服务
+        #    的其他请求全部卡住，连自己的断连检查都跑不了。写成 async def
+        #    却在里面跑同步重活，等于白写。
+        # 2）**让用户看见进度**。原来 5 个步骤要等检索全跑完才一次性弹出，
+        #    前 2 秒界面上什么都没有。现在每完成一步就推一条，界面可以像
+        #    成熟的 AI 应用那样把步骤一条条点亮。等待时长没变，但心理感受完全不同。
+        trace_payload: list[dict] = []
+        if search_question != req.question:
+            # 让用户在「思考过程」里看得见改写发生了——改写是个会改变检索结果的
+            # 隐式步骤，不展示出来的话，用户无法理解"为什么搜出了这些"。
+            first = TraceStep(
+                step="理解追问", detail=f"补全指代后按「{search_question}」检索"
+            ).model_dump()
+            trace_payload.append(first)
+            yield f"event: step\ndata: {json.dumps(first, ensure_ascii=False)}\n\n"
+
+        sources = []
+        step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+        while True:
+            # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
+            # 每个 await 都是一次让出控制权的机会。
+            item = await run_in_threadpool(_next_or_sentinel, step_iter)
+            if item is _SENTINEL:
+                break
+            kind, value = item
+            if kind == "result":
+                sources = value
+                continue
+            # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
+            # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
+            payload_step = TraceStep(**value).model_dump()
+            trace_payload.append(payload_step)
+            yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+
+        context_sources = rag.expand_neighbors(sources)
+        payload = [
+            SourceItem(novel=s.novel, chunk_id=s.chunk_id, text=s.text).model_dump()
+            for s in sources
+        ]
+        # 把来源发出，前端可立即渲染出处
         yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         # 逐 token 流式推送答案：按模型名前缀路由到对应的生成后端
