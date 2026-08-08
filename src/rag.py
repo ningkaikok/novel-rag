@@ -12,6 +12,7 @@ from config import (
     BM25_B,
     BM25_K1,
     CONTEXT_NEIGHBORS,
+    FULL_TEXT_MAX_CHARS,
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     OLLAMA_HOST,
@@ -466,6 +467,49 @@ class NovelRAG:
                     )
         return results
 
+    def _full_text_chunks(self, named_novels: list[str]) -> list[SourceChunk] | None:
+        """书够小就返回它的全部片段（按原文顺序），否则返回 None。
+
+        这是 RAG 四杠杆里「长上下文取舍」的另一面：**不是所有场景都需要 RAG**。
+        当整份材料能塞进模型的上下文窗口时，检索反而是在给自己制造风险——
+        召回可能漏掉关键信息，而全文给过去则零信息损失。
+
+        触发条件刻意收得很紧：
+        - **必须只点名了一本书**。跨书问题不能这么做——两本书各自很小，
+          合起来也可能超窗口，而且混在一起会干扰模型判断。
+        - **必须没点名也不行**。没点名时无法确定范围，只能老老实实检索。
+        - 全文字数在 FULL_TEXT_MAX_CHARS 以内。
+
+        现状：当前语料里只有《雾隐山庄》（1229 字）会触发。这个短路主要服务于
+        "用户上传一份小文档"的场景。
+        """
+        if len(named_novels) != 1:
+            return None
+        novel = named_novels[0]
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT SUM(LENGTH(text)) AS chars FROM novel_chunks WHERE novel = %s",
+                (novel,),
+            ).fetchone()
+            total = int(row["chars"] or 0)
+            if not total or total > FULL_TEXT_MAX_CHARS:
+                return None
+            rows = conn.execute(
+                "SELECT novel, chunk_id, text, context FROM novel_chunks "
+                "WHERE novel = %s ORDER BY chunk_id",
+                (novel,),
+            ).fetchall()
+        return [
+            SourceChunk(
+                novel=r["novel"],
+                chunk_id=int(r["chunk_id"]),
+                text=r["text"],
+                distance=0.0,
+                context=r.get("context") or "",
+            )
+            for r in rows
+        ]
+
     def _named_novels(self, question: str) -> list[str]:
         """问题里明确提到的书（书名精确或容错匹配）；没提到则返回空列表。"""
         with connect() as conn:
@@ -501,6 +545,25 @@ class NovelRAG:
 
         # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
         named_novels = self._named_novels(question)
+
+        # 「长上下文取舍」：书小到能整本塞进模型窗口时，检索本身就是多余的。
+        # 与其检索出几段（可能漏掉关键信息），不如直接给全文——零信息损失。
+        # 只在问题明确点名了某本书、且那本书足够小时触发（见 _full_text_chunks）。
+        full_text = self._full_text_chunks(named_novels)
+        if full_text is not None:
+            title = _display_title(named_novels[0])
+            chars = sum(len(c.text) for c in full_text)
+            return full_text, [
+                {
+                    "step": "理解问题",
+                    "detail": f"识别到你在问{title}",
+                },
+                {
+                    "step": "跳过检索",
+                    "detail": f"{title}全文仅 {chars} 字，直接把整本给模型，不做检索（零信息损失）",
+                },
+            ]
+
         structural = _structural_kind(question)  # "结局" / "开头" / None
         if named_novels:
             named_desc = "、".join(_display_title(n) for n in named_novels)
