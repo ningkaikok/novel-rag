@@ -21,13 +21,28 @@
 
 ```
 novel-rag/
-├── src/           # 核心业务逻辑（config/loader/ingest/rag），前后端共享
-├── backend/       # FastAPI 后端（main.py + claude_cli.py + zhipu.py）
+├── src/           # 核心业务逻辑（切分/入库/检索/重排），不依赖 Web 框架
+├── backend/       # FastAPI 后端（只做"把 src 包成 HTTP"这一件事）
 ├── frontend/      # React + Vite 前端
-├── tests/         # 问答测试集与脚本
+├── scripts/       # 独立工具（检索评测等）
+├── docs/          # 学习文档，见下
+├── tests/         # pytest + 问答评测集与历史基线
 ├── data/novels/   # 放小说 .txt 文件
 └── chroma_db/     # 旧 Chroma 数据目录（迁移后不再使用）
 ```
+
+## 📖 想学 RAG？从这两份文档开始
+
+这个项目也是一份 RAG 学习材料，每个技术点都配了**真实的失败案例和实测数据**，
+不是纸上谈兵：
+
+| 文档 | 讲什么 | 什么时候看 |
+| --- | --- | --- |
+| [**代码导读**](docs/code-walkthrough.md) | 这份代码怎么读、建议的阅读顺序、可直接上手跑的实验 | 第一次接触这个项目 |
+| [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写的原理与实测 | 想深入某个具体技术 |
+
+另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
+[从项目里提炼的 20 道面试题](docs/interview-questions.md)。
 
 ## 环境准备
 
