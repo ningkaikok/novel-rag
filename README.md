@@ -174,7 +174,8 @@ python src/ingest.py
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama 服务地址 |
 | `OLLAMA_MODEL` | `qwen2.5:7b` | 生成用的模型名 |
 | `DATABASE_URL` | 当前用户本机 `novel_rag` | PostgreSQL 连接字符串 |
-| `TOP_K` | `5` | 每次检索的片段数量 |
+| `TOP_K` | `3` | 送进 prompt 的片段数（默认值是实测出来的，见 docs/rag-techniques.md 第 5 节） |
+| `FULL_TEXT_MAX_CHARS` | `8000` | 点名的书全文小于这个字数时跳过检索、直接给模型全文 |
 | `RECALL_K` | `20` | 关键词和向量检索各自召回的候选片段数量 |
 | `CONTEXT_NEIGHBORS` | `1` | 问答时每个命中片段前后额外带入的相邻片段数 |
 | `BM25_K1` | `1.2` | BM25 词频饱和速度，越小饱和越快（一般不用动） |

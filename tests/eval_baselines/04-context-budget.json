@@ -1,0 +1,119 @@
+{
+  "summary": {
+    "recall@1": 0.615,
+    "recall@3": 0.846,
+    "recall@5": 0.846,
+    "recall@10": 0.846,
+    "recall@20": 0.846,
+    "mrr": 0.705,
+    "routing_accuracy": 0.923,
+    "cases": 13,
+    "avg_ms": 1971
+  },
+  "cases": [
+    {
+      "id": "Q1",
+      "question": "《凡人修仙传》里，韩立小时候的绰号是什么？为什么会有这个绰号？",
+      "difficulty": "hard",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 3795
+    },
+    {
+      "id": "Q2",
+      "question": "韩立的名字是谁给取的？用什么方式换来的？",
+      "difficulty": "hard",
+      "hit_rank": 3,
+      "routed_right": true,
+      "elapsed_ms": 1539
+    },
+    {
+      "id": "Q3",
+      "question": "韩立的家里都有谁？",
+      "difficulty": "hard",
+      "hit_rank": null,
+      "routed_right": true,
+      "elapsed_ms": 1409
+    },
+    {
+      "id": "Q4",
+      "question": "《诡秘之主》开头，周明瑞醒来的时候是什么感觉？发生了什么？",
+      "difficulty": "medium",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1893
+    },
+    {
+      "id": "Q5",
+      "question": "《雾隐山庄》里，顾长风得了什么病？最后是谁治好的？",
+      "difficulty": "easy",
+      "hit_rank": 2,
+      "routed_right": true,
+      "elapsed_ms": 37
+    },
+    {
+      "id": "Q6",
+      "question": "这几本书里，谁的绰号叫“二愣子”？他出现在哪一本书里？",
+      "difficulty": "hard",
+      "hit_rank": null,
+      "routed_right": false,
+      "elapsed_ms": 5592
+    },
+    {
+      "id": "Q12",
+      "question": "韩立有哪些伴侣？",
+      "difficulty": "medium",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1668
+    },
+    {
+      "id": "Q13",
+      "question": "凡人修仙传的结局是怎样的？",
+      "difficulty": "hard",
+      "hit_rank": 3,
+      "routed_right": true,
+      "elapsed_ms": 1610
+    },
+    {
+      "id": "Q14",
+      "question": "韩立修炼的功法叫什么名字？",
+      "difficulty": "medium",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1642
+    },
+    {
+      "id": "Q15",
+      "question": "《诡秘之主》里塔罗会是什么组织？",
+      "difficulty": "easy",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1395
+    },
+    {
+      "id": "Q16",
+      "question": "韩立在七玄门时最好的朋友是谁？",
+      "difficulty": "medium",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1966
+    },
+    {
+      "id": "Q17",
+      "question": "《降龙》里，柳崖村的人在徐猛家发现了什么？",
+      "difficulty": "hard",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1696
+    },
+    {
+      "id": "Q18",
+      "question": "《降龙》里王慎在铁匠铺遇到谁在骚扰邻居？",
+      "difficulty": "hard",
+      "hit_rank": 1,
+      "routed_right": true,
+      "elapsed_ms": 1381
+    }
+  ]
+}
