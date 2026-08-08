@@ -38,6 +38,14 @@ CONTEXTUAL_MODEL = os.environ.get("CONTEXTUAL_MODEL", "glm:glm-4-flash")
 # 并发数。实测单次 4.4 秒，451 个片段串行 33 分钟、8 路并发约 4 分钟。
 CONTEXTUAL_WORKERS = int(os.environ.get("CONTEXTUAL_WORKERS", 8))
 
+# --- 多轮对话查询改写（把带指代的追问补全，见 src/query_rewriter.py）---
+# 默认开启：它只在「有历史 且 问题像是依赖上文」时才触发，第一轮和自足的问题
+# 完全不花钱；而不开的话，"他后来怎么样了"这类追问必然检索失败。
+QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "1") != "0"
+# 改写用的模型。这只是个句子改写任务，用便宜快速的小模型即可——
+# 不要用当前对话选的模型：用户可能选了推理型的大模型，改写会白等好几秒。
+QUERY_REWRITE_MODEL = os.environ.get("QUERY_REWRITE_MODEL", "glm:glm-4-flash")
+
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))       # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
 

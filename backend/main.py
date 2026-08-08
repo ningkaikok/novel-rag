@@ -51,7 +51,14 @@ from backend.schemas import (  # noqa: E402
     UploadResult,
 )
 import ingest  # noqa: E402
-from config import NOVELS_DIR, OLLAMA_HOST, OLLAMA_MODEL  # noqa: E402
+from config import (  # noqa: E402
+    NOVELS_DIR,
+    OLLAMA_HOST,
+    OLLAMA_MODEL,
+    QUERY_REWRITE_ENABLED,
+    QUERY_REWRITE_MODEL,
+)
+from query_rewriter import rewrite_query  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
 from postgres import (  # noqa: E402
@@ -221,6 +228,40 @@ def search(
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
+def _rewrite_for_search(req: AskRequest) -> str:
+    """带上会话历史，把追问补全成能独立检索的问题；任何一步失败都退回原问题。
+
+    整条链路上的每一步都可能失败（没配 session_id、读历史失败、模型限流），
+    但**没有一步应该让提问功能不可用**——最坏情况就是退回改造前的行为：
+    拿原问题去检索。所以这里层层兜底，但每次兜底都记一条日志，
+    避免出现"功能静默失效却查不出原因"（Contextual Retrieval 那边踩过这个坑）。
+    """
+    if not (QUERY_REWRITE_ENABLED and req.session_id):
+        return req.question
+    try:
+        turns = load_turns(req.session_id)
+    except Exception as exc:
+        logger.warning(f"读会话历史失败，改写跳过（不影响回答）：{exc}")
+        return req.question
+    if not turns:
+        return req.question
+
+    errors: list[str] = []
+    rewritten = rewrite_query(
+        req.question,
+        turns,
+        lambda prompt: zhipu.generate_stream(prompt, QUERY_REWRITE_MODEL)
+        if QUERY_REWRITE_MODEL.startswith(zhipu.MODEL_PREFIX)
+        else claude_cli.generate_stream(prompt, QUERY_REWRITE_MODEL),
+        errors,
+    )
+    for reason in errors:
+        logger.warning(f"查询改写失败，按原问题检索：{reason}")
+    if rewritten != req.question:
+        logger.info(f"查询改写：「{req.question}」→「{rewritten}」")
+    return rewritten
+
+
 _SENTINEL = object()  # 线程池里取不到下一个 token 时的哨兵，区别于"取到了 None"
 
 
@@ -245,9 +286,21 @@ async def ask(req: AskRequest, request: Request):
     if rag is None:
         raise APIError(409, ErrorCode.index_not_ready, "书架为空或索引未建立，请先上传小说")
 
+    # 多轮改写：把"他后来怎么样了"这类带指代的追问补全成独立完整的问题，
+    # 再拿补全后的问题去检索。**只影响检索**——存库、显示、送给模型的都还是
+    # 用户original的原话（见下面 save_turn 用的是 req.question）。
+    search_question = _rewrite_for_search(req)
+
     # 同时召回关键词、语义、结构性片段，合并排序后统一交给模型回答。
     # trace 记录每一步的真实动作，前端展示为可折叠的「思考过程」。
-    sources, trace = rag.retrieve_hybrid_traced(req.question, top_k=req.top_k)
+    sources, trace = rag.retrieve_hybrid_traced(search_question, top_k=req.top_k)
+    if search_question != req.question:
+        # 让用户在「思考过程」里看得见改写发生了——改写是个会改变检索结果的
+        # 隐式步骤，不展示出来的话，用户无法理解"为什么搜出了这些"。
+        trace.insert(
+            0,
+            {"step": "理解追问", "detail": f"补全指代后按「{search_question}」检索"},
+        )
     context_sources = rag.expand_neighbors(sources)
     model = state["model"]
     # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 本身不支持声明
