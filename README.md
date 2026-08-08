@@ -168,6 +168,8 @@ python src/ingest.py
 | `CONTEXTUAL_MAX_CHUNKS_PER_BOOK` | `2000` | 成本闸门：超过这个片段数的书直接跳过，不做上下文增强 |
 | `CONTEXTUAL_MODEL` | `glm:glm-4-flash` | 生成上下文说明用的模型（用便宜的小模型就够） |
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
+| `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
+| `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
 | `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |
