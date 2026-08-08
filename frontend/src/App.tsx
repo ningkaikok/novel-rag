@@ -316,6 +316,10 @@ function Main() {
       const turns = await loadSession(sessionIdRef.current);
       if (turns.length === 0) return;
       skipNextNewBelowRef.current = true;
+      // 历史恢复不算"跟随"——这些是刷新页面前就看过的旧内容，一次性灌入时
+      // 不该被当成"粘住底部"而强行拽到最新。用户停在哪就该看到哪，
+      // 由他自己决定要不要滚下去看最近的回答。
+      pinnedRef.current = false;
       setMessages(
         turns.map((t) => ({
           role: t.role,
