@@ -160,8 +160,8 @@ python src/ingest.py
 | `TOP_K` | `5` | 每次检索的片段数量 |
 | `RECALL_K` | `20` | 关键词和向量检索各自召回的候选片段数量 |
 | `CONTEXT_NEIGHBORS` | `1` | 问答时每个命中片段前后额外带入的相邻片段数 |
-| `KEYWORD_GENERIC_LIMIT` | `300` | 分词后的关键词命中片段数超过这个值就跳过（太常见起不到筛选作用） |
-| `KEYWORD_MAX_TERMS` | `6` | 分词后最多取几个关键词去检索，问题很长时避免逐词查询拖慢响应 |
+| `BM25_K1` | `1.2` | BM25 词频饱和速度，越小饱和越快（一般不用动） |
+| `BM25_B` | `0.75` | BM25 文档长度归一化强度，0=不归一化、1=完全按长度惩罚（一般不用动） |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
 | `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |

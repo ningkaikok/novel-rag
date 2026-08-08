@@ -4,60 +4,22 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-import jieba
 import requests
 from sentence_transformers import SentenceTransformer
 
 from embedder import load_embedder
 from config import (
+    BM25_B,
+    BM25_K1,
     CONTEXT_NEIGHBORS,
-    KEYWORD_GENERIC_LIMIT,
-    KEYWORD_MAX_TERMS,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     RECALL_K,
     TOP_K,
 )
 from postgres import connect, has_index, vector_literal
+from tokenizer import query_terms
 
-# 分词后过滤掉的常见虚词/疑问词——这些词本身不携带查找价值，留着只会拉低
-# 关键词质量（比如"哪些"在任何问题里都可能出现，对定位原文毫无帮助）。
-# 只是一份实用够用的手工列表，不追求学术级别的停用词覆盖率。
-_STOPWORDS = frozenset({
-    "的", "了", "是", "在", "有", "和", "与", "就", "都", "而", "及", "或",
-    "着", "过", "也", "还", "又", "但", "却", "让", "被", "把", "从", "到",
-    "对", "给", "向", "以", "为", "之", "其中", "这", "那", "一下", "一些",
-    "自己", "没有", "这些", "那些",
-    "什么", "哪些", "怎么", "为什么", "吗", "呢", "啊", "吧",
-    "可以", "可能", "应该", "会不会", "是不是", "有没有", "多少", "怎样",
-    "如何", "为何", "何时", "哪里", "哪个", "以及", "还有", "然后", "讲讲",
-    "详细", "介绍",
-})
-
-
-def _extract_keywords(question: str) -> list[str]:
-    """把问题分词，过滤掉虚词和过短的词，得到用于关键词检索的候选词表。
-
-    "韩立有哪些伴侣"分词后是 ["韩立", "有", "哪些", "伴侣"]，去掉虚词/疑问词后
-    剩 ["韩立", "伴侣"]——这两个词才是原文里真正可能逐字出现的内容词。
-    单字词一律跳过：中文单字（"的""了"之类）几乎都是虚词，即使不是虚词，
-    单字检索对缩小范围也没有帮助（比如"韩"字命中的片段和"韩立"命中的
-    几乎没区别，但会把不相关的"韩"姓配角片段也拉进来）。
-
-    每个候选词最终都要去数据库里查一次命中数（判断是否太常见，见
-    KEYWORD_GENERIC_LIMIT），问题很长、分词很碎时词数可能到十几个，全部都查
-    会让一次问答多花好几秒。所以按长度降序只保留前 KEYWORD_MAX_TERMS 个——
-    更长的词通常是人名、技能名这类专有名词，比短的动词/连接词更有筛选价值。
-    """
-    seen: list[str] = []
-    for word in jieba.cut(question.strip()):
-        word = word.strip()
-        if len(word) < 2 or word in _STOPWORDS:
-            continue
-        if word not in seen:
-            seen.append(word)
-    seen.sort(key=len, reverse=True)
-    return seen[:KEYWORD_MAX_TERMS]
 
 PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的原文片段回答问题。
 如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
@@ -166,6 +128,29 @@ def _find_ending_anchor(conn, novel: str) -> int | None:
     return int(anchor) if anchor is not None else None
 
 
+def _strip_novel_titles(question: str, novels: list[str]) -> str:
+    """把已经识别出来的书名从问题里去掉，只留下真正要检索的内容。
+
+    **为什么只对 BM25 这一路做，不对语义检索做**：书名的职责是「路由」——
+    确定要在哪本书里搜。一旦已经靠它把范围限定到《凡人修仙传》，再拿「凡人」
+    「修仙」这两个词去这本书内部做关键词匹配就是纯噪声：整本书都在讲凡人修仙，
+    这两个词对区分书内的哪一段毫无价值。
+
+    实测过这个 bug 的代价：问「《凡人修仙传》里，韩立小时候的绰号是什么」时，
+    书名切出的「凡人」「修仙」两个词给某个无关片段白送了 14.1 分
+    （凡人 7.73 + 修仙 6.40），而真正的关键词「绰号」只贡献 7.24 分——
+    结果无关片段以 17.63 : 10.13 压过了正确答案所在的片段。
+
+    语义检索不受这个影响：它编码的是整句话的含义，书名只是让语义更完整的
+    上下文，不会像 BM25 那样被拆成独立的词各自累加分数。
+    """
+    stripped = question
+    for novel in novels:
+        for title in _novel_titles(novel):
+            stripped = stripped.replace(f"《{title}》", " ").replace(title, " ")
+    return stripped
+
+
 def _display_title(novel: str) -> str:
     """把库里的文件名式书名压成用户认得的短标题，如《诡秘之主》。"""
     titles = _novel_titles(novel)
@@ -263,98 +248,119 @@ class NovelRAG:
         top_k: int = TOP_K,
         only_novels: list[str] | None = None,
     ) -> list[SourceChunk]:
-        """关键词检索：整句原文匹配 + 分词后逐词匹配，两路结果合并。
+        """BM25 关键词检索：按词精确匹配，并按相关性打分排序。
 
-        整句匹配对应"问题本身就是一句原文引用"的场景（少见但零成本，继续保留）。
-        更常见的是问题里含有原文会出现的词、但整句问题不会逐字出现——比如
-        "韩立有哪些伴侣"这句话本身不可能是原文，但"伴侣"两个字会。所以额外
-        把问题分词，找出候选词里命中片段数不算太多的（太常见的词比如主角名
-        起不到筛选作用，见 KEYWORD_GENERIC_LIMIT 的注释），逐个再查一遍。
+        为什么需要它（向量检索补不上的洞）
+        ----------------------------------
+        向量检索靠语义相似度，对"必须逐字匹配"的东西不可靠——人名、功法名、
+        专有名词这些，语义上"韩铸"和"韩立"极其接近，但它们是两个人。
+        BM25 走的是完全不同的路子：按词精确匹配，谁都不会把「韩铸」匹配成「韩立」。
+
+        BM25 公式（这段是本函数的核心，SQL 里逐项对应）
+        ------------------------------------------------
+            score(D, Q) = Σ  IDF(t) · ────────tf · (k1 + 1)────────
+                         t∈Q            tf + k1 · (1 - b + b · |D|/avgdl)
+
+        三个部分各自解决一个问题：
+
+        1. **IDF(t) = ln((N - df + 0.5) / (df + 0.5) + 1)** —— 词的区分度
+           df 是"这个词出现在多少个片段里"。「韩立」出现在 15536 个片段里，
+           df 极大 → IDF 极小 → 权重被自动压到接近 0；「窝头」只出现 1 次，
+           df=1 → IDF 很大 → 命中它的片段分数被大幅拉高。
+
+           这一项直接取代了改造前那个手写的 KEYWORD_GENERIC_LIMIT 启发式
+           （"命中超过 300 个片段的词就整个丢掉"）。IDF 做的是同一件事，但是
+           **平滑降权**而不是**硬性丢弃**——常见词仍然贡献一点分数，只是很少。
+           这更合理：一个词常见不代表它没用，只代表它不该单独决定排序。
+
+        2. **tf 项** —— 词频，但边际递减
+           一个片段里出现 10 次「南宫婉」，比出现 1 次更可能真的在讲她，
+           但相关性不是 10 倍。k1 控制饱和速度（见 config.BM25_K1）。
+
+        3. **|D|/avgdl 长度归一化** —— 消除长片段的系统性优势
+           长片段天然更容易碰巧包含查询词。不归一化的话，最长的片段会在
+           所有查询里都排前面。b 控制归一化强度（见 config.BM25_B）。
+
+        这修掉了什么真实问题
+        --------------------
+        改造前这个函数是 `position(词 in 正文) > 0 ... ORDER BY chunk_id`——
+        **按片段在书里的先后顺序取前 20 个，完全没有相关性排序**。实测
+        《凡人修仙传》19501 个片段里，关键词召回永远只能返回 chunk_id ≤ 10123
+        的结果：**后半本书对关键词检索完全不可见**。
+
+        更糟的是这个无序列表会喂给 RRF 融合，而 RRF 的前提是每一路输入都已经
+        按相关性排好序——等于给 RRF 喂了噪声。
 
         only_novels 非空时把搜索范围限定在这些书内。
         """
-        question = question.strip()
-        if not question:
+        terms = query_terms(question)
+        if not terms:
             return []
-        scope_novels = "AND novel = ANY(%s)" if only_novels else ""
+
+        # BM25_K1 / BM25_B 是从 config 读出来并经过 float() 转换的数值，
+        # 不是用户输入，直接内联进 SQL 没有注入风险，可读性比 4 个 %s 好很多。
+        k1, b = float(BM25_K1), float(BM25_B)
+
+        # 三处都要按书过滤：语料统计、df 统计、最终打分。范围不一致会让
+        # IDF 算错——比如按全库算 df 却只在一本书里打分，稀有词的权重会失真。
+        scope_sql = "WHERE novel = ANY(%s)" if only_novels else ""
+        scope_and = "AND novel = ANY(%s)" if only_novels else ""
+        scope_param = [only_novels] if only_novels else []
+
+        # q(term) 是把查询词做成一张临时表，好跟倒排索引 JOIN
+        values_sql = ", ".join(["(%s)"] * len(terms))
+
+        sql = f"""
+            WITH q(term) AS (VALUES {values_sql}),
+            -- 语料级统计：N（总片段数）和 avgdl（平均片段长度）
+            corpus AS (
+                SELECT COUNT(*)::float8 AS n,
+                       NULLIF(AVG(token_count), 0)::float8 AS avgdl
+                FROM novel_chunks
+                {scope_sql}
+            ),
+            -- df：每个查询词各自出现在多少个片段里（IDF 的输入）
+            df AS (
+                SELECT ct.term, COUNT(*)::float8 AS df
+                FROM chunk_terms ct
+                JOIN q ON q.term = ct.term
+                WHERE TRUE {scope_and.replace("novel", "ct.novel")}
+                GROUP BY ct.term
+            )
+            SELECT nc.novel, nc.chunk_id, nc.text,
+                   SUM(
+                       ln((c.n - d.df + 0.5) / (d.df + 0.5) + 1)
+                       * (ct.tf * ({k1} + 1))
+                       / (ct.tf + {k1} * (1 - {b} + {b} * nc.token_count / c.avgdl))
+                   )::float8 AS score
+            FROM chunk_terms ct
+            JOIN q ON q.term = ct.term
+            JOIN df d ON d.term = ct.term
+            JOIN novel_chunks nc
+              ON nc.novel = ct.novel AND nc.chunk_id = ct.chunk_id
+            CROSS JOIN corpus c
+            WHERE TRUE {scope_and.replace("novel", "nc.novel")}
+            GROUP BY nc.novel, nc.chunk_id, nc.text
+            ORDER BY score DESC
+            LIMIT %s
+        """
+        params = [*terms, *scope_param, *scope_param, *scope_param, top_k]
 
         with connect() as conn:
-            exact_rows = conn.execute(
-                f"""
-                SELECT novel, chunk_id, text
-                FROM novel_chunks
-                WHERE position(lower(%s) in lower(text)) > 0
-                {scope_novels}
-                ORDER BY novel, chunk_id
-                LIMIT %s
-                """,
-                [question.casefold(), *([only_novels] if only_novels else []), top_k],
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
 
-            keyword_rows: list = []
-            keywords = _extract_keywords(question)
-            usable_keywords = []
-            if keywords:
-                # 每个候选词都要先知道命中数才能判断是否太常见（见下方过滤），
-                # 但逐词分别 COUNT 等于对全表扫描了 N 次。这里用一条 SQL 里
-                # 多个 SUM(CASE WHEN ...) 同时算出所有词的命中数，只扫一次表——
-                # 问题分词很碎、词数较多时，性能差距是几倍到十倍。
-                count_columns = ", ".join(
-                    f"SUM(CASE WHEN position(lower(%s) in lower(text)) > 0 "
-                    f"THEN 1 ELSE 0 END) AS c{i}"
-                    for i in range(len(keywords))
-                )
-                count_params: list = [kw.casefold() for kw in keywords]
-                if only_novels:
-                    count_params.append(only_novels)
-                counts = conn.execute(
-                    f"SELECT {count_columns} FROM novel_chunks WHERE TRUE {scope_novels}",
-                    count_params,
-                ).fetchone()
-                for i, kw in enumerate(keywords):
-                    count = counts[f"c{i}"] or 0
-                    # 命中太多说明这个词太常见（比如几乎每页都出现的主角名），
-                    # 起不到缩小范围的作用，跳过它，避免结果变成"随便哪几段"。
-                    if 0 < count <= KEYWORD_GENERIC_LIMIT:
-                        usable_keywords.append(kw)
-
-            if usable_keywords:
-                or_clause = " OR ".join(
-                    "position(lower(%s) in lower(text)) > 0" for _ in usable_keywords
-                )
-                params: list = [kw.casefold() for kw in usable_keywords]
-                if only_novels:
-                    params.append(only_novels)
-                params.append(top_k)
-                keyword_rows = conn.execute(
-                    f"""
-                    SELECT novel, chunk_id, text
-                    FROM novel_chunks
-                    WHERE ({or_clause}) {scope_novels}
-                    ORDER BY novel, chunk_id
-                    LIMIT %s
-                    """,
-                    params,
-                ).fetchall()
-
-        results: list[SourceChunk] = []
-        seen: set[tuple[str, int]] = set()
-        for row in [*exact_rows, *keyword_rows]:
-            key = (row["novel"], int(row["chunk_id"]))
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append(
-                SourceChunk(
-                    novel=row["novel"],
-                    chunk_id=int(row["chunk_id"]),
-                    text=row["text"],
-                    distance=0.0,
-                )
+        return [
+            SourceChunk(
+                novel=row["novel"],
+                chunk_id=int(row["chunk_id"]),
+                text=row["text"],
+                # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
+                # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
+                # 按同一个字段排序时把最相关的排到最后。
+                distance=-float(row["score"]),
             )
-            if len(results) >= top_k:
-                break
-        return results
+            for row in rows
+        ]
 
     def positional_retrieve(
         self,
@@ -499,8 +505,12 @@ class NovelRAG:
         # 检索本身不受这个范围限制，全书候选池仍然完整，只是关键词这一路
         # 收窄了范围。
         keyword_scope = named_novels or _dominant_novels(semantic_sources)
+        # 书名已经用来确定检索范围了，不该再作为内容词参与 BM25 打分
+        # （详见 _strip_novel_titles 的说明——这个 bug 实测能让无关片段反超正确答案）
         keyword_sources = self.keyword_retrieve(
-            question, top_k=candidate_k, only_novels=keyword_scope
+            _strip_novel_titles(question, keyword_scope),
+            top_k=candidate_k,
+            only_novels=keyword_scope,
         )
         hint_novels = named_novels or _dominant_novels(
             semantic_sources + keyword_sources
