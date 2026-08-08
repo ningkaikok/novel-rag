@@ -47,7 +47,21 @@ e2e 测试在 `frontend/e2e/`，所有 `/api/*` 请求都在 `e2e/mock-api.ts` �
 > `@playwright/test` 版本锁定在 `1.50.0`（`package.json` 里不带 `^`），因为更新的版本
 > 要求 Node 20+，而本项目文档写的是 Node 18+。升级前先确认 Node 版本要求是否放宽。
 
-改到检索/切分逻辑时，跑一遍问答自查（需要先起后端）：
+改到检索/切分逻辑时，**先跑检索评测**（不需要起后端，但需要 PostgreSQL 索引已建好）：
+
+```bash
+# 改之前存一份基线
+python scripts/eval_retrieval.py --save /tmp/before.json
+# ...改代码...
+# 改之后对比，逐条看哪些用例变好、哪些变差
+python scripts/eval_retrieval.py --compare /tmp/before.json
+```
+
+这个脚本算的是 Recall@k 和 MRR，能客观判断改动是真的变好还是只是换了一批失败
+案例——原理和指标定义见 [docs/rag-techniques.md](docs/rag-techniques.md)。
+`tests/eval_baselines/` 下存着每个改进阶段的历史基线，可以直接拿来对比。
+
+想连生成质量一起看（需要先起后端）：
 
 ```bash
 python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
