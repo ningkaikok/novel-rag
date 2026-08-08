@@ -122,6 +122,40 @@ def recreate_schema(dimension: int) -> None:
         # 查询时是「给定几个词，找出所有含这些词的片段」，所以按 term 建索引。
         # 没有这个索引，每次查询都要全表扫 390 万行。
         conn.execute("CREATE INDEX chunk_terms_term_idx ON chunk_terms (term)")
+
+        # GraphRAG 的人物关系图（边表）。和上面两个索引一样是从同一批原文
+        # 派生的，所以跟着一起重建。
+        #
+        # **但抽人名的结果不在这里**——那部分要调 LLM，单独缓存在
+        # graph_characters 表里（见 ensure_graph_cache）。这样重建边表很快，
+        # 而昂贵的人名抽取能复用。
+        conn.execute("DROP TABLE IF EXISTS character_relations")
+        conn.execute(
+            """
+            CREATE TABLE character_relations (
+                novel      TEXT    NOT NULL,
+                -- 两个人物名，已按字典序排好：关系是无向的，排序后同一对人
+                -- 不会因为出现顺序不同被记成两条边
+                person_a   TEXT    NOT NULL,
+                person_b   TEXT    NOT NULL,
+                relation   TEXT    NOT NULL,
+                -- 共现次数。这是**唯一的置信度信号**——共现越多越可能是真关系，
+                -- 只出现一两次的大概率是偶然同框。查询时靠它排序和过滤。
+                weight     INTEGER NOT NULL,
+                PRIMARY KEY (novel, person_a, person_b, relation)
+            )
+            """
+        )
+        # 查询模式是「给定一个人名和关系类型，找出所有相关的人」，
+        # 而人名可能出现在 a 或 b 任一侧，所以两侧都要能走索引。
+        conn.execute(
+            "CREATE INDEX character_relations_a_idx "
+            "ON character_relations (person_a, relation)"
+        )
+        conn.execute(
+            "CREATE INDEX character_relations_b_idx "
+            "ON character_relations (person_b, relation)"
+        )
         conn.execute(
             "CREATE INDEX novel_chunks_novel_chunk_idx "
             "ON novel_chunks (novel, chunk_id)"
@@ -139,6 +173,125 @@ def has_index() -> bool:
             "SELECT to_regclass('public.novel_chunks') AS table_name"
         ).fetchone()
     return bool(row and row["table_name"])
+
+
+def save_relations(edges: list[tuple[str, str, str, str, int]]) -> None:
+    """批量写入人物关系边。表在 recreate_schema 里已经建好且清空。"""
+    if not edges:
+        return
+    with connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO character_relations "
+                "(novel, person_a, person_b, relation, weight) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (novel, person_a, person_b, relation) "
+                "DO UPDATE SET weight = EXCLUDED.weight",
+                edges,
+            )
+
+
+def query_relations(
+    person: str, relation: str, limit: int = 8, min_weight: int = 2
+) -> list[tuple[str, int]]:
+    """查某个人物在某种关系下的所有对手方，按共现次数从高到低。
+
+    min_weight 默认 2：只共现过一次的边大概率是偶然同框（两个人碰巧出现在
+    同一段提到「师父」的话里），过滤掉能显著降噪。
+
+    人名可能存在于 person_a 或 person_b 任一侧（边是无向的、按字典序存的），
+    所以两侧都要查，用 UNION ALL 合并。
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT other, SUM(weight) AS weight FROM (
+                SELECT person_b AS other, weight FROM character_relations
+                WHERE person_a = %s AND relation = %s
+                UNION ALL
+                SELECT person_a AS other, weight FROM character_relations
+                WHERE person_b = %s AND relation = %s
+            ) AS both_sides
+            GROUP BY other
+            HAVING SUM(weight) >= %s
+            ORDER BY weight DESC
+            LIMIT %s
+            """,
+            (person, relation, person, relation, min_weight, limit),
+        ).fetchall()
+    return [(r["other"], int(r["weight"])) for r in rows]
+
+
+def known_characters(novel: str | None = None) -> list[str]:
+    """图里出现过的所有人物名（用于在问题里识别"用户问的是谁"）。"""
+    scope = "WHERE novel = %s" if novel else ""
+    params = (novel,) if novel else ()
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT person_a AS name FROM character_relations {scope} "
+            f"UNION SELECT DISTINCT person_b FROM character_relations {scope}",
+            params + params,
+        ).fetchall()
+    return [r["name"] for r in rows]
+
+
+def ensure_graph_cache() -> None:
+    """建人物名抽取的缓存表（幂等，用 IF NOT EXISTS）。
+
+    **和 character_relations 分开**，理由和 chunk_contexts 一样：
+    抽人名要调 LLM（实测《凡人修仙传》的「伴侣」关系就要 11 次调用、57 秒），
+    而 character_relations 跟着 recreate_schema 一起被 DROP。如果不单独缓存，
+    **加一本新书就要把所有书的图重抽一遍**。
+
+    缓存键是 (书名, 关系类型, 采样片段的内容哈希)：
+    - 加新书 → 新书的键查不到，只抽新书；老书直接复用
+    - 改切分参数 → 采样内容变了，哈希变了，会重抽（这是对的，内容确实变了）
+    - 什么都没改 → 全部命中缓存，零调用
+    """
+    with connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS graph_characters (
+                novel        TEXT NOT NULL,
+                relation     TEXT NOT NULL,
+                sample_hash  TEXT NOT NULL,
+                -- 抽到的人名列表（JSON 数组）。存整个列表而不是一行一个名字：
+                -- 它是「一次抽取的完整结果」，拆开存反而要额外判断是不是抽全了。
+                names        JSONB NOT NULL,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (novel, relation, sample_hash)
+            )
+            """
+        )
+
+
+def load_cached_graph_characters(
+    novel: str, relation: str, sample_hash: str
+) -> list[str] | None:
+    """读回缓存的人名列表；没缓存返回 None（注意和"缓存了空列表"区分开）。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT names FROM graph_characters "
+            "WHERE novel = %s AND relation = %s AND sample_hash = %s",
+            (novel, relation, sample_hash),
+        ).fetchone()
+    return list(row["names"]) if row else None
+
+
+def save_graph_characters(
+    novel: str, relation: str, sample_hash: str, names: list[str]
+) -> None:
+    """写入抽取结果（幂等）。空列表也会写——"这批确实没抽到人名"本身
+    就是有效结果，缓存下来能避免下次重复调用。
+    """
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO graph_characters (novel, relation, sample_hash, names) "
+            "VALUES (%s, %s, %s, %s::jsonb) "
+            "ON CONFLICT (novel, relation, sample_hash) "
+            "DO UPDATE SET names = EXCLUDED.names",
+            (novel, relation, sample_hash, json.dumps(names, ensure_ascii=False)),
+        )
 
 
 def ensure_context_cache() -> None:

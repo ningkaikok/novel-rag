@@ -19,11 +19,21 @@ from pathlib import Path
 from sentence_transformers import SentenceTransformer
 
 from config import (
+    GRAPH_ENABLED,
+    GRAPH_MAX_CHUNKS_PER_RELATION,
+    GRAPH_MIN_NAME_HITS,
+    GRAPH_MODEL,
     CONTEXTUAL_ENABLED,
     CONTEXTUAL_MAX_CHUNKS_PER_BOOK,
     CONTEXTUAL_MODEL,
     CONTEXTUAL_WORKERS,
     NOVELS_DIR,
+)
+from graph import (
+    RELATION_KEYWORDS,
+    build_edges,
+    chunks_with_relation,
+    extract_characters_from_chunks,
 )
 from contextualizer import (
     build_window,
@@ -37,9 +47,13 @@ from loader import load_novel_chunks
 from postgres import (
     connect,
     ensure_context_cache,
+    ensure_graph_cache,
     load_cached_contexts,
+    load_cached_graph_characters,
     recreate_schema,
     save_contexts,
+    save_graph_characters,
+    save_relations,
     vector_literal,
 )
 from tokenizer import term_frequencies
@@ -49,7 +63,7 @@ from tokenizer import term_frequencies
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _make_generate_fn():
+def _make_generate_fn(model: str = CONTEXTUAL_MODEL):
     """返回一个 (prompt) -> 文本流 的函数，用于生成上下文说明。
 
     延迟导入：只有真的开启 Contextual Retrieval 时才需要 backend 里的模型客户端，
@@ -66,13 +80,11 @@ def _make_generate_fn():
     load_env(ROOT / ".env")
     from backend import claude_cli, zhipu
 
-    if CONTEXTUAL_MODEL.startswith(zhipu.MODEL_PREFIX):
-        return lambda prompt: zhipu.generate_stream(prompt, CONTEXTUAL_MODEL)
-    if CONTEXTUAL_MODEL.startswith(claude_cli.MODEL_PREFIX):
-        return lambda prompt: claude_cli.generate_stream(prompt, CONTEXTUAL_MODEL)
-    raise RuntimeError(
-        f"CONTEXTUAL_MODEL={CONTEXTUAL_MODEL} 不是支持的模型前缀（需要 glm: 或 claude:）"
-    )
+    if model.startswith(zhipu.MODEL_PREFIX):
+        return lambda prompt: zhipu.generate_stream(prompt, model)
+    if model.startswith(claude_cli.MODEL_PREFIX):
+        return lambda prompt: claude_cli.generate_stream(prompt, model)
+    raise RuntimeError(f"{model} 不是支持的模型前缀（需要 glm: 或 claude:）")
 
 
 def _build_contexts(chunks: list) -> dict[str, str]:
@@ -224,7 +236,91 @@ def build_index(model: SentenceTransformer | None = None) -> dict:
                         copy.write_row((chunk.novel, chunk.chunk_id, term, tf))
 
         count = conn.execute("SELECT count(*) AS count FROM novel_chunks").fetchone()["count"]
-    return {"novels": novels, "chunk_count": count, "contextualized": len(contexts)}
+
+    # 建人物关系图（GraphRAG）
+    edge_count = 0
+    if GRAPH_ENABLED:
+        print("正在抽取人物关系图…")
+        edge_count = _build_relation_graph(chunks)
+        print(f"  抽出 {edge_count} 条人物关系边")
+
+    return {
+        "novels": novels,
+        "chunk_count": count,
+        "contextualized": len(contexts),
+        "relations": edge_count,
+    }
+
+
+def _build_relation_graph(chunks: list) -> int:
+    """按 (书, 关系类型) 抽人物关系边并写库，返回边数。
+
+    **只从「含关系词的片段」里抽人名**，这是整个设计的关键（详见 graph.py
+    的模块 docstring）：关系本来就只存在于这些片段里，从全书均匀采样既贵
+    又抽不到关键角色——实测均匀采样 60 段（占全书 0.3%）时，南宫婉这样的
+    主要角色根本抽不到。
+
+    成本闸门：每个 (书, 关系) 最多采样 GRAPH_MAX_CHUNKS_PER_RELATION 个片段。
+    「师父」这类词能命中上千个片段，不设上限会让建图和全库抽取一样贵。
+    """
+    ensure_graph_cache()
+    generate_fn = None  # 延迟创建：全部命中缓存时根本不需要模型客户端
+
+    by_novel: dict[str, list] = {}
+    for chunk in chunks:
+        by_novel.setdefault(chunk.novel, []).append(chunk)
+
+    all_edges: list[tuple] = []
+    errors: list[str] = []
+    reused = 0
+    for novel, novel_chunks in by_novel.items():
+        for relation in RELATION_KEYWORDS:
+            matched = chunks_with_relation(novel_chunks, relation)
+            if len(matched) < 2:
+                continue
+            # 超过上限时均匀抽样，保证覆盖全书而不是只取开头
+            if len(matched) > GRAPH_MAX_CHUNKS_PER_RELATION:
+                step = len(matched) // GRAPH_MAX_CHUNKS_PER_RELATION
+                matched = matched[::step][:GRAPH_MAX_CHUNKS_PER_RELATION]
+
+            # 增量：按「采样到的片段内容」做哈希查缓存。
+            # 加新书时老书的哈希不变、直接复用；改了切分参数则哈希变化、
+            # 会重抽——那是对的，内容确实变了。
+            sample_hash = text_hash("\n".join(c.text for c in matched))
+            cached = load_cached_graph_characters(novel, relation, sample_hash)
+            if cached is not None:
+                characters = set(cached)
+                reused += 1
+            else:
+                if generate_fn is None:
+                    generate_fn = _make_generate_fn(GRAPH_MODEL)
+                name_hits = extract_characters_from_chunks(
+                    matched, generate_fn, errors=errors
+                )
+                characters = {
+                    n for n, hits in name_hits.items() if hits >= GRAPH_MIN_NAME_HITS
+                }
+                save_graph_characters(novel, relation, sample_hash, sorted(characters))
+            if len(characters) < 2:
+                continue
+            edges = build_edges(matched, characters, relation)
+            all_edges.extend(edges)
+            print(
+                f"  《{novel[:12]}》{relation}：{len(matched)} 段 → "
+                f"{len(characters)} 个人物 → {len(edges)} 条边"
+            )
+
+    if reused:
+        print(f"  {reused} 组「书×关系」直接复用了缓存，没有重复调用 LLM")
+    if errors:
+        # 降级不能吞掉原因（Contextual Retrieval 那边踩过这个坑）
+        distinct = sorted(set(errors))
+        print(f"  {len(errors)} 批抽取失败（已跳过，不影响其余部分）")
+        for reason in distinct[:2]:
+            print(f"    失败原因：{reason[:110]}")
+
+    save_relations(all_edges)
+    return len(all_edges)
 
 
 if __name__ == "__main__":
