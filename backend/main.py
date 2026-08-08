@@ -1,5 +1,38 @@
 """FastAPI 后端：把 src 下的 RAG 逻辑包成 HTTP 接口。
 
+一次提问在这里经历什么（读这个文件建议从 /api/ask 开始）
+--------------------------------------------------------
+    前端 POST /api/ask
+        ↓
+    ① _rewrite_for_search()     多轮追问补全指代（"他"→"李化元"）
+        ↓                        ⚠️ 必须在检索之前——检索发生在生成之前
+    ② rag.retrieve_hybrid_traced()
+        ├─ 语义检索（向量，pgvector HNSW）
+        ├─ BM25 检索（倒排索引）
+        ├─ 结构性检索（按 chunk_id 定位开头/结尾）
+        ├─ RRF 融合成候选池
+        └─ 交叉编码器重排，精选出 top_k
+        ↓
+    ③ rag.expand_neighbors()    补上相邻片段，避免语义被切断
+        ↓
+    ④ 按模型前缀路由到生成后端
+        claude: → 本地 Claude CLI ／ glm: → 智谱 ／ 其余 → 本地 Ollama
+        ↓
+    ⑤ SSE 流式推送
+        event: trace   → 前端的「思考过程」面板
+        event: sources → 原文出处卡片
+        event: token   → 逐字打字机
+        event: done
+        ↓
+    ⑥ 落库到 chat_turns（带 session_id 时），刷新页面能恢复
+
+为什么 src/ 和 backend/ 分开
+-----------------------------
+`src/` 是**纯业务逻辑**，不依赖 Web 框架——所以 `python src/ingest.py` 能独立
+跑、pytest 也能直接测。`backend/` 只做"把它包成 HTTP"这一件事：路由、流式、
+错误信封、会话持久化。这条边界让检索逻辑可以脱离 HTTP 单独验证
+（`scripts/eval_retrieval.py` 就是直接调 `src/rag.py`，完全不经过这个文件）。
+
 运行：uvicorn backend.main:app --reload --port 8000
 （在项目根目录 novel-rag/ 下运行）
 """
