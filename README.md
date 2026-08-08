@@ -151,7 +151,9 @@ python src/ingest.py
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding 模型 |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding 模型（双编码器，负责快速粗筛） |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | 本地重排模型（交叉编码器，约 1.1GB，首次使用自动下载） |
+| `RERANK_ENABLED` | `1` | 设成 `0` 关闭重排（模型下载不了、或想对比重排前后效果时用） |
 | `CHUNK_SIZE` | `500` | 每个片段的字符数上限 |
 | `CHUNK_OVERLAP` | `80` | 相邻片段的重叠字符数 |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama 服务地址 |

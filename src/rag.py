@@ -12,12 +12,15 @@ from config import (
     BM25_B,
     BM25_K1,
     CONTEXT_NEIGHBORS,
+    RERANK_CANDIDATE_MULTIPLIER,
+    RERANK_ENABLED,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     RECALL_K,
     TOP_K,
 )
 from postgres import connect, has_index, vector_literal
+from reranker import rerank
 from tokenizer import query_terms
 
 
@@ -471,7 +474,13 @@ class NovelRAG:
         trace 是一串 {"step", "detail"} —— 用后端已经算出来的真实数据描述每个阶段，
         不是装饰性动画。前端只负责渲染，不做任何判断。
         """
-        candidate_k = max(top_k, RECALL_K)
+        # 候选池要明显大于最终要的条数，重排才有东西可挑。
+        # 不开重排时退回原来的规模，避免白白多召回、多花时间。
+        candidate_k = (
+            max(top_k * RERANK_CANDIDATE_MULTIPLIER, RECALL_K)
+            if RERANK_ENABLED
+            else max(top_k, RECALL_K)
+        )
         trace: list[dict] = []
 
         # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
@@ -528,7 +537,10 @@ class NovelRAG:
             recall_detail += f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
         trace.append({"step": "多路召回", "detail": recall_detail})
 
-        # Reciprocal Rank Fusion：多路召回都贡献分数，无需额外重排模型。
+        # Reciprocal Rank Fusion：把多路召回合并成一个候选池。
+        # RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
+        # 分数量纲完全不同，没法直接相加。这让它简单又稳健，但也意味着它对
+        # 「这段话到底有没有回答问题」一无所知，那是下面重排要做的事。
         rrf_k = 60
         scores: dict[tuple[str, int], float] = {}
         items: dict[tuple[str, int], SourceChunk] = {}
@@ -539,15 +551,41 @@ class NovelRAG:
                 items.setdefault(key, source)
 
         ranked_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
-        result = [items[key] for key in ranked_keys[:top_k]]
 
         # 阶段四：融合排序
         trace.append(
             {
                 "step": "融合排序",
-                "detail": f"合并去重后共 {len(scores)} 个候选，取最相关的 {len(result)} 段作为依据",
+                "detail": f"合并去重后共 {len(scores)} 个候选",
             }
         )
+
+        # 阶段五：交叉编码器重排。
+        # 前面几路召回都是「粗筛」——快，但只能判断主题相近，判断不了「这段话
+        # 是不是真的在回答这个问题」。这里对候选池跑交叉编码器做精排：
+        # 它把问题和片段拼在一起送进模型，让两边的词直接做注意力交互。
+        # 详见 src/reranker.py 里双编码器 vs 交叉编码器的说明。
+        #
+        # 注意重排**只能改善排序，救不回没召回到的东西**——如果正确答案根本
+        # 不在这 20 个候选里，重排也无能为力。
+        candidates = [items[key] for key in ranked_keys[:candidate_k]]
+        if RERANK_ENABLED and len(candidates) > top_k:
+            try:
+                result = rerank(question, candidates, top_k)
+                trace.append(
+                    {
+                        "step": "精排",
+                        "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
+                    }
+                )
+            except Exception as exc:
+                # 重排是锦上添花，模型加载失败/推理出错都不该让整个问答挂掉，
+                # 退回融合排序的结果即可（质量差一点，但功能可用）。
+                result = candidates[:top_k]
+                trace.append({"step": "精排", "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）"})
+        else:
+            result = candidates[:top_k]
+
         return result, trace
 
     def expand_neighbors(

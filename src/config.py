@@ -11,8 +11,18 @@ DATABASE_URL = os.environ.get(
     f"postgresql://{getpass.getuser()}@127.0.0.1:5432/novel_rag",
 )
 
-# 本地 embedding 模型（中文效果较好，体积小）
+# 本地 embedding 模型（中文效果较好，体积小）。这是「双编码器」，负责快速粗筛。
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+
+# 本地重排模型（「交叉编码器」，负责对少量候选做精细排序，见 src/reranker.py）。
+# 比 embedding 模型大得多（约 1.1GB），但只对 RECALL_K 个候选跑，耗时可接受。
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-base")
+# 设成 0 可以完全关掉重排（模型下载不了、或想对比重排前后效果时用）
+RERANK_ENABLED = os.environ.get("RERANK_ENABLED", "1") != "0"
+# 送进重排的候选数 = 最终要的条数 × 这个倍数。重排要有东西可挑，候选池必须
+# 明显大于最终结果——业界经验是「召回 20 → 重排到 5」这个量级，即 3~4 倍。
+# 倍数太小重排没得挑，太大则交叉编码器要算的对数线性增加、变慢。
+RERANK_CANDIDATE_MULTIPLIER = int(os.environ.get("RERANK_CANDIDATE_MULTIPLIER", 3))
 
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))       # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
