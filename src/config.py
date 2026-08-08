@@ -24,6 +24,20 @@ RERANK_ENABLED = os.environ.get("RERANK_ENABLED", "1") != "0"
 # 倍数太小重排没得挑，太大则交叉编码器要算的对数线性增加、变慢。
 RERANK_CANDIDATE_MULTIPLIER = int(os.environ.get("RERANK_CANDIDATE_MULTIPLIER", 3))
 
+# --- Contextual Retrieval（给缺上下文的片段补一句说明，见 src/contextualizer.py）---
+# **默认关闭**：它要调 LLM，实测单条约 4.4 秒。开之前请先看清楚下面两个闸门。
+CONTEXTUAL_ENABLED = os.environ.get("CONTEXTUAL_ENABLED", "0") == "1"
+# 成本闸门：超过这个片段数的书直接跳过，不做上下文增强。
+# 《凡人修仙传》19501 个片段、《诡秘之主》11948 个——就算只处理 35% 也要好几小时，
+# 默认值刻意设在它们之下、《降龙》(1278) 之上，避免手一滑跑一整夜。
+CONTEXTUAL_MAX_CHUNKS_PER_BOOK = int(
+    os.environ.get("CONTEXTUAL_MAX_CHUNKS_PER_BOOK", 2000)
+)
+# 生成上下文用的模型。用便宜的小模型就够——它只是写一句话，不需要推理能力。
+CONTEXTUAL_MODEL = os.environ.get("CONTEXTUAL_MODEL", "glm:glm-4-flash")
+# 并发数。实测单次 4.4 秒，451 个片段串行 33 分钟、8 路并发约 4 分钟。
+CONTEXTUAL_WORKERS = int(os.environ.get("CONTEXTUAL_WORKERS", 8))
+
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))       # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
 
