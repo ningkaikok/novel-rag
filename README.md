@@ -38,8 +38,9 @@ novel-rag/
 
 | 文档 | 讲什么 | 什么时候看 |
 | --- | --- | --- |
+| [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | ⭐ 从这里开始 |
 | [**代码导读**](docs/code-walkthrough.md) | 这份代码怎么读、建议的阅读顺序、可直接上手跑的实验 | 第一次接触这个项目 |
-| [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写的原理与实测 | 想深入某个具体技术 |
+| [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写、GraphRAG 的原理与实测 | 想深入某个具体技术 |
 
 另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
 [从项目里提炼的 20 道面试题](docs/interview-questions.md)。
