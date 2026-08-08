@@ -1,6 +1,7 @@
 """检索 + 生成：从 PostgreSQL + pgvector 检索相关片段，调用本地 Ollama 生成回答。"""
 import json
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -530,11 +531,49 @@ class NovelRAG:
     def retrieve_hybrid_traced(
         self, question: str, top_k: int = TOP_K
     ) -> tuple[list[SourceChunk], list[dict]]:
-        """同 retrieve_hybrid，但额外返回一份「思考过程」trace，供界面展示每一步。
+        """同 retrieve_hybrid，但额外返回一份「思考过程」trace。
 
-        trace 是一串 {"step", "detail"} —— 用后端已经算出来的真实数据描述每个阶段，
-        不是装饰性动画。前端只负责渲染，不做任何判断。
+        一次性拿到全部结果的版本，给评测脚本和测试用。
+        接口端走 retrieve_hybrid_stream()，好把步骤边跑边推给前端。
         """
+        trace: list[dict] = []
+        sources: list[SourceChunk] = []
+        for kind, payload in self.retrieve_hybrid_stream(question, top_k):
+            if kind == "step":
+                trace.append(payload)
+            else:
+                sources = payload
+        return sources, trace
+
+    def retrieve_hybrid_stream(self, question: str, top_k: int = TOP_K):
+        """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
+
+        **为什么要做成生成器**：整条流水线要 2 秒左右（交叉编码器重排占大头），
+        一次性返回的话用户在这 2 秒里什么都看不到，只能干等。改成边跑边报之后，
+        界面可以像成熟的 AI 应用那样把步骤一条条点亮——**等待时间没变，但
+        用户知道系统在干什么**，感受完全不同。
+
+        顺带解决了一个真实的性能问题：原来接口端在 `async def` 里同步调用检索，
+        这 2 秒会**阻塞整个事件循环**（其他请求全卡住，连断连检查都跑不了）。
+        改成生成器后，接口端可以用 `run_in_threadpool` 逐步取，每取一次就是
+        一次让出控制权的机会——和下面消费模型 token 用的是同一套模式。
+
+        yield 的形状：
+            ("step",   {"step": 阶段名, "detail": 说明, "ms": 本阶段耗时})
+            ("result", [SourceChunk, ...])   ← 最后一条，只有一条
+        """
+        # 每个阶段各自计时：光看总耗时不知道慢在哪，分段之后一眼能看出
+        # 重排占了大头（也正是靠这个数据才确定了「重排让你可以少送」这个结论）。
+        mark = time.perf_counter()
+
+        def took() -> int:
+            """返回距上一个阶段的毫秒数，并重置计时起点。"""
+            nonlocal mark
+            now = time.perf_counter()
+            ms = int((now - mark) * 1000)
+            mark = now
+            return ms
+
         # 候选池要明显大于最终要的条数，重排才有东西可挑。
         # 不开重排时退回原来的规模，避免白白多召回、多花时间。
         candidate_k = (
@@ -542,8 +581,6 @@ class NovelRAG:
             if RERANK_ENABLED
             else max(top_k, RECALL_K)
         )
-        trace: list[dict] = []
-
         # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
         named_novels = self._named_novels(question)
 
@@ -554,16 +591,14 @@ class NovelRAG:
         if full_text is not None:
             title = _display_title(named_novels[0])
             chars = sum(len(c.text) for c in full_text)
-            return full_text, [
-                {
-                    "step": "理解问题",
-                    "detail": f"识别到你在问{title}",
-                },
-                {
-                    "step": "跳过检索",
-                    "detail": f"{title}全文仅 {chars} 字，直接把整本给模型，不做检索（零信息损失）",
-                },
-            ]
+            yield "step", {"step": "理解问题", "detail": f"识别到你在问{title}", "ms": took()}
+            yield "step", {
+                "step": "跳过检索",
+                "detail": f"{title}全文仅 {chars} 字，直接把整本给模型，不做检索（零信息损失）",
+                "ms": took(),
+            }
+            yield "result", full_text
+            return
 
         structural = _structural_kind(question)  # "结局" / "开头" / None
         if named_novels:
@@ -575,14 +610,14 @@ class NovelRAG:
             detail = "未点明书名，稍后根据检索内容自动判断属于哪本书"
         if structural:
             detail += f"，且在问「{structural}」这类结构性问题"
-        trace.append({"step": "理解问题", "detail": detail})
+        yield "step", {"step": "理解问题", "detail": detail, "ms": took()}
 
         # 阶段二：确定检索范围
         if named_novels:
             scope_detail = f"只在{'、'.join(_display_title(n) for n in named_novels)}内检索"
         else:
             scope_detail = "在全部书里检索"
-        trace.append({"step": "检索范围", "detail": scope_detail})
+        yield "step", {"step": "检索范围", "detail": scope_detail, "ms": took()}
 
         # 阶段三：多路召回
         semantic_sources = self.retrieve(
@@ -615,7 +650,7 @@ class NovelRAG:
             recall_detail += f" · 结构性召回 {len(positional_sources)} 条（定位到{where} {span}）"
         if not named_novels and hint_novels:
             recall_detail += f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
-        trace.append({"step": "多路召回", "detail": recall_detail})
+        yield "step", {"step": "多路召回", "detail": recall_detail, "ms": took()}
 
         # Reciprocal Rank Fusion：把多路召回合并成一个候选池。
         # RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
@@ -633,12 +668,23 @@ class NovelRAG:
         ranked_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
 
         # 阶段四：融合排序
-        trace.append(
-            {
-                "step": "融合排序",
-                "detail": f"合并去重后共 {len(scores)} 个候选",
-            }
-        )
+        #
+        # detail 里要把「取前 candidate_k 个」写出来。之前只写了候选总数，
+        # 界面上就出现了「合并去重后共 38 个候选」紧跟着「对 20 个候选重新打分」
+        # 这种数字断层——少掉的 18 个去哪了没人知道。**思考过程的价值就在于
+        # 可解释，出现解释不了的数字反而比不展示更糟。**
+        yield "step", {
+            "step": "融合排序",
+            "detail": (
+                f"合并去重后共 {len(scores)} 个候选"
+                + (
+                    f"，按 RRF 分数取前 {candidate_k} 个进入精排"
+                    if len(scores) > candidate_k
+                    else ""
+                )
+            ),
+            "ms": took(),
+        }
 
         # 阶段五：交叉编码器重排。
         # 前面几路召回都是「粗筛」——快，但只能判断主题相近，判断不了「这段话
@@ -652,21 +698,24 @@ class NovelRAG:
         if RERANK_ENABLED and len(candidates) > top_k:
             try:
                 result = rerank(question, candidates, top_k)
-                trace.append(
-                    {
-                        "step": "精排",
-                        "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
-                    }
-                )
+                yield "step", {
+                    "step": "精排",
+                    "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
+                    "ms": took(),
+                }
             except Exception as exc:
                 # 重排是锦上添花，模型加载失败/推理出错都不该让整个问答挂掉，
                 # 退回融合排序的结果即可（质量差一点，但功能可用）。
                 result = candidates[:top_k]
-                trace.append({"step": "精排", "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）"})
+                yield "step", {
+                    "step": "精排",
+                    "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）",
+                    "ms": took(),
+                }
         else:
             result = candidates[:top_k]
 
-        return result, trace
+        yield "result", result
 
     def expand_neighbors(
         self,

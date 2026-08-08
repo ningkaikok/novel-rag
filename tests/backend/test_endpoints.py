@@ -149,12 +149,13 @@ def test_get_session_shape(client, monkeypatch):
 class _FakeRag:
     """/api/ask 依赖的最小 NovelRAG 替身：只实现路由会调用到的几个方法。"""
 
-    def retrieve_hybrid_traced(self, question, top_k):
-        sources = [
+    def retrieve_hybrid_stream(self, question, top_k):
+        """真实实现是个生成器：每完成一步 yield 一条 step，最后 yield result。"""
+        yield "step", {"step": "理解问题", "detail": "识别到你在问《雾隐山庄》", "ms": 12}
+        yield "step", {"step": "精排", "detail": "取最相关的 3 段", "ms": 2100}
+        yield "result", [
             type("S", (), {"novel": "雾隐山庄", "chunk_id": 0, "text": "顾长风是庄主"})()
         ]
-        trace = [{"step": "理解问题", "detail": "识别到你在问《雾隐山庄》"}]
-        return sources, trace
 
     def expand_neighbors(self, sources):
         return sources
@@ -175,8 +176,12 @@ def test_ask_streams_trace_sources_and_tokens(client):
 
     assert resp.status_code == 200
     body = resp.text
-    assert "event: trace" in body
+    # 每一步单独一个 step 事件——不是等检索全跑完再整包推
+    assert body.count("event: step") == 2, "两个阶段应各推一条，而不是合成一条"
     assert "识别到你在问《雾隐山庄》" in body
+    assert '"ms": 2100' in body, "每步耗时要带上，界面才能显示慢在哪"
+    # step 必须全部排在 sources 前面：检索没跑完就没有出处可发
+    assert body.index("event: sources") > body.rindex("event: step")
     assert "event: sources" in body
     assert "顾长风是庄主" in body
     assert 'data: "顾长"' in body

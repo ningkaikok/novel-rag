@@ -22,6 +22,8 @@ export interface Source {
 export interface TraceStep {
   step: string;
   detail: string;
+  /** 本阶段耗时（毫秒）。历史会话里存的旧记录没有这个字段。 */
+  ms?: number;
 }
 
 export interface SearchResult extends Source {
@@ -100,6 +102,8 @@ export async function setModel(model: string): Promise<void> {
 }
 
 interface AskHandlers {
+  /** 检索每完成一步就回调一次，用于把「思考过程」逐条点亮。 */
+  onStep?: (step: TraceStep) => void;
   onTrace?: (trace: TraceStep[]) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (token: string) => void;
@@ -107,7 +111,7 @@ interface AskHandlers {
   onError?: (err: Error) => void;
 }
 
-/** 发起提问并消费 SSE 流：先收到 trace / sources，再逐 token 收 answer。
+/** 发起提问并消费 SSE 流：检索期间逐条收 step，然后 sources，再逐 token 收 answer。
  *
  * signal 用于用户中断（Stop 按钮）：abort 后 fetch 抛 AbortError，
  * 同时连接断开，后端检测到就会停止向上游模型索取 token。
@@ -182,7 +186,9 @@ function handleEvent(raw: string, handlers: AskHandlers) {
     else if (line.startsWith("data:")) data += line.slice(5).trim();
   }
   if (!data) return;
-  if (event === "trace") handlers.onTrace?.(JSON.parse(data));
+  // step 是检索期间逐条推的（新），trace 是一次性整包（历史会话恢复走这条）
+  if (event === "step") handlers.onStep?.(JSON.parse(data));
+  else if (event === "trace") handlers.onTrace?.(JSON.parse(data));
   else if (event === "sources") handlers.onSources?.(JSON.parse(data));
   else if (event === "token") handlers.onToken?.(JSON.parse(data));
 }

@@ -1,6 +1,11 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Avatar, Collapse, Typography } from "antd";
 import type { Source, TraceStep } from "../api";
+
+/** 毫秒转成人读的时长：1200 → "1.2s"，340 → "340ms" */
+function humanMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -13,7 +18,13 @@ export interface ChatMessage {
 }
 
 // 「思考过程」折叠面板：展示检索流水线每一步的真实动作。
-// trace 引用在一次回答里不变，memo 掉避免打字机每帧重渲染。
+//
+// 交互参考成熟 AI 应用（ChatGPT / Claude / Perplexity）的三条惯例：
+//   1. 检索中展开，让用户看见系统在干什么；**答案开始输出后自动收起**，
+//      把注意力还给答案本身（用户手动点过就尊重他的选择，不再自动收）
+//   2. 收起时标题给一句有信息量的总结（"思考 1.4s · 5 步"），
+//      而不是干巴巴的"5 步"——收起状态才是大多数时候看到的状态
+//   3. 步骤逐条点亮，末尾留一个"进行中"的占位，让人知道还没完
 const Thinking = memo(function Thinking({
   trace,
   live,
@@ -21,14 +32,26 @@ const Thinking = memo(function Thinking({
   trace: TraceStep[];
   live: boolean;
 }) {
+  const [activeKey, setActiveKey] = useState<string[]>(live ? ["t"] : []);
+  // 用户手动点过展开/收起之后，就不再自动替他做决定
+  const touchedRef = useRef(false);
+
+  useEffect(() => {
+    if (!live && !touchedRef.current) setActiveKey([]);
+  }, [live]);
+
+  const totalMs = trace.reduce((sum, s) => sum + (s.ms ?? 0), 0);
+
   return (
     <Collapse
       className="thinking-panel"
       ghost
       size="small"
-      // 生成中默认展开（让用户看到检索在做什么）；历史消息默认收起。
-      // 只作用于初次挂载，之后用户可自行展开/收起。
-      defaultActiveKey={live ? ["t"] : []}
+      activeKey={activeKey}
+      onChange={(keys) => {
+        touchedRef.current = true;
+        setActiveKey(keys as string[]);
+      }}
       items={[
         {
           key: "t",
@@ -36,14 +59,17 @@ const Thinking = memo(function Thinking({
             <span className="thinking-panel-label">
               🔍 思考过程
               {live ? (
-                // 还在生成：标题右侧显示跳动的点（把原本独立的「正在翻书思考」合并进来）
+                // 还在检索/生成：标题右侧显示跳动的点
                 <span className="thinking-dots" aria-label="生成中">
                   <span className="thinking-dot" />
                   <span className="thinking-dot" />
                   <span className="thinking-dot" />
                 </span>
               ) : (
-                <span className="thinking-panel-count">{trace.length} 步</span>
+                <span className="thinking-panel-count">
+                  {totalMs > 0 ? `${humanMs(totalMs)} · ` : ""}
+                  {trace.length} 步
+                </span>
               )}
             </span>
           ),
@@ -52,9 +78,27 @@ const Thinking = memo(function Thinking({
               {trace.map((s, i) => (
                 <li className="thinking-step" key={i}>
                   <span className="thinking-step-name">{s.step}</span>
+                  {/* 耗时紧跟阶段名：放在末尾的话，detail 换行后位置会飘。
+                      平时不抢注意力，想看"慢在哪"时一眼能找到（精排通常占大头）。 */}
+                  {s.ms != null && s.ms > 0 && (
+                    <span className="thinking-step-ms">{humanMs(s.ms)}</span>
+                  )}
                   <span className="thinking-step-detail">{s.detail}</span>
                 </li>
               ))}
+              {live && (
+                // 进行中的占位：没有它的话，最后一步显示完就像是已经结束了，
+                // 而实际上后面可能还有更慢的一步（精排要 2 秒）没跑完。
+                <li className="thinking-step thinking-step-pending">
+                  <span className="thinking-step-name">
+                    <span className="thinking-dots">
+                      <span className="thinking-dot" />
+                      <span className="thinking-dot" />
+                      <span className="thinking-dot" />
+                    </span>
+                  </span>
+                </li>
+              )}
             </ol>
           ),
         },

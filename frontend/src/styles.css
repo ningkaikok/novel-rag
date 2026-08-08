@@ -460,6 +460,36 @@ body {
 .thinking-step-detail {
   color: var(--muted);
 }
+/* 单步耗时：比正文更小更淡，只在你专门去找"慢在哪"的时候才跳出来 */
+.thinking-step-ms {
+  margin-right: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+/* 「还在跑」的占位行：序号位置换成呼吸的圆点，表示下一步正在进行。
+   没有它的话，最后一步一显示完就像已经结束了，而精排还要再跑 2 秒。 */
+.thinking-step-pending::before {
+  content: "";
+  border-style: dashed;
+  animation: think-pulse 1.2s ease-in-out infinite;
+}
+@keyframes think-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* 尊重"减少动态效果"的系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-step-pending::before {
+    animation: none;
+  }
+}
 
 /* 原文出处：一行式，序号 + 书名 + 预览，可展开 */
 .sources-list {
