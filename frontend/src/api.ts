@@ -1,4 +1,9 @@
-// 与 FastAPI 后端通信的封装。开发期 /api 由 Vite 代理到 http://localhost:8000
+// 与 FastAPI 后端通信的封装。开发期 /api 由 Vite 代理到 http://localhost:8000。
+//
+// 这里有两类通信方式，代表 AI 应用常见的“控制面”和“数据面”：
+// 1. 普通 JSON 请求：上传、切换模型、查询任务状态——一次请求对应一次完整响应。
+// 2. SSE 流：问答过程中持续接收检索步骤、出处和 token——一个响应包含很多事件。
+// 把协议细节集中在本文件后，React 组件只处理业务状态，不需要理解 HTTP 分帧。
 
 // 后端统一的错误响应形状：{"error": {"code": ..., "message": ...}}。
 // 不管是业务代码主动抛的错误、还是 FastAPI 自己的请求校验错误、
@@ -211,6 +216,9 @@ export async function askStream(
     }
 
     const reader = res.body.getReader();
+    // 网络分片不等于 SSE 事件分片：一次 reader.read() 可能只拿到半个 JSON，
+    // 也可能同时拿到多个事件。TextDecoder 的 stream:true 保留跨分片的 UTF-8
+    // 字节状态，buffer 则保留尚未遇到空行终止符的半个 SSE 事件。
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -219,7 +227,8 @@ export async function askStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE 以空行分隔事件
+      // SSE 以空行分隔事件。循环处理是因为一个网络包里可能粘着多个事件；
+      // 最后不足一个事件的尾巴继续留在 buffer，等待下一次 read() 补齐。
       let sep: number;
       while ((sep = buffer.indexOf("\n\n")) !== -1) {
         const raw = buffer.slice(0, sep);

@@ -12,6 +12,20 @@
 片段生成一句上下文说明，**索引「说明 + 原文」但 text 列仍存原文**——
 回答时用原文，不把生成的说明混进正文。
 
+建议按下面的数据流阅读 ``build_index``：
+
+    扫描 .txt + manifest
+        → 只选 added / modified / deleted
+        → 单书切分
+        → 可选上下文增强
+        → 分批计算 embedding
+        → 统计 BM25 词频
+        → 可选人物关系边
+        → 单书事务原子替换全部派生数据
+
+前六步可以很慢，但都在事务外准备，不会长时间锁住旧索引；最后一步才开启短事务。
+这是一种适合 RAG/Agent 长任务的通用模式：**先计算，后原子发布**。
+
 用法: python src/ingest.py
 """
 import hashlib
@@ -362,6 +376,8 @@ def build_index(
         ]
 
         embeddings: list = []
+        # 分批不只是为了内存：每批之间都会检查取消信号。若一次把整本书交给
+        # model.encode，用户点“停止”后必须等整本推理结束，界面会像失去响应。
         batch_size = 32
         for start in range(0, len(indexed_texts), batch_size):
             check()
