@@ -206,6 +206,7 @@ def build_index(model: SentenceTransformer | None = None) -> dict:
         (
             c.novel,
             c.chunk_id,
+            c.chapter_title,
             c.text,
             vector_literal(embedding),
             token_count,
@@ -217,8 +218,8 @@ def build_index(model: SentenceTransformer | None = None) -> dict:
         with conn.cursor() as cursor:
             cursor.executemany(
                 "INSERT INTO novel_chunks "
-                "(novel, chunk_id, text, embedding, token_count, context) "
-                "VALUES (%s, %s, %s, %s::vector, %s, %s)",
+                "(novel, chunk_id, chapter_title, text, embedding, token_count, context) "
+                "VALUES (%s, %s, %s, %s, %s::vector, %s, %s)",
                 rows,
             )
 

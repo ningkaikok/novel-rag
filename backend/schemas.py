@@ -10,12 +10,15 @@ TS 类型，这里就是唯一真源，不用再靠人肉对着 main.py 的返�
 from pydantic import BaseModel
 
 from config import TOP_K
+from query_router import AnswerMode
 
 
 # ----------------------------------------------------------------- 请求体
 class AskRequest(BaseModel):
     question: str
     top_k: int = TOP_K
+    # auto：后端保守判断；grounded：强制查小说；free：不查小说、直接问模型。
+    mode: AnswerMode = AnswerMode.auto
     # 可选：带上会话 ID 就把这一轮问答落库，刷新页面后能恢复。
     # 不传则完全不落库，行为跟以前一致（纯内存对话）。
     session_id: str | None = None
@@ -47,6 +50,7 @@ class DeleteResult(ReindexResult):
 class SearchMatch(BaseModel):
     novel: str
     chunk_id: int
+    chapter_title: str | None = None
     text: str
     match_count: int
 
@@ -71,6 +75,8 @@ class TraceStep(BaseModel):
 class SourceItem(BaseModel):
     novel: str
     chunk_id: int
+    # 兼容旧会话和旧索引：升级后未重建时章节名为 null。
+    chapter_title: str | None = None
     text: str
 
 

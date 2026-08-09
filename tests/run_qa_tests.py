@@ -15,6 +15,9 @@ from pathlib import Path
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from citation_eval import evaluate_citations  # noqa: E402
+
 API = "http://127.0.0.1:8000"
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,7 +30,8 @@ def ask(question: str, top_k: int = 5) -> dict:
     """调用 /api/ask，消费 SSE，返回 {"answer": str, "sources": [...]}。"""
     resp = requests.post(
         f"{API}/api/ask",
-        json={"question": question, "top_k": top_k},
+        # 生成层评测必须固定走原文路径，不能因路由规则变化而混入自由问答。
+        json={"question": question, "top_k": top_k, "mode": "grounded"},
         stream=True,
         timeout=180,
     )
@@ -74,6 +78,7 @@ def main():
         r = ask(q["question"])
         elapsed = time.time() - t0
         print(f"  -> {elapsed:.1f}s, {len(r['answer'])} 字, {len(r['sources'])} 个来源片段")
+        expected_keywords = ((q.get("retrieval") or {}).get("expect_keywords") or [])
         results.append(
             {
                 **q,
@@ -85,11 +90,16 @@ def main():
                     {
                         "novel": s["novel"],
                         "chunk_id": s["chunk_id"],
+                        "chapter_title": s.get("chapter_title"),
                         "excerpt": s["text"][:SOURCE_EXCERPT_CHARS],
                         "text_chars": len(s["text"]),
                     }
                     for s in r["sources"]
                 ],
+                # 在截断来源之前计算，保证关键词覆盖使用的是完整原文。
+                "citation_metrics": evaluate_citations(
+                    r["answer"], r["sources"], expected_keywords
+                ),
                 "elapsed_seconds": round(elapsed, 1),
             }
         )

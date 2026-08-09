@@ -19,6 +19,7 @@ import {
   reindex,
   setModel as apiSetModel,
   uploadBooks,
+  type AnswerMode,
   type Source,
 } from "./api";
 import Sidebar from "./components/Sidebar";
@@ -29,6 +30,18 @@ const CLAUDE_PREFIX = "claude:";
 const GLM_PREFIX = "glm:";
 // 所有走云端（数据会离开本机）的模型前缀，用于隐私提示
 const CLOUD_PREFIXES = [CLAUDE_PREFIX, GLM_PREFIX];
+
+const ANSWER_MODE_OPTIONS = [
+  { value: "auto", label: "✨ 自动判断" },
+  { value: "grounded", label: "📖 仅依据原文" },
+  { value: "free", label: "💬 自由问答" },
+] satisfies { value: AnswerMode; label: string }[];
+
+const ANSWER_MODE_HELP: Record<AnswerMode, string> = {
+  auto: "开放问题直接回答；涉及书中内容时自动检索原文",
+  grounded: "强制搜索书架，只依据召回的小说原文回答",
+  free: "不搜索书架，直接使用当前模型的通用能力回答",
+};
 
 const CLAUDE_LABELS: Record<string, string> = {
   haiku: "Claude · haiku（最快最省）",
@@ -172,6 +185,7 @@ function Main() {
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
+  const [answerMode, setAnswerMode] = useState<AnswerMode>("auto");
   const scrollRef = useRef<HTMLDivElement>(null);
   // 是否显示「跳到最近回答」浮动按钮：用户往上翻看历史/出处、离底部较远时出现
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -489,7 +503,11 @@ function Main() {
           setBusy(false);
         },
       },
-      { signal: controller.signal, sessionId: sessionIdRef.current }
+      {
+        signal: controller.signal,
+        sessionId: sessionIdRef.current,
+        mode: answerMode,
+      }
     );
   }
 
@@ -515,6 +533,10 @@ function Main() {
 
   const isCloud = isCloudModel(currentModel);
   const cloudVendor = currentModel.startsWith(GLM_PREFIX) ? "智谱" : "Anthropic";
+  const cloudPrivacyText =
+    answerMode === "free"
+      ? `你的问题会发送到${cloudVendor}；自由问答不会发送小说原文，并计入你自己的账号用量`
+      : `检索到的原文片段和你的问题会发送到${cloudVendor}的服务器，并计入你自己的账号用量`;
 
   return (
     <Layout className="layout" style={{ minHeight: "100vh" }}>
@@ -590,10 +612,21 @@ function Main() {
               popupMatchSelectWidth={false}
             />
 
+            <Tooltip title={ANSWER_MODE_HELP[answerMode]}>
+              <Select
+                aria-label="回答模式"
+                className="answer-mode-select"
+                size="small"
+                value={answerMode}
+                disabled={busy}
+                onChange={(value: AnswerMode) => setAnswerMode(value)}
+                options={ANSWER_MODE_OPTIONS}
+                popupMatchSelectWidth={false}
+              />
+            </Tooltip>
+
             {isCloud ? (
-              <Tooltip
-                title={`检索到的原文片段和你的问题会发送到${cloudVendor}的服务器，并计入你自己的账号用量`}
-              >
+              <Tooltip title={cloudPrivacyText}>
                 <span className="privacy-chip cloud">☁️ 云端 · 会上传</span>
               </Tooltip>
             ) : (
@@ -606,7 +639,13 @@ function Main() {
           <div className="composer">
             <Input
               size="large"
-              placeholder="输入问题或关键词，搜索相关原文后让模型回答……"
+              placeholder={
+                answerMode === "grounded"
+                  ? "询问人物、剧情或原句，只依据书架原文回答……"
+                  : answerMode === "free"
+                    ? "自由提问，不搜索小说书架……"
+                    : "问小说内容或开放问题，自动选择回答方式……"
+              }
               value={input}
               disabled={busy}
               onChange={(e) => setInput(e.target.value)}

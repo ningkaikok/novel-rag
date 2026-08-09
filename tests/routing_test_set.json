@@ -1,0 +1,18 @@
+[
+  {"id": "R01", "question": "你好", "expected": "free", "category": "闲聊"},
+  {"id": "R02", "question": "你能做什么？", "expected": "free", "category": "使用帮助"},
+  {"id": "R03", "question": "什么是 RAG？", "expected": "free", "category": "通用知识"},
+  {"id": "R04", "question": "LangGraph 适合解决什么问题？", "expected": "free", "category": "通用知识"},
+  {"id": "R05", "question": "帮我写一首关于月亮的诗", "expected": "free", "category": "创作"},
+  {"id": "R06", "question": "把这句话翻译成英文：今天天气很好", "expected": "free", "category": "通用任务"},
+  {"id": "R07", "question": "不要搜索，用通用知识介绍 PostgreSQL", "expected": "free", "category": "显式自由"},
+  {"id": "R08", "question": "今天上海天气怎么样？", "expected": "free", "category": "通用知识"},
+  {"id": "R09", "question": "《凡人修仙传》的结局是什么？", "expected": "grounded", "category": "明确书名"},
+  {"id": "R10", "question": "这本书的主角是谁？", "expected": "grounded", "category": "小说线索"},
+  {"id": "R11", "question": "原文是怎么描写顾长风病情的？", "expected": "grounded", "category": "查原文"},
+  {"id": "R12", "question": "韩立的师父是谁？", "expected": "grounded", "category": "人物事实"},
+  {"id": "R13", "question": "周明瑞醒来时发生了什么？", "expected": "grounded", "category": "人物剧情"},
+  {"id": "R14", "question": "两本小说的主角有什么不同？", "expected": "grounded", "category": "跨书比较"},
+  {"id": "R15", "question": "故事开头发生在哪里？", "expected": "grounded", "category": "结构问题"},
+  {"id": "R16", "question": "塔罗会是什么组织？", "expected": "grounded", "category": "默认保守"}
+]

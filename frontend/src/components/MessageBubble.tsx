@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Avatar, Collapse, Typography } from "antd";
 import type { Source, TraceStep } from "../api";
 
@@ -116,14 +116,29 @@ function shortName(novel: string): string {
 
 // 出处卡片单独 memo：打字机每帧都会刷新气泡内容，但 sources 引用在一次回答里不变，
 // 所以这一块（含 5 个会做 DOM 测量的省略号组件）在流式输出期间不会重渲染。
-const Sources = memo(function Sources({ sources }: { sources: Source[] }) {
+const Sources = memo(function Sources({
+  sources,
+  groupId,
+  activeIndex,
+}: {
+  sources: Source[];
+  groupId: string;
+  activeIndex: number | null;
+}) {
   return (
     <div className="sources-list">
       <div className="sources-label">📖 原文出处</div>
       {sources.map((s, i) => (
-        <div className="source-card" key={i}>
+        <div
+          className={`source-card${activeIndex === i ? " source-card-active" : ""}`}
+          id={`source-${groupId}-${i + 1}`}
+          key={i}
+        >
           <span className="source-index">{i + 1}</span>
           <span className="source-book">《{shortName(s.novel)}》</span>
+          {s.chapter_title && (
+            <span className="source-chapter">{s.chapter_title}</span>
+          )}
           <Typography.Paragraph
             className="source-text"
             style={{ marginBottom: 0 }}
@@ -141,11 +156,62 @@ const Sources = memo(function Sources({ sources }: { sources: Source[] }) {
   );
 });
 
+function CitedContent({
+  text,
+  sources,
+  onCitation,
+}: {
+  text: string;
+  sources: Source[];
+  onCitation: (index: number) => void;
+}) {
+  const nodes: ReactNode[] = [];
+  const citation = /\[(\d+)]/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = citation.exec(text)) !== null) {
+    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    const sourceNumber = Number(match[1]);
+    if (sourceNumber >= 1 && sourceNumber <= sources.length) {
+      nodes.push(
+        <button
+          type="button"
+          className="inline-citation"
+          aria-label={`查看原文出处 ${sourceNumber}`}
+          onClick={() => onCitation(sourceNumber - 1)}
+          key={`${match.index}-${sourceNumber}`}
+        >
+          [{sourceNumber}]
+        </button>
+      );
+    } else {
+      // 模型偶尔会生成越界编号。保留原文本但不做成可点击按钮，避免把 [9]
+      // 错链到第 1 张卡片；离线引用评测会把这种情况记为 invalid。
+      nodes.push(match[0]);
+    }
+    cursor = citation.lastIndex;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return <>{nodes}</>;
+}
+
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
+  const groupId = useId().replace(/:/g, "");
+  const [activeSource, setActiveSource] = useState<number | null>(null);
   const hasTrace = !isUser && !!msg.trace && msg.trace.length > 0;
   // 「等待正文」：流式中但正文还没到（模型推理/检索中）
   const waiting = !!msg.streaming && !msg.content;
+
+  function jumpToSource(index: number) {
+    setActiveSource(index);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`source-${groupId}-${index + 1}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   return (
     <div className={`row ${isUser ? "row-user" : "row-bot"}`}>
       <Avatar className="avatar" size={36}>
@@ -170,7 +236,15 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           )
         ) : (
           <div className="content">
-            {msg.content}
+            {isUser ? (
+              msg.content
+            ) : (
+              <CitedContent
+                text={msg.content}
+                sources={msg.sources ?? []}
+                onCitation={jumpToSource}
+              />
+            )}
             {msg.streaming && <span className="caret" />}
             {msg.interrupted && (
               <span className="interrupted-tag">已停止生成</span>
@@ -179,7 +253,11 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         )}
 
         {msg.sources && msg.sources.length > 0 && (
-          <Sources sources={msg.sources} />
+          <Sources
+            sources={msg.sources}
+            groupId={groupId}
+            activeIndex={activeSource}
+          />
         )}
       </div>
     </div>

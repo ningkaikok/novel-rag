@@ -86,6 +86,9 @@ def recreate_schema(dimension: int) -> None:
                 id BIGSERIAL PRIMARY KEY,
                 novel TEXT NOT NULL,
                 chunk_id INTEGER NOT NULL,
+                -- 从 txt 章节标题行识别出的归属。旧索引或无规范标题的文本为 NULL。
+                -- 单独存而不是拼进 novel/text，方便界面展示和后续章节级聚合。
+                chapter_title TEXT,
                 text TEXT NOT NULL,
                 embedding vector({dimension}) NOT NULL,
                 -- 这个片段有多少个词（分词后）。BM25 的「文档长度归一化」要用：
@@ -173,6 +176,23 @@ def has_index() -> bool:
             "SELECT to_regclass('public.novel_chunks') AS table_name"
         ).fetchone()
     return bool(row and row["table_name"])
+
+
+def ensure_novel_metadata_schema() -> None:
+    """为旧索引幂等补上新增的片段元数据列。
+
+    这让升级代码后不必立刻重建索引也能继续问答；旧行的章节名暂时为 NULL。
+    想看到章节标题仍需重建一次，因为数据库无法凭旧片段可靠反推出章节边界。
+    """
+    with connect() as conn:
+        table = conn.execute(
+            "SELECT to_regclass('public.novel_chunks') AS table_name"
+        ).fetchone()
+        if table and table["table_name"]:
+            conn.execute(
+                "ALTER TABLE novel_chunks "
+                "ADD COLUMN IF NOT EXISTS chapter_title TEXT"
+            )
 
 
 def save_relations(edges: list[tuple[str, str, str, str, int]]) -> None:

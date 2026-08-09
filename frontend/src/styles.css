@@ -303,6 +303,24 @@ body {
   color: var(--text);
   font-size: 0.985rem;
 }
+.inline-citation {
+  appearance: none;
+  border: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 0.02rem 0.28rem;
+  margin: 0 0.08rem;
+  font: inherit;
+  font-size: 0.82em;
+  font-weight: 700;
+  line-height: 1.35;
+  cursor: pointer;
+  vertical-align: 0.08em;
+}
+.inline-citation:hover {
+  box-shadow: 0 0 0 1px var(--accent);
+}
 .caret {
   display: inline-block;
   width: 2px;
@@ -521,6 +539,11 @@ body {
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
 }
+.source-card.source-card-active {
+  border-color: var(--gold);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px rgba(169, 133, 74, 0.16), var(--shadow-md);
+}
 .source-card .source-index,
 .source-card .source-book {
   flex-shrink: 0;
@@ -547,6 +570,15 @@ body {
   font-size: 0.86rem;
   font-family: var(--serif);
 }
+.source-chapter {
+  flex-shrink: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
 .source-text {
   flex: 1;
   min-width: 0;
@@ -571,6 +603,9 @@ body {
 }
 .model-select-compact {
   min-width: 168px;
+}
+.answer-mode-select {
+  min-width: 128px;
 }
 .privacy-chip {
   font-size: 0.76rem;

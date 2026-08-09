@@ -24,6 +24,9 @@ embedding 模型有长度上限（本项目用的 `bge-small-zh-v1.5` 是 512 to
 字的重叠。重叠是为了缓解"答案正好跨在两个片段边界上"的情况——
 边界附近的内容在两个片段里各出现一次，至少有一个片段包含完整语义。
 
+切分前还会识别常见的中文章节标题。片段不会跨章节聚合，且会携带
+``chapter_title`` 元数据；这让引用能显示“第几章”，也为后续章节摘要留下稳定边界。
+
 > 这是**固定尺寸切分**，不是语义切分。更高级的做法（按语义边界切、
 > Late Chunking 等）见 docs/rag-techniques.md。
 """
@@ -38,6 +41,17 @@ from config import CHUNK_OVERLAP, CHUNK_SIZE, NOVELS_DIR
 # 避免把 GBK 文本当 UTF-8 硬解，静默产出满篇乱码却不报错。
 _CANDIDATE_ENCODINGS = ("utf-8", "gb18030")
 
+# 常见中文网文标题。只在“单独一行且不超过 80 字”时判断，避免把正文里的
+# “第一章的内容讲的是……”误认成标题。标题形式故意保守：误切章节比漏掉一个
+# 非标准标题更糟，因为误切会破坏后续所有片段的章节归属。
+_CHAPTER_HEADING_RE = re.compile(
+    r"^(?:正文\s*)?(?:"
+    r"第[0-9零〇一二三四五六七八九十百千万两]{1,12}[章节卷回部篇集]"
+    r"(?:[\s：:、.．\-—]+.{0,48}|.{0,32})"
+    r"|序章|楔子|引子|前言|后记|尾声|终章|大结局|番外(?:篇)?(?:[\s：:、.．\-—]+.{0,40})?"
+    r")$"
+)
+
 
 @dataclass
 class Chunk:
@@ -51,6 +65,8 @@ class Chunk:
     novel: str
     chunk_id: int
     text: str
+    # 识别不到章节时为 None；这不是错误，很多 txt 本来就没有规范标题。
+    chapter_title: str | None = None
 
 
 def _read_text(path: Path) -> str:
@@ -98,6 +114,40 @@ def _split_paragraphs(text: str) -> list[str]:
     """
     parts = [p.strip() for p in re.split(r"\n+", text)]
     return [p for p in parts if p]
+
+
+def is_chapter_heading(paragraph: str) -> bool:
+    """判断一个独立段落是否像章节标题。公开出来便于单独写回归测试。"""
+    title = paragraph.strip()
+    # 规范标题通常不以句末标点收尾；这道过滤能挡住“第一章的内容是……”这类
+    # 恰好独占一行的正文句子，同时保留“第一章：山边小村”等标题标点。
+    if not title or len(title) > 80 or title.endswith(("。", "！", "？", "；")):
+        return False
+    return bool(_CHAPTER_HEADING_RE.fullmatch(title))
+
+
+def _split_chapter_sections(
+    paragraphs: list[str],
+) -> list[tuple[str | None, list[str]]]:
+    """把段落分成 ``(章节名, 本章段落)``，标题本身保留在正文里。
+
+    第一条标题前可能有简介、作者信息或目录，它们归入 ``chapter_title=None``。
+    遇到新标题就立即封存上一节，因此后面的固定尺寸切分不会跨章节拼接。
+    """
+    sections: list[tuple[str | None, list[str]]] = []
+    chapter_title: str | None = None
+    current: list[str] = []
+    for paragraph in paragraphs:
+        if is_chapter_heading(paragraph):
+            if current:
+                sections.append((chapter_title, current))
+            chapter_title = paragraph.strip()
+            current = [paragraph]
+        else:
+            current.append(paragraph)
+    if current:
+        sections.append((chapter_title, current))
+    return sections
 
 
 def _split_long_paragraph(para: str) -> list[str]:
@@ -178,6 +228,16 @@ def load_novel_chunks(novels_dir: Path = NOVELS_DIR) -> list[Chunk]:
         raw = _read_text(path)
         text = _clean_text(raw)
         paragraphs = _split_paragraphs(text)
-        for i, chunk_text in enumerate(_chunk_paragraphs(paragraphs)):
-            chunks.append(Chunk(novel=path.stem, chunk_id=i, text=chunk_text))
+        next_chunk_id = 0
+        for chapter_title, chapter_paragraphs in _split_chapter_sections(paragraphs):
+            for chunk_text in _chunk_paragraphs(chapter_paragraphs):
+                chunks.append(
+                    Chunk(
+                        novel=path.stem,
+                        chunk_id=next_chunk_id,
+                        text=chunk_text,
+                        chapter_title=chapter_title,
+                    )
+                )
+                next_chunk_id += 1
     return chunks
