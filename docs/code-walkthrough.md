@@ -92,10 +92,16 @@ tests/        pytest（后端）+ 评测集与历史基线
 BM25 倒排索引      按词精确匹配并加权，人名/专有名词的强项，但完全不懂近义
 ```
 
-这两套**必须基于同一批文本同时重建**，否则检索结果会自相矛盾。
+这两套**必须基于同一批文本同时切换**，否则检索结果会自相矛盾。M2 之后不再
+`DROP TABLE` 全库重建：`plan_index` 用文件哈希找出变化的书，`build_index` 在
+事务外准备数据，`postgres.replace_novel_index` 再用一个事务同时替换该书的向量、
+BM25、关系边和 manifest。取消或异常会回滚当前书。
 
 顺带看 `_build_contexts`：这是 Contextual Retrieval 的成本控制，三道闸门
 （按书跳过 / 只处理缺上下文的片段 / 按内容哈希增量复用）。
+
+Web 路径还要配合 `backend/index_tasks.py` 阅读：它只管理单后台线程的状态、进度和
+取消信号，数据安全并不依赖线程管理器，而是来自上面的 PostgreSQL 单书事务。
 
 ### 第 3 站：`src/tokenizer.py` — 一个小而关键的模块
 

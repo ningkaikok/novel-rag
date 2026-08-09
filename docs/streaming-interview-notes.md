@@ -148,8 +148,8 @@ if await request.is_disconnected():
 > 用哨兵而不是捕获 `StopIteration`：后者不能穿过 `await` 边界（会变成 `RuntimeError`）。
 
 **③ 检查点：`chat_turns` 表** — [`postgres.py`](../src/postgres.py) 的
-`ensure_chat_schema()`。刻意和 `recreate_schema()` 分开——那个函数重建向量索引时会
-`DROP TABLE`，聊天记录不该因为「重新整理书架」被清空。
+`ensure_chat_schema()`。它和可重算的小说索引分开管理；M2 虽已从全库 DROP 改为
+单书事务替换，聊天记录仍不该参与任何索引清理或回滚。
 
 **④ 幂等：主键 + UPSERT** — `(session_id, turn_index)` 做主键，`save_turn()` 用
 `ON CONFLICT DO UPDATE`。中断保存可能被重复触发（连点停止、网络抖动），

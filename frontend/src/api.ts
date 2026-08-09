@@ -38,6 +38,40 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+export type IndexTaskState =
+  | "queued"
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface IndexResult {
+  novels: string[];
+  chunk_count: number;
+  added: string[];
+  modified: string[];
+  deleted: string[];
+  unchanged: string[];
+  contextualized: number;
+  relations: number;
+}
+
+export interface IndexTask {
+  id: string;
+  status: IndexTaskState;
+  stage: string;
+  progress: number;
+  message: string;
+  error?: string | null;
+  force: boolean;
+  retry_of?: string | null;
+  result?: IndexResult | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
 /** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。 */
 export type AnswerMode = "auto" | "grounded" | "free";
 
@@ -66,23 +100,55 @@ export async function listBooks(): Promise<string[]> {
   return (await res.json()).books;
 }
 
-export async function uploadBooks(files: FileList | File[]): Promise<void> {
+export async function uploadBooks(files: FileList | File[]): Promise<IndexTask> {
   const form = new FormData();
   for (const f of Array.from(files)) form.append("files", f);
   const res = await fetch("/api/books", { method: "POST", body: form });
   if (!res.ok) throw new Error(await extractErrorMessage(res, "上传失败"));
+  return (await res.json()).task;
 }
 
-export async function deleteBook(name: string): Promise<void> {
+export async function deleteBook(name: string): Promise<IndexTask> {
   const res = await fetch(`/api/books/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res, "删除失败"));
+  return (await res.json()).task;
 }
 
-export async function reindex(): Promise<{ chunk_count: number }> {
-  const res = await fetch("/api/reindex", { method: "POST" });
-  if (!res.ok) throw new Error("重建索引失败");
+export async function reindex(force = false): Promise<IndexTask> {
+  const res = await fetch(`/api/reindex?force=${force ? "true" : "false"}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "索引同步失败"));
+  return await res.json();
+}
+
+export async function getCurrentIndexTask(): Promise<IndexTask | null> {
+  const res = await fetch("/api/index-tasks/current");
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取索引任务失败"));
+  return await res.json();
+}
+
+export async function getIndexTask(taskId: string): Promise<IndexTask> {
+  const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}`);
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取索引进度失败"));
+  return await res.json();
+}
+
+export async function cancelIndexTask(taskId: string): Promise<IndexTask> {
+  const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "取消索引任务失败"));
+  return await res.json();
+}
+
+export async function retryIndexTask(taskId: string): Promise<IndexTask> {
+  const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}/retry`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, "重试索引任务失败"));
   return await res.json();
 }
 

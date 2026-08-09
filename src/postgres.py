@@ -1,6 +1,6 @@
 """PostgreSQL/pgvector 连接与索引工具。"""
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 import psycopg
 from psycopg.rows import dict_row
@@ -66,106 +66,217 @@ def vector_literal(values: Iterable[float]) -> str:
     return "[" + ",".join(str(float(value)) for value in values) + "]"
 
 
-def recreate_schema(dimension: int) -> None:
-    """重建小说片段表、向量索引和 BM25 倒排索引。
-
-    这三样都是从同一批原文派生出来的，必须一起重建——只重建其中一个会导致
-    向量索引和倒排索引对应的是不同版本的文本，检索结果互相矛盾。
-    重建索引本来就是全量操作，因此可安全清空。
-    """
+def _ensure_index_schema(conn, dimension: int) -> None:
+    """在一个现有事务里幂等创建索引相关表。"""
     if dimension <= 0:
         raise ValueError("embedding dimension must be positive")
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS novel_chunks (
+            id BIGSERIAL PRIMARY KEY,
+            novel TEXT NOT NULL,
+            chunk_id INTEGER NOT NULL,
+            chapter_title TEXT,
+            text TEXT NOT NULL,
+            embedding vector({dimension}) NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            context TEXT NOT NULL DEFAULT '',
+            UNIQUE (novel, chunk_id)
+        )
+        """
+    )
+    # 兼容 M1 之前已经存在的表。其余列在最早的 PostgreSQL schema 中就存在。
+    conn.execute(
+        "ALTER TABLE novel_chunks ADD COLUMN IF NOT EXISTS chapter_title TEXT"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chunk_terms (
+            novel    TEXT    NOT NULL,
+            chunk_id INTEGER NOT NULL,
+            term     TEXT    NOT NULL,
+            tf       INTEGER NOT NULL,
+            PRIMARY KEY (novel, chunk_id, term)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS character_relations (
+            novel      TEXT    NOT NULL,
+            person_a   TEXT    NOT NULL,
+            person_b   TEXT    NOT NULL,
+            relation   TEXT    NOT NULL,
+            weight     INTEGER NOT NULL,
+            PRIMARY KEY (novel, person_a, person_b, relation)
+        )
+        """
+    )
+    # 文件清单不和某次任务绑定。只有一本书的两套索引在同一事务里完整写入后，
+    # 才更新这里的哈希；任务失败或取消时事务回滚，下次会安全地再次识别为待处理。
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS index_manifest (
+            novel         TEXT PRIMARY KEY,
+            source_hash   TEXT NOT NULL,
+            pipeline_hash TEXT NOT NULL,
+            chunk_count   INTEGER NOT NULL,
+            indexed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
+        "ON character_relations (person_a, relation)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_b_idx "
+        "ON character_relations (person_b, relation)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS novel_chunks_novel_chunk_idx "
+        "ON novel_chunks (novel, chunk_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS novel_chunks_embedding_hnsw_idx "
+        "ON novel_chunks USING hnsw (embedding vector_cosine_ops)"
+    )
+
+
+def ensure_index_schema(dimension: int) -> None:
+    """幂等准备可增量更新的索引表，不删除任何现有小说。"""
     with connect() as conn:
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        # chunk_terms 有外键概念上依赖 novel_chunks，先删它
+        _ensure_index_schema(conn, dimension)
+
+
+def recreate_schema(dimension: int) -> None:
+    """兼容旧脚本的全量清空入口；Web 增量任务不再调用它。"""
+    with connect() as conn:
         conn.execute("DROP TABLE IF EXISTS chunk_terms")
         conn.execute("DROP TABLE IF EXISTS novel_chunks")
-        conn.execute(
-            f"""
-            CREATE TABLE novel_chunks (
-                id BIGSERIAL PRIMARY KEY,
-                novel TEXT NOT NULL,
-                chunk_id INTEGER NOT NULL,
-                -- 从 txt 章节标题行识别出的归属。旧索引或无规范标题的文本为 NULL。
-                -- 单独存而不是拼进 novel/text，方便界面展示和后续章节级聚合。
-                chapter_title TEXT,
-                text TEXT NOT NULL,
-                embedding vector({dimension}) NOT NULL,
-                -- 这个片段有多少个词（分词后）。BM25 的「文档长度归一化」要用：
-                -- 长片段天然更容易碰巧包含查询词，不做归一化的话长片段会系统性
-                -- 地占便宜。
-                token_count INTEGER NOT NULL DEFAULT 0,
-                -- Contextual Retrieval 生成的上下文说明（没做增强的片段是空串）。
-                -- **必须和 text 分开存**：索引和重排要用「说明 + 原文」，
-                -- 但送给大模型生成时只用原文，不把 AI 生成的说明混进正文当依据。
-                -- 踩过的坑：一开始只把说明拼进索引、没有单独存，结果重排拿
-                -- text 列的原文重新打分，看不到说明——同一个片段，重排给原文
-                -- 打 0.0055、给「说明+原文」打 0.9990，把上下文增强的效果
-                -- 整个抵消掉了（Q18 因此从第 5 名掉出 top-20）。
-                context TEXT NOT NULL DEFAULT '',
-                UNIQUE (novel, chunk_id)
-            )
-            """
-        )
-        # BM25 倒排索引：一行 = 「某个词」在「某个片段」里出现了几次。
-        # 全库约 390 万行（3.3 万个片段 × 每个约 118 个不重复的词）。
-        conn.execute(
-            """
-            CREATE TABLE chunk_terms (
-                novel    TEXT    NOT NULL,
-                chunk_id INTEGER NOT NULL,
-                term     TEXT    NOT NULL,
-                -- term frequency：这个词在这个片段里出现几次。
-                -- 出现多次说明这个片段更可能真的在讲这个词，是 BM25 的核心信号。
-                tf       INTEGER NOT NULL,
-                PRIMARY KEY (novel, chunk_id, term)
-            )
-            """
-        )
-        # 查询时是「给定几个词，找出所有含这些词的片段」，所以按 term 建索引。
-        # 没有这个索引，每次查询都要全表扫 390 万行。
-        conn.execute("CREATE INDEX chunk_terms_term_idx ON chunk_terms (term)")
-
-        # GraphRAG 的人物关系图（边表）。和上面两个索引一样是从同一批原文
-        # 派生的，所以跟着一起重建。
-        #
-        # **但抽人名的结果不在这里**——那部分要调 LLM，单独缓存在
-        # graph_characters 表里（见 ensure_graph_cache）。这样重建边表很快，
-        # 而昂贵的人名抽取能复用。
         conn.execute("DROP TABLE IF EXISTS character_relations")
-        conn.execute(
-            """
-            CREATE TABLE character_relations (
-                novel      TEXT    NOT NULL,
-                -- 两个人物名，已按字典序排好：关系是无向的，排序后同一对人
-                -- 不会因为出现顺序不同被记成两条边
-                person_a   TEXT    NOT NULL,
-                person_b   TEXT    NOT NULL,
-                relation   TEXT    NOT NULL,
-                -- 共现次数。这是**唯一的置信度信号**——共现越多越可能是真关系，
-                -- 只出现一两次的大概率是偶然同框。查询时靠它排序和过滤。
-                weight     INTEGER NOT NULL,
-                PRIMARY KEY (novel, person_a, person_b, relation)
+        conn.execute("DROP TABLE IF EXISTS index_manifest")
+        _ensure_index_schema(conn, dimension)
+
+
+def load_index_manifest() -> dict[str, dict]:
+    """返回数据库记录的文件哈希清单；首次升级、表不存在时返回空。"""
+    with connect() as conn:
+        table = conn.execute(
+            "SELECT to_regclass('public.index_manifest') AS table_name"
+        ).fetchone()
+        if not table or not table["table_name"]:
+            return {}
+        rows = conn.execute(
+            "SELECT novel, source_hash, pipeline_hash, chunk_count "
+            "FROM index_manifest"
+        ).fetchall()
+    return {row["novel"]: dict(row) for row in rows}
+
+
+def indexed_novels() -> set[str]:
+    """列出片段表中实际存在的书，兼容尚未建立 manifest 的旧索引。"""
+    with connect() as conn:
+        table = conn.execute(
+            "SELECT to_regclass('public.novel_chunks') AS table_name"
+        ).fetchone()
+        if not table or not table["table_name"]:
+            return set()
+        rows = conn.execute("SELECT DISTINCT novel FROM novel_chunks").fetchall()
+    return {row["novel"] for row in rows}
+
+
+def replace_novel_index(
+    novel: str,
+    rows: list[tuple],
+    per_chunk_terms: list[dict[str, int]],
+    source_hash: str,
+    pipeline_hash: str,
+    relations: list[tuple[str, str, str, str, int]] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> None:
+    """在一个事务里原子替换单本书的全部派生数据。
+
+    embedding 和分词在进入这里之前已经准备好。删除旧数据、写向量、COPY BM25、
+    写关系边和更新 manifest 共享同一事务；任何异常（包括用户取消）都会回滚，
+    因此检索永远只会看到旧版或完整新版，不会看到“向量已换、BM25 只写一半”。
+    """
+    if len(rows) != len(per_chunk_terms):
+        raise ValueError("rows and per_chunk_terms must have the same length")
+    check = cancel_check or (lambda: None)
+    with connect() as conn:
+        check()
+        conn.execute("DELETE FROM chunk_terms WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM novel_chunks WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM character_relations WHERE novel = %s", (novel,))
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO novel_chunks "
+                "(novel, chunk_id, chapter_title, text, embedding, token_count, context) "
+                "VALUES (%s, %s, %s, %s, %s::vector, %s, %s)",
+                rows,
             )
+        check()
+        with conn.cursor() as cursor:
+            with cursor.copy(
+                "COPY chunk_terms (novel, chunk_id, term, tf) FROM STDIN"
+            ) as copy:
+                for index, (row, freqs) in enumerate(zip(rows, per_chunk_terms)):
+                    if index % 50 == 0:
+                        check()
+                    chunk_id = row[1]
+                    for term, tf in freqs.items():
+                        copy.write_row((novel, chunk_id, term, tf))
+        if relations:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    "INSERT INTO character_relations "
+                    "(novel, person_a, person_b, relation, weight) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    relations,
+                )
+        check()
+        conn.execute(
             """
+            INSERT INTO index_manifest
+                (novel, source_hash, pipeline_hash, chunk_count, indexed_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (novel) DO UPDATE SET
+                source_hash = EXCLUDED.source_hash,
+                pipeline_hash = EXCLUDED.pipeline_hash,
+                chunk_count = EXCLUDED.chunk_count,
+                indexed_at = NOW()
+            """,
+            (novel, source_hash, pipeline_hash, len(rows)),
         )
-        # 查询模式是「给定一个人名和关系类型，找出所有相关的人」，
-        # 而人名可能出现在 a 或 b 任一侧，所以两侧都要能走索引。
-        conn.execute(
-            "CREATE INDEX character_relations_a_idx "
-            "ON character_relations (person_a, relation)"
-        )
-        conn.execute(
-            "CREATE INDEX character_relations_b_idx "
-            "ON character_relations (person_b, relation)"
-        )
-        conn.execute(
-            "CREATE INDEX novel_chunks_novel_chunk_idx "
-            "ON novel_chunks (novel, chunk_id)"
-        )
-        conn.execute(
-            "CREATE INDEX novel_chunks_embedding_hnsw_idx "
-            "ON novel_chunks USING hnsw (embedding vector_cosine_ops)"
+
+
+def delete_novel_index(
+    novel: str, cancel_check: Callable[[], None] | None = None
+) -> None:
+    """在一个短事务里删除一本已不存在的书及其清单记录。"""
+    check = cancel_check or (lambda: None)
+    with connect() as conn:
+        check()
+        conn.execute("DELETE FROM chunk_terms WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM novel_chunks WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM character_relations WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM index_manifest WHERE novel = %s", (novel,))
+
+
+def index_chunk_count() -> int:
+    """返回当前可检索片段总数。"""
+    if not has_index():
+        return 0
+    with connect() as conn:
+        return int(
+            conn.execute("SELECT count(*) AS count FROM novel_chunks").fetchone()[
+                "count"
+            ]
         )
 
 
@@ -192,22 +303,6 @@ def ensure_novel_metadata_schema() -> None:
             conn.execute(
                 "ALTER TABLE novel_chunks "
                 "ADD COLUMN IF NOT EXISTS chapter_title TEXT"
-            )
-
-
-def save_relations(edges: list[tuple[str, str, str, str, int]]) -> None:
-    """批量写入人物关系边。表在 recreate_schema 里已经建好且清空。"""
-    if not edges:
-        return
-    with connect() as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(
-                "INSERT INTO character_relations "
-                "(novel, person_a, person_b, relation, weight) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "ON CONFLICT (novel, person_a, person_b, relation) "
-                "DO UPDATE SET weight = EXCLUDED.weight",
-                edges,
             )
 
 
@@ -317,10 +412,10 @@ def save_graph_characters(
 def ensure_context_cache() -> None:
     """建 Contextual Retrieval 的上下文缓存表（幂等）。
 
-    **刻意和 recreate_schema 分开**，理由和 chat_turns 一样但更关键：
+    **刻意和可重算的索引表分开**，理由和 chat_turns 一样但更关键：
     生成这些上下文说明要调 LLM，实测单条约 4.4 秒。如果跟着向量索引一起
-    被 DROP，用户在界面上点一次「重新整理书架」就要重跑几十分钟到几小时。
-    分开存之后，重建索引时能按内容哈希直接复用已有结果。
+    被索引替换事务删除，用户修改一本书就要重跑几十分钟到几小时。
+    分开存之后，增量同步时能按内容哈希直接复用已有结果。
 
     主键用**片段原文的哈希**而不是 (书名, chunk_id)：切分参数一变，同一个
     chunk_id 对应的文本就变了，用位置做键会取到过期的上下文。用内容哈希则
@@ -371,8 +466,8 @@ def save_contexts(items: list[tuple[str, str]]) -> None:
 def ensure_chat_schema() -> None:
     """建对话历史表（幂等，用 IF NOT EXISTS）。
 
-    刻意和 recreate_schema 分开：那个函数重建向量索引时会 DROP TABLE，
-    对话历史不能跟着被清空——重新整理书架不该抹掉用户的聊天记录。
+    刻意和小说派生索引分开：单书替换或清理不能影响对话历史——
+    重新整理书架不该抹掉用户的聊天记录。
 
     (session_id, turn_index) 做主键，既是天然去重，也是幂等写入的基础：
     中断时存"已生成的部分"这个写操作可能被重复触发（用户连点 Stop、网络抖动），

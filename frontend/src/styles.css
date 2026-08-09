@@ -111,6 +111,48 @@ body {
   line-height: 1.55;
   color: var(--text);
 }
+.index-task {
+  margin: 0.85rem 0 0.45rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+.index-task-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.index-task-title .ant-tag {
+  margin-inline-end: 0;
+  font-size: 0.7rem;
+}
+.index-task-message,
+.index-task-summary {
+  margin: 0.25rem 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+.index-task-summary {
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+.index-task .ant-alert {
+  margin: 0.45rem 0 0.6rem;
+  padding: 0.45rem 0.55rem;
+}
+.index-task .ant-alert-message,
+.index-task .ant-alert-description {
+  font-size: 0.76rem;
+}
 .settings {
   margin-top: 0.8rem;
   border-top: 1px solid var(--border);

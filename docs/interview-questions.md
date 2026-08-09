@@ -185,10 +185,11 @@ ON CONFLICT (session_id, turn_index) DO UPDATE SET content = EXCLUDED.content, .
 
 **参考答案**
 
-本项目有一个 `recreate_schema()` 函数，重建向量索引时会 `DROP TABLE`。
-如果把对话历史表和它放在一起管理，用户点一次「重新整理书架」，**聊天记录全没了**。
+M2 以前全量索引会 `DROP TABLE`；如果把对话历史表和派生索引放在一起管理，用户点
+一次「重新整理书架」，**聊天记录全没了**。M2 已改为单书事务替换，不再走全库
+DROP，但边界仍然成立：对话是用户数据，索引是可以重算的派生数据，生命周期不同。
 
-所以对话表要独立用 `CREATE TABLE IF NOT EXISTS` 建，和会被 DROP 的表分开。
+所以对话表独立用 `CREATE TABLE IF NOT EXISTS` 建，不参与索引 schema 和替换事务。
 
 **加分点**：持久化失败不该让核心功能不可用——本项目里建表失败只打日志、不阻断启动；
 保存失败只打日志、不影响本次回答返回。会话持久化是增强功能，不是关键路径。

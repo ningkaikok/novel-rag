@@ -7,6 +7,23 @@
 import backend.main as main
 
 
+def _index_task(status="running", *, task_id="task-1", result=None):
+    return {
+        "id": task_id,
+        "status": status,
+        "stage": "embedding" if status == "running" else status,
+        "progress": 35 if status == "running" else 100,
+        "message": "正在建立索引" if status == "running" else "任务结束",
+        "error": "数据库断开" if status == "failed" else None,
+        "force": False,
+        "retry_of": None,
+        "result": result,
+        "created_at": "2026-08-09T00:00:00+00:00",
+        "started_at": "2026-08-09T00:00:00+00:00",
+        "finished_at": None if status == "running" else "2026-08-09T00:00:01+00:00",
+    }
+
+
 def test_health_without_rag_loaded(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -29,6 +46,72 @@ def test_list_books_reads_novels_dir(client, tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"books": ["凡人修仙传", "诡秘之主"]}
+
+
+def test_upload_saves_file_and_returns_background_task(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
+
+    def start_task(**kwargs):
+        kwargs["prepare"]()
+        return _index_task()
+
+    monkeypatch.setattr(main, "_start_index_task", start_task)
+    resp = client.post(
+        "/api/books",
+        files={"files": ("新小说.txt", "第一章 开始\n正文", "text/plain")},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["saved"] == ["新小说"]
+    assert resp.json()["task"]["status"] == "running"
+    assert (tmp_path / "新小说.txt").read_text() == "第一章 开始\n正文"
+
+
+def test_delete_removes_file_then_returns_cleanup_task(client, tmp_path, monkeypatch):
+    target = tmp_path / "要删除.txt"
+    target.write_text("正文")
+    monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
+
+    def start_task(**kwargs):
+        kwargs["prepare"]()
+        return _index_task()
+
+    monkeypatch.setattr(main, "_start_index_task", start_task)
+    resp = client.delete("/api/books/要删除")
+
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == "要删除"
+    assert not target.exists()
+
+
+def test_reindex_starts_incremental_or_forced_task(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main,
+        "_start_index_task",
+        lambda **kwargs: calls.append(kwargs) or _index_task(),
+    )
+
+    assert client.post("/api/reindex").status_code == 200
+    assert client.post("/api/reindex?force=true").status_code == 200
+    assert calls[0]["force"] is False
+    assert calls[1]["force"] is True
+
+
+def test_index_task_status_cancel_and_retry_endpoints(client, monkeypatch):
+    failed = _index_task("failed")
+    retried = _index_task("running", task_id="task-2")
+    monkeypatch.setattr(main.index_tasks, "current", lambda: failed)
+    monkeypatch.setattr(main.index_tasks, "get", lambda task_id: failed)
+    monkeypatch.setattr(main.index_tasks, "cancel", lambda task_id: failed)
+    monkeypatch.setattr(main, "_start_index_task", lambda **kwargs: retried)
+
+    assert client.get("/api/index-tasks/current").json()["status"] == "failed"
+    assert client.get("/api/index-tasks/task-1").status_code == 200
+    assert client.post("/api/index-tasks/task-1/cancel").status_code == 200
+    retry = client.post("/api/index-tasks/task-1/retry")
+    assert retry.status_code == 200
+    assert retry.json()["id"] == "task-2"
 
 
 def test_models_shape(client, monkeypatch):

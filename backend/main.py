@@ -49,6 +49,7 @@ RAG 的真实数据流。等到出现工具调用循环、人工审批、跨进�
 """
 import json
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -77,14 +78,19 @@ logger = get_logger("main")
 from backend import claude_cli, zhipu  # noqa: E402
 from backend.errors import APIError, ErrorCode, register_exception_handlers  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
+from backend.index_tasks import (  # noqa: E402
+    IndexTaskManager,
+    TaskAlreadyRunning,
+    TaskNotFound,
+)
 from backend.schemas import (  # noqa: E402
     AskRequest,
     BookList,
     CurrentModel,
     DeleteResult,
     HealthStatus,
+    IndexTaskStatus,
     ModelList,
-    ReindexResult,
     SearchMatch,
     SearchResult,
     SessionHistory,
@@ -105,7 +111,6 @@ from config import (  # noqa: E402
 from query_rewriter import rewrite_query  # noqa: E402
 from rag import NovelRAG, generate_ollama_prompt_stream  # noqa: E402
 from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
-from loader import load_novel_chunks  # noqa: E402
 from postgres import (  # noqa: E402
     close_pool,
     connect,
@@ -121,6 +126,7 @@ from embedder import load_embedder  # noqa: E402
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
+index_tasks = IndexTaskManager()
 
 
 @asynccontextmanager
@@ -155,9 +161,9 @@ async def lifespan(app: FastAPI):
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
-    state["chunks"] = load_novel_chunks(NOVELS_DIR)
     state["model"] = OLLAMA_MODEL  # 当前用于生成回答的模型，可通过 /api/model 动态切换
     yield
+    index_tasks.shutdown()
     state.clear()
     close_pool()
 
@@ -192,17 +198,33 @@ def list_books():
 
 @app.post("/api/books", response_model=UploadResult)
 async def upload_books(files: list[UploadFile]):
-    saved = []
+    payloads: list[tuple[str, bytes]] = []
     for f in files:
         name = Path(f.filename or "").name  # 防止路径穿越
         if not name.lower().endswith(".txt"):
             continue
-        (NOVELS_DIR / name).write_bytes(await f.read())
-        saved.append(Path(name).stem)
-    if not saved:
+        payloads.append((name, await f.read()))
+    if not payloads:
         raise APIError(400, ErrorCode.no_valid_files, "没有有效的 .txt 文件")
-    result = _reindex()
-    return {"saved": saved, **result}
+
+    def save_files() -> None:
+        """先全部写到同目录临时文件，再用原子 rename 替换正式文件。"""
+        NOVELS_DIR.mkdir(parents=True, exist_ok=True)
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for name, content in payloads:
+                target = NOVELS_DIR / name
+                temporary = NOVELS_DIR / f".{name}.{uuid.uuid4().hex}.upload"
+                temporary.write_bytes(content)
+                staged.append((temporary, target))
+            for temporary, target in staged:
+                temporary.replace(target)
+        finally:
+            for temporary, _ in staged:
+                temporary.unlink(missing_ok=True)
+
+    task = _start_index_task(prepare=save_files)
+    return {"saved": [Path(name).stem for name, _ in payloads], "task": task}
 
 
 @app.delete("/api/books/{name}", response_model=DeleteResult)
@@ -211,22 +233,81 @@ def delete_book(name: str):
     target = (NOVELS_DIR / f"{Path(name).name}.txt").resolve()
     if target.parent != NOVELS_DIR.resolve() or not target.exists():
         raise APIError(404, ErrorCode.book_not_found, "书不存在")
-    target.unlink()
-    result = _reindex()
-    return {"deleted": name, **result}
+    task = _start_index_task(prepare=target.unlink)
+    return {"deleted": name, "task": task}
 
 
-@app.post("/api/reindex", response_model=ReindexResult)
-def reindex():
-    return _reindex()
+@app.post("/api/reindex", response_model=IndexTaskStatus)
+def reindex(force: bool = Query(default=False)):
+    """启动后台同步。默认只处理变化文件；force=true 强制重新处理所有现存书。"""
+    return _start_index_task(force=force)
 
 
-def _reindex() -> dict:
-    result = ingest.build_index(model=state["embedder"])
-    state["chunks"] = load_novel_chunks(NOVELS_DIR)
-    # 重建后刷新 RAG 句柄，使新库生效
-    state["rag"] = _try_load_rag() if result["chunk_count"] else None
-    return result
+def _start_index_task(
+    *,
+    force: bool = False,
+    retry_of: str | None = None,
+    prepare=None,
+) -> dict:
+    """把增量索引包装成任务，并统一映射并发冲突错误。"""
+
+    def build(progress, cancel_check):
+        result = ingest.build_index(
+            model=state.get("embedder"),
+            force=force,
+            progress=progress,
+            cancel_check=cancel_check,
+            novels_dir=NOVELS_DIR,
+        )
+        # NovelRAG 自身不缓存片段，但首次建库前 state["rag"] 是 None；成功后要补上。
+        state["rag"] = _try_load_rag() if result["chunk_count"] else None
+        return result
+
+    try:
+        return index_tasks.start(
+            build, force=force, retry_of=retry_of, prepare=prepare
+        )
+    except TaskAlreadyRunning as exc:
+        raise APIError(
+            409,
+            ErrorCode.index_task_running,
+            f"已有索引任务正在运行（{exc.task['progress']}%：{exc.task['message']}）",
+        ) from exc
+
+
+def _get_index_task(task_id: str) -> dict:
+    try:
+        return index_tasks.get(task_id)
+    except TaskNotFound as exc:
+        raise APIError(404, ErrorCode.index_task_not_found, "索引任务不存在") from exc
+
+
+@app.get("/api/index-tasks/current", response_model=IndexTaskStatus | None)
+def current_index_task():
+    return index_tasks.current()
+
+
+@app.get("/api/index-tasks/{task_id}", response_model=IndexTaskStatus)
+def get_index_task(task_id: str):
+    return _get_index_task(task_id)
+
+
+@app.post("/api/index-tasks/{task_id}/cancel", response_model=IndexTaskStatus)
+def cancel_index_task(task_id: str):
+    _get_index_task(task_id)
+    return index_tasks.cancel(task_id)
+
+
+@app.post("/api/index-tasks/{task_id}/retry", response_model=IndexTaskStatus)
+def retry_index_task(task_id: str):
+    previous = _get_index_task(task_id)
+    if previous["status"] not in {"failed", "cancelled"}:
+        raise APIError(
+            409,
+            ErrorCode.index_task_not_retryable,
+            "只有失败或已取消的索引任务可以重试",
+        )
+    return _start_index_task(force=previous["force"], retry_of=task_id)
 
 
 # ----------------------------------------------------------------- 全文搜索

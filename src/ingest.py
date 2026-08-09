@@ -5,7 +5,8 @@
   人名这类"必须逐字匹配"的东西不可靠。
 - **BM25 倒排索引**：按词精确匹配并加权，专有名词、人名的强项，但完全不懂近义。
 
-两套索引必须基于同一批文本同时重建，否则检索结果会自相矛盾。
+两套索引必须基于同一批文本同时切换，否则检索结果会自相矛盾。当前实现按文件哈希
+只处理变化书，并用单书 PostgreSQL 事务原子替换向量、BM25、关系边和 manifest。
 
 开启 Contextual Retrieval 时（CONTEXTUAL_ENABLED=1），还会给"看不出在讲谁"的
 片段生成一句上下文说明，**索引「说明 + 原文」但 text 列仍存原文**——
@@ -13,12 +14,19 @@
 
 用法: python src/ingest.py
 """
+import hashlib
+import json
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from sentence_transformers import SentenceTransformer
 
 from config import (
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    EMBEDDING_MODEL,
     GRAPH_ENABLED,
     GRAPH_MAX_CHUNKS_PER_RELATION,
     GRAPH_MIN_NAME_HITS,
@@ -43,17 +51,20 @@ from contextualizer import (
     text_hash,
 )
 from embedder import load_embedder
-from loader import load_novel_chunks
+from loader import load_novel_file
 from postgres import (
-    connect,
+    delete_novel_index,
     ensure_context_cache,
     ensure_graph_cache,
+    ensure_index_schema,
+    index_chunk_count,
+    indexed_novels,
+    load_index_manifest,
     load_cached_contexts,
     load_cached_graph_characters,
-    recreate_schema,
+    replace_novel_index,
     save_contexts,
     save_graph_characters,
-    save_relations,
     vector_literal,
 )
 from tokenizer import term_frequencies
@@ -61,6 +72,96 @@ from tokenizer import term_frequencies
 # 生成上下文要调 backend 里的模型客户端。src/ 平时不依赖 backend/，
 # 这里显式把项目根加进 path，只在真的要用时才导入（见 _make_generate_fn）。
 ROOT = Path(__file__).resolve().parent.parent
+
+ProgressCallback = Callable[[str, int, str], None]
+CancelCheck = Callable[[], None]
+
+
+class IndexCancelled(RuntimeError):
+    """后台索引任务收到用户取消信号。"""
+
+
+@dataclass(frozen=True)
+class IndexPlan:
+    """一次目录扫描得到的增量计划。"""
+
+    paths: dict[str, Path]
+    source_hashes: dict[str, str]
+    added: list[str]
+    modified: list[str]
+    deleted: list[str]
+    unchanged: list[str]
+    pipeline_hash: str
+
+
+def _file_hash(path: Path) -> str:
+    """按原始字节计算 SHA-256；编码或换行变化也应触发重新切分。"""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def index_pipeline_hash() -> str:
+    """索引算法配置指纹。
+
+    文件没变但切分大小、embedding 模型或上下文/关系图策略变了，也必须重建。
+    显式版本号用于分词规则等代码变化：修改这类逻辑时递增版本即可让所有书失效。
+    """
+    settings = {
+        "version": 2,
+        "chunk_size": CHUNK_SIZE,
+        "chunk_overlap": CHUNK_OVERLAP,
+        "embedding_model": EMBEDDING_MODEL,
+        "contextual_enabled": CONTEXTUAL_ENABLED,
+        "contextual_model": CONTEXTUAL_MODEL if CONTEXTUAL_ENABLED else None,
+        "graph_enabled": GRAPH_ENABLED,
+        "graph_model": GRAPH_MODEL if GRAPH_ENABLED else None,
+    }
+    encoded = json.dumps(settings, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def plan_index(
+    novels_dir: Path = NOVELS_DIR,
+    *,
+    force: bool = False,
+    manifest: dict[str, dict] | None = None,
+    database_novels: set[str] | None = None,
+) -> IndexPlan:
+    """比较目录和数据库清单，分类新增、修改、删除和未变化的书。
+
+    ``manifest``/``database_novels`` 参数主要让纯单元测试无需 PostgreSQL；生产路径
+    省略它们时读取真实数据库。旧索引没有 manifest 时，已有书会被视为修改并完成
+    一次性迁移，而不是错误地假设旧索引一定由当前配置生成。
+    """
+    paths = {path.stem: path for path in sorted(novels_dir.glob("*.txt"))}
+    hashes = {novel: _file_hash(path) for novel, path in paths.items()}
+    manifest = load_index_manifest() if manifest is None else manifest
+    database_novels = indexed_novels() if database_novels is None else database_novels
+    pipeline = index_pipeline_hash()
+
+    added: list[str] = []
+    modified: list[str] = []
+    unchanged: list[str] = []
+    for novel in sorted(paths):
+        previous = manifest.get(novel)
+        if previous is None and novel in database_novels:
+            # M2 之前的旧索引没有 manifest：内容还在，但需要做一次迁移以建立清单。
+            modified.append(novel)
+        elif previous is None or novel not in database_novels:
+            added.append(novel)
+        elif (
+            force
+            or previous["source_hash"] != hashes[novel]
+            or previous["pipeline_hash"] != pipeline
+        ):
+            modified.append(novel)
+        else:
+            unchanged.append(novel)
+    deleted = sorted((set(manifest) | database_novels) - set(paths))
+    return IndexPlan(paths, hashes, added, modified, deleted, unchanged, pipeline)
 
 
 def _make_generate_fn(model: str = CONTEXTUAL_MODEL):
@@ -161,100 +262,190 @@ def _build_contexts(chunks: list) -> dict[str, str]:
     return {**cached, **{h: c for h, c in new_items if c}}
 
 
-def build_index(model: SentenceTransformer | None = None) -> dict:
-    """重建向量索引和 BM25 倒排索引。model 可传入已加载好的 SentenceTransformer 以避免重复加载。
+def _noop_cancel() -> None:
+    return None
 
-    返回 {"novels": [...], "chunk_count": int}；没有找到任何小说文本时 chunk_count 为 0。
+
+def _emit(
+    callback: ProgressCallback | None, stage: str, percent: int, message: str
+) -> None:
+    if callback:
+        callback(stage, max(0, min(100, int(percent))), message)
+
+
+def _embedding_dimension(model: SentenceTransformer) -> int:
+    dimension = model.get_sentence_embedding_dimension()
+    if not dimension:
+        raise RuntimeError("无法读取 embedding 模型维度")
+    return int(dimension)
+
+
+def build_index(
+    model: SentenceTransformer | None = None,
+    *,
+    force: bool = False,
+    progress: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
+    novels_dir: Path = NOVELS_DIR,
+) -> dict:
+    """增量同步小说目录和 PostgreSQL 索引。
+
+    变化检测靠文件 SHA-256 + 索引流水线指纹。每本书先在事务外完成切分、Embedding、
+    分词和可选关系抽取，最后才用一个事务替换该书的向量/BM25/关系边/manifest。
+    因此取消或失败不会清空其他书，也不会留下当前书的半套索引。
     """
-    chunks = load_novel_chunks(NOVELS_DIR)
-    if not chunks:
-        return {"novels": [], "chunk_count": 0}
+    check = cancel_check or _noop_cancel
+    _emit(progress, "scan", 1, "正在比较小说文件和索引清单")
+    check()
+    plan = plan_index(novels_dir, force=force)
+    changed = plan.added + plan.modified
+    work_total = len(plan.deleted) + len(changed)
 
-    novels = sorted({c.novel for c in chunks})
-
-    contexts: dict[str, str] = {}
-    if CONTEXTUAL_ENABLED:
-        print("Contextual Retrieval 已开启，正在准备上下文说明…")
-        contexts = _build_contexts(chunks)
-
-    # 关键：索引「上下文说明 + 原文」，但下面存进 text 列的仍是原文。
-    # 生成的说明只用来改变"这个片段能被什么查询命中"，不该混进送给大模型的正文。
-    indexed_texts = [
-        f"{contexts[text_hash(c.text)]}\n{c.text}"
-        if text_hash(c.text) in contexts
-        else c.text
-        for c in chunks
-    ]
+    # 完全空的新项目不必为了创建空表加载 embedding 模型。
+    if work_total == 0:
+        count = index_chunk_count()
+        _emit(progress, "complete", 100, "所有小说都已是最新版本")
+        return {
+            "novels": sorted(plan.paths),
+            "chunk_count": count,
+            "added": [],
+            "modified": [],
+            "deleted": [],
+            "unchanged": plan.unchanged,
+            "contextualized": 0,
+            "relations": 0,
+        }
 
     if model is None:
         model = load_embedder()
-    embeddings = model.encode(
-        indexed_texts, normalize_embeddings=True, show_progress_bar=True
-    )
-    dimension = len(embeddings[0])
+    ensure_index_schema(_embedding_dimension(model))
 
-    # 分词也用加工后的文本，这样上下文说明里的人名同样能被 BM25 命中
-    print(f"正在分词 {len(chunks)} 个片段（用于 BM25 索引）…")
-    per_chunk_terms = [term_frequencies(t) for t in indexed_texts]
-    token_counts = [sum(tf.values()) for tf in per_chunk_terms]
+    contextualized = 0
+    edge_count = 0
+    completed_units = 0
 
-    recreate_schema(dimension)
+    def book_progress(stage: str, local_percent: int, message: str) -> None:
+        # 扫描占前 4%，所有书的实际处理共享中间 94%，收尾占最后 2%。
+        fraction = (completed_units + local_percent / 100) / max(work_total, 1)
+        _emit(progress, stage, 4 + int(fraction * 94), message)
 
-    # context 单独存一列：索引和重排用「说明 + 原文」，但生成时只用原文。
-    # 不存的话重排会拿原文重新打分、看不到说明，把增强效果整个抵消掉。
-    rows = [
-        (
-            c.novel,
-            c.chunk_id,
-            c.chapter_title,
-            c.text,
-            vector_literal(embedding),
-            token_count,
-            contexts.get(text_hash(c.text), ""),
-        )
-        for c, embedding, token_count in zip(chunks, embeddings, token_counts)
-    ]
-    with connect() as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(
-                "INSERT INTO novel_chunks "
-                "(novel, chunk_id, chapter_title, text, embedding, token_count, context) "
-                "VALUES (%s, %s, %s, %s, %s::vector, %s, %s)",
-                rows,
+    # 文件已经不存在的书只需要一个短事务，先处理可让书架和检索尽快一致。
+    for novel in plan.deleted:
+        check()
+        book_progress("cleanup", 15, f"正在移除《{novel}》的旧索引")
+        delete_novel_index(novel, check)
+        book_progress("cleanup", 100, f"已移除《{novel}》")
+        completed_units += 1
+
+    for novel in changed:
+        check()
+        path = plan.paths[novel]
+        action = "新增" if novel in plan.added else "更新"
+        book_progress("split", 3, f"正在{action}《{novel}》：识别章节并切分")
+        chunks = load_novel_file(path)
+        check()
+        if not chunks:
+            raise RuntimeError(f"《{novel}》没有可索引的文本内容")
+
+        contexts: dict[str, str] = {}
+        if CONTEXTUAL_ENABLED:
+            book_progress("context", 10, f"正在为《{novel}》补充上下文说明")
+            contexts = _build_contexts(chunks)
+            contextualized += len(contexts)
+            check()
+
+        indexed_texts = [
+            f"{contexts[text_hash(c.text)]}\n{c.text}"
+            if text_hash(c.text) in contexts
+            else c.text
+            for c in chunks
+        ]
+
+        embeddings: list = []
+        batch_size = 32
+        for start in range(0, len(indexed_texts), batch_size):
+            check()
+            batch = indexed_texts[start : start + batch_size]
+            encoded = model.encode(
+                batch, normalize_embeddings=True, show_progress_bar=False
+            )
+            embeddings.extend(encoded)
+            done = min(start + len(batch), len(indexed_texts))
+            local = 15 + int(done / len(indexed_texts) * 50)
+            book_progress(
+                "embedding",
+                local,
+                f"《{novel}》Embedding {done}/{len(indexed_texts)}",
             )
 
-        # 倒排索引约 390 万行。用 COPY 而不是 executemany：后者要为每一行走一次
-        # 完整的「发送 SQL → 解析 → 执行」往返，几百万行会慢到不可接受；
-        # COPY 是 PostgreSQL 的批量导入协议，数据以流的方式一次灌进去。
-        total_terms = sum(len(tf) for tf in per_chunk_terms)
-        print(f"正在写入 BM25 倒排索引（约 {total_terms:,} 行）…")
-        with conn.cursor() as cursor:
-            with cursor.copy(
-                "COPY chunk_terms (novel, chunk_id, term, tf) FROM STDIN"
-            ) as copy:
-                for chunk, freqs in zip(chunks, per_chunk_terms):
-                    for term, tf in freqs.items():
-                        copy.write_row((chunk.novel, chunk.chunk_id, term, tf))
+        per_chunk_terms: list[dict[str, int]] = []
+        token_counts: list[int] = []
+        for index, text in enumerate(indexed_texts, start=1):
+            if index % 25 == 0:
+                check()
+            frequencies = term_frequencies(text)
+            per_chunk_terms.append(frequencies)
+            token_counts.append(sum(frequencies.values()))
+            if index % 100 == 0 or index == len(indexed_texts):
+                local = 65 + int(index / len(indexed_texts) * 18)
+                book_progress(
+                    "bm25",
+                    local,
+                    f"《{novel}》BM25 分词 {index}/{len(indexed_texts)}",
+                )
 
-        count = conn.execute("SELECT count(*) AS count FROM novel_chunks").fetchone()["count"]
+        relations: list[tuple[str, str, str, str, int]] = []
+        if GRAPH_ENABLED:
+            check()
+            book_progress("graph", 85, f"正在更新《{novel}》的人物关系图")
+            relations = _build_relation_edges(chunks)
+            edge_count += len(relations)
 
-    # 建人物关系图（GraphRAG）
-    edge_count = 0
-    if GRAPH_ENABLED:
-        print("正在抽取人物关系图…")
-        edge_count = _build_relation_graph(chunks)
-        print(f"  抽出 {edge_count} 条人物关系边")
+        rows = [
+            (
+                chunk.novel,
+                chunk.chunk_id,
+                chunk.chapter_title,
+                chunk.text,
+                vector_literal(embedding),
+                token_count,
+                contexts.get(text_hash(chunk.text), ""),
+            )
+            for chunk, embedding, token_count in zip(
+                chunks, embeddings, token_counts
+            )
+        ]
+        check()
+        book_progress("database", 88, f"正在原子写入《{novel}》的两套索引")
+        replace_novel_index(
+            novel,
+            rows,
+            per_chunk_terms,
+            plan.source_hashes[novel],
+            plan.pipeline_hash,
+            relations,
+            check,
+        )
+        book_progress("database", 100, f"《{novel}》已安全切换到新索引")
+        completed_units += 1
 
+    check()
+    count = index_chunk_count()
+    _emit(progress, "complete", 100, f"索引同步完成，共 {count} 个片段")
     return {
-        "novels": novels,
+        "novels": sorted(plan.paths),
         "chunk_count": count,
-        "contextualized": len(contexts),
+        "added": plan.added,
+        "modified": plan.modified,
+        "deleted": plan.deleted,
+        "unchanged": plan.unchanged,
+        "contextualized": contextualized,
         "relations": edge_count,
     }
 
 
-def _build_relation_graph(chunks: list) -> int:
-    """按 (书, 关系类型) 抽人物关系边并写库，返回边数。
+def _build_relation_edges(chunks: list) -> list[tuple[str, str, str, str, int]]:
+    """按 (书, 关系类型) 抽人物关系边，在原子写入前返回全部边。
 
     **只从「含关系词的片段」里抽人名**，这是整个设计的关键（详见 graph.py
     的模块 docstring）：关系本来就只存在于这些片段里，从全书均匀采样既贵
@@ -320,12 +511,22 @@ def _build_relation_graph(chunks: list) -> int:
         for reason in distinct[:2]:
             print(f"    失败原因：{reason[:110]}")
 
-    save_relations(all_edges)
-    return len(all_edges)
+    return all_edges
 
 
 if __name__ == "__main__":
-    result = build_index()
+    last_progress = {"stage": "", "percent": -5}
+
+    def print_progress(stage: str, percent: int, message: str) -> None:
+        if (
+            stage != last_progress["stage"]
+            or percent >= last_progress["percent"] + 5
+            or percent == 100
+        ):
+            print(f"[{percent:3d}%] {message}")
+            last_progress.update(stage=stage, percent=percent)
+
+    result = build_index(progress=print_progress)
     if result["chunk_count"] == 0:
         print(f"未在 {NOVELS_DIR} 找到任何小说文本，请先放入小说文本。")
     else:
@@ -336,5 +537,7 @@ if __name__ == "__main__":
         )
         print(
             f"完成，来自小说 {result['novels']}，"
-            f"已写入 PostgreSQL novel_chunks 表 {result['chunk_count']} 条记录{extra}"
+            f"PostgreSQL 当前共 {result['chunk_count']} 条记录{extra}；"
+            f"新增 {len(result['added'])}、更新 {len(result['modified'])}、"
+            f"删除 {len(result['deleted'])}、未变化 {len(result['unchanged'])}"
         )

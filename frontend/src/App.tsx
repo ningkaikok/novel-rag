@@ -12,14 +12,19 @@ import {
 } from "antd";
 import {
   askStream,
+  cancelIndexTask,
   deleteBook,
+  getCurrentIndexTask,
+  getIndexTask,
   listBooks,
   listModels,
   loadSession,
   reindex,
+  retryIndexTask,
   setModel as apiSetModel,
   uploadBooks,
   type AnswerMode,
+  type IndexTask,
   type Source,
 } from "./api";
 import Sidebar from "./components/Sidebar";
@@ -186,6 +191,8 @@ function Main() {
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
   const [answerMode, setAnswerMode] = useState<AnswerMode>("auto");
+  const [indexTask, setIndexTask] = useState<IndexTask | null>(null);
+  const notifiedIndexTerminalRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
   // 是否显示「跳到最近回答」浮动按钮：用户往上翻看历史/出处、离底部较远时出现
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -223,7 +230,52 @@ function Main() {
     refreshBooks();
     refreshModels();
     restoreHistory();
+    restoreIndexTask();
   }, []);
+
+  const indexActive =
+    indexTask !== null &&
+    ["queued", "running", "cancelling"].includes(indexTask.status);
+
+  // 后台线程不占住 HTTP 请求，前端用轻量轮询恢复/更新进度。刷新页面后也会先调用
+  // current 接口找回同一个任务，所以不会因为页面重载丢掉“现在跑到哪了”。
+  useEffect(() => {
+    if (!indexTask || !indexActive) return;
+    let requesting = false;
+    const timer = window.setInterval(async () => {
+      if (requesting) return;
+      requesting = true;
+      try {
+        setIndexTask(await getIndexTask(indexTask.id));
+      } catch {
+        // 临时网络抖动不把任务判成失败；下一轮继续查询后端真实状态。
+      } finally {
+        requesting = false;
+      }
+    }, 700);
+    return () => window.clearInterval(timer);
+  }, [indexTask?.id, indexActive]);
+
+  // 终态只提示一次，并重新读取文件书架。任务结果里的 added/modified/deleted 是索引
+  // 变化；书架列表以磁盘文件为准，所以无论成功/失败都重新同步一次界面。
+  useEffect(() => {
+    if (!indexTask || indexActive) return;
+    refreshBooks();
+    const notificationKey = `${indexTask.id}:${indexTask.status}`;
+    if (notifiedIndexTerminalRef.current === notificationKey) return;
+    notifiedIndexTerminalRef.current = notificationKey;
+    if (indexTask.status === "completed") {
+      const result = indexTask.result;
+      const changed = result
+        ? result.added.length + result.modified.length + result.deleted.length
+        : 0;
+      message.success(changed ? `书架索引已更新（处理 ${changed} 本）` : "索引已经是最新");
+    } else if (indexTask.status === "cancelled") {
+      message.info("索引任务已安全停止，可以稍后重试");
+    } else if (indexTask.status === "failed") {
+      message.error(indexTask.error || "索引任务失败，可在侧栏重试");
+    }
+  }, [indexTask?.id, indexTask?.status, indexActive]);
 
   // 卸载时清掉定时器，避免在已销毁的组件上 setState
   useEffect(() => () => stopTyping(), []);
@@ -365,6 +417,19 @@ function Main() {
       setCurrentModel(info.current);
     } catch {
       setModels([]);
+    }
+  }
+
+  async function restoreIndexTask() {
+    try {
+      const task = await getCurrentIndexTask();
+      // 已经结束的旧任务只恢复卡片，不在每次刷新页面时重复弹“成功/失败”。
+      if (task && !["queued", "running", "cancelling"].includes(task.status)) {
+        notifiedIndexTerminalRef.current = `${task.id}:${task.status}`;
+      }
+      setIndexTask(task);
+    } catch {
+      // 后台任务状态是增强体验，拿不到不影响问答主流程。
     }
   }
 
@@ -511,24 +576,38 @@ function Main() {
     );
   }
 
-  async function withShelfToast(action: () => Promise<void>, done: string) {
-    message.open({ key: "shelf", type: "loading", content: "正在整理书架…", duration: 0 });
+  async function startShelfTask(action: () => Promise<IndexTask>, started: string) {
     try {
-      await action();
+      const task = await action();
+      setIndexTask(task);
       await refreshBooks();
-      message.open({ key: "shelf", type: "success", content: done, duration: 2 });
+      message.info(started);
     } catch (e) {
-      message.open({
-        key: "shelf",
-        type: "error",
-        content: (e as Error).message,
-        duration: 3,
-      });
+      message.error((e as Error).message);
     }
   }
 
   function handleUpload(files: File[]) {
-    withShelfToast(() => uploadBooks(files), "📖 已加入书架！");
+    startShelfTask(() => uploadBooks(files), "小说已保存，正在后台建立增量索引");
+  }
+
+  async function cancelCurrentIndex() {
+    if (!indexTask) return;
+    try {
+      setIndexTask(await cancelIndexTask(indexTask.id));
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  }
+
+  async function retryCurrentIndex() {
+    if (!indexTask) return;
+    try {
+      setIndexTask(await retryIndexTask(indexTask.id));
+      message.info("已重新扫描变化文件并继续索引");
+    } catch (e) {
+      message.error((e as Error).message);
+    }
   }
 
   const isCloud = isCloudModel(currentModel);
@@ -544,11 +623,14 @@ function Main() {
         <Sidebar
           books={books}
           topK={topK}
-          busy={busy}
+          busy={busy || indexActive}
+          indexTask={indexTask}
           onDelete={(name) =>
-            withShelfToast(() => deleteBook(name), `已移除《${name}》`)
+            startShelfTask(() => deleteBook(name), `已移除《${name}》，正在清理索引`)
           }
-          onReindex={() => withShelfToast(() => reindex().then(() => {}), "书架整理完成")}
+          onReindex={() => startShelfTask(() => reindex(), "正在检查书架变化")}
+          onCancelIndex={cancelCurrentIndex}
+          onRetryIndex={retryCurrentIndex}
           onClear={() => setMessages([])}
           setTopK={setTopK}
         />
@@ -588,7 +670,7 @@ function Main() {
               accept=".txt"
               multiple
               showUploadList={false}
-              disabled={busy}
+              disabled={busy || indexActive}
               beforeUpload={(file, fileList) => {
                 if (file === fileList[fileList.length - 1]) {
                   handleUpload(fileList as File[]);
@@ -596,7 +678,7 @@ function Main() {
                 return false; // 阻止 antd 自行上传
               }}
             >
-              <Button size="small" disabled={busy}>
+              <Button size="small" disabled={busy || indexActive}>
                 📎 添加小说
               </Button>
             </Upload>
