@@ -11,6 +11,7 @@ import {
   theme as antdTheme,
 } from "antd";
 import {
+  askAgentStream,
   askStream,
   cancelIndexTask,
   deleteBook,
@@ -24,6 +25,8 @@ import {
   setModel as apiSetModel,
   uploadBooks,
   type AnswerMode,
+  type AgentStep,
+  type AskHandlers,
   type IndexTask,
   type Source,
 } from "./api";
@@ -191,6 +194,10 @@ function Main() {
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
   const [answerMode, setAnswerMode] = useState<AnswerMode>("auto");
+  // 工作模式和回答模式是两层概念：标准 RAG 内部才有 auto/grounded/free；
+  // Agent Lab 走独立端点和轨迹，不能硬塞成第四种 AnswerMode，否则后端路由、
+  // 会话历史和 UI 状态会混在一起，初学者也看不清“固定流水线 vs 工具循环”。
+  const [workspaceMode, setWorkspaceMode] = useState<"rag" | "agent">("rag");
   const [indexTask, setIndexTask] = useState<IndexTask | null>(null);
   const notifiedIndexTerminalRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -530,24 +537,26 @@ function Main() {
     abortRef.current = controller;
     ensureTyping();
 
-    await askStream(
-      question,
-      topK,
-      {
-        // 检索每完成一步就追加一条，思考过程逐条点亮（不是等 2 秒后一次性弹出）
-        onStep: (s) =>
-          patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
-        onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
-        onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
-        // 不直接落到界面上，先进队列，由定时器按字吐出
-        onToken: (t) => {
-          queueRef.current += t;
-          ensureTyping();
-        },
-        onDone: () => {
-          streamEndedRef.current = true; // 队列吐完后由定时器收尾
-        },
-        onError: (e) => {
+    const handlers: AskHandlers = {
+      // 检索每完成一步就追加一条，思考过程逐条点亮（不是等 2 秒后一次性弹出）
+      onStep: (s) =>
+        patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
+      onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
+      onAgentStep: (step: AgentStep) =>
+        patchLast((m) => ({
+          ...m,
+          agentSteps: [...(m.agentSteps ?? []), step],
+        })),
+      onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
+      // 不直接落到界面上，先进队列，由定时器按字吐出
+      onToken: (t) => {
+        queueRef.current += t;
+        ensureTyping();
+      },
+      onDone: () => {
+        streamEndedRef.current = true; // 队列吐完后由定时器收尾
+      },
+      onError: (e) => {
           // 不再慢慢打了，把已收到的内容一次补齐
           streamEndedRef.current = true;
           stopTyping();
@@ -566,14 +575,20 @@ function Main() {
             };
           });
           setBusy(false);
-        },
       },
-      {
+    };
+    if (workspaceMode === "agent") {
+      await askAgentStream(question, handlers, {
+        signal: controller.signal,
+        maxSteps: 5,
+      });
+    } else {
+      await askStream(question, topK, handlers, {
         signal: controller.signal,
         sessionId: sessionIdRef.current,
         mode: answerMode,
-      }
-    );
+      });
+    }
   }
 
   async function startShelfTask(action: () => Promise<IndexTask>, started: string) {
@@ -613,7 +628,7 @@ function Main() {
   const isCloud = isCloudModel(currentModel);
   const cloudVendor = currentModel.startsWith(GLM_PREFIX) ? "智谱" : "Anthropic";
   const cloudPrivacyText =
-    answerMode === "free"
+    workspaceMode !== "agent" && answerMode === "free"
       ? `你的问题会发送到${cloudVendor}；自由问答不会发送小说原文，并计入你自己的账号用量`
       : `检索到的原文片段和你的问题会发送到${cloudVendor}的服务器，并计入你自己的账号用量`;
 
@@ -694,13 +709,35 @@ function Main() {
               popupMatchSelectWidth={false}
             />
 
+            <Tooltip
+              title={
+                workspaceMode === "agent"
+                  ? "最多五步调用只读工具，并展示选择、观察和证据"
+                  : "固定 RAG 流水线，适合日常问答和检索评测"
+              }
+            >
+              <Select
+                aria-label="工作模式"
+                className="workspace-mode-select"
+                size="small"
+                value={workspaceMode}
+                disabled={busy}
+                onChange={(value: "rag" | "agent") => setWorkspaceMode(value)}
+                options={[
+                  { value: "rag", label: "📖 标准 RAG" },
+                  { value: "agent", label: "🧪 Agent Lab" },
+                ]}
+                popupMatchSelectWidth={false}
+              />
+            </Tooltip>
+
             <Tooltip title={ANSWER_MODE_HELP[answerMode]}>
               <Select
                 aria-label="回答模式"
                 className="answer-mode-select"
                 size="small"
                 value={answerMode}
-                disabled={busy}
+                disabled={busy || workspaceMode === "agent"}
                 onChange={(value: AnswerMode) => setAnswerMode(value)}
                 options={ANSWER_MODE_OPTIONS}
                 popupMatchSelectWidth={false}
@@ -722,7 +759,9 @@ function Main() {
             <Input
               size="large"
               placeholder={
-                answerMode === "grounded"
+                workspaceMode === "agent"
+                  ? "让 Agent 选择搜索、读取邻居或章节，再依据原文回答……"
+                  : answerMode === "grounded"
                   ? "询问人物、剧情或原句，只依据书架原文回答……"
                   : answerMode === "free"
                     ? "自由提问，不搜索小说书架……"

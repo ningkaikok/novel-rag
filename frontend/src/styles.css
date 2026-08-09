@@ -520,6 +520,116 @@ body {
 .thinking-step-detail {
   color: var(--muted);
 }
+
+/* 检索评测闭环：横向保留每一阶段的名次和分数，窄屏时允许表格内部滚动。 */
+.retrieval-eval-panel {
+  margin: 4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.retrieval-eval-stages {
+  display: grid;
+  gap: 14px;
+}
+
+.retrieval-eval-stage {
+  min-width: 0;
+}
+
+.retrieval-eval-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.retrieval-eval-table-wrap {
+  overflow-x: auto;
+}
+
+.retrieval-eval-table {
+  width: 100%;
+  min-width: 430px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.retrieval-eval-table th,
+.retrieval-eval-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.retrieval-eval-table th {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.retrieval-eval-table tr.candidate-selected td:first-child {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.agent-run-panel {
+  margin: 4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.agent-run-steps {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.agent-run-steps li {
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.agent-run-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-run-action code {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.agent-run-index {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--card);
+}
+
+.agent-run-reason,
+.agent-run-observation {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.agent-run-observation {
+  color: var(--muted);
+}
 /* 单步耗时：比正文更小更淡，只在你专门去找"慢在哪"的时候才跳出来 */
 .thinking-step-ms {
   margin-right: 0.5rem;

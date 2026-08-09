@@ -17,11 +17,16 @@ from query_router import AnswerMode
 class AskRequest(BaseModel):
     question: str
     top_k: int = TOP_K
-    # auto：后端保守判断；grounded：强制查小说；free：不查小说、直接问模型。
-    mode: AnswerMode = AnswerMode.auto
     # 可选：带上会话 ID 就把这一轮问答落库，刷新页面后能恢复。
     # 不传则完全不落库，行为跟以前一致（纯内存对话）。
     session_id: str | None = None
+    # auto：后端保守判断；grounded：强制查小说；free：不查小说、直接问模型。
+    mode: AnswerMode = AnswerMode.auto
+
+
+class AgentAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    max_steps: int = Field(default=5, ge=3, le=5)
 
 
 class SetModelRequest(BaseModel):
@@ -42,6 +47,7 @@ class IndexResult(BaseModel):
     unchanged: list[str] = Field(default_factory=list)
     contextualized: int = 0
     relations: int = 0
+    hierarchy_nodes: int = 0
 
 
 class IndexTaskStatus(BaseModel):
@@ -88,11 +94,33 @@ class SearchResult(BaseModel):
 # 这两个是 /api/ask 流式响应里 event: trace / event: sources 各自的 data 形状。
 # StreamingResponse 本身不支持声明 response_model（FastAPI 不会校验流式响应体），
 # 但构造这些 JSON 时经过模型再 model_dump()，至少能保证字段名和类型不会手滑写错。
+class RetrievalCandidate(BaseModel):
+    novel: str
+    chunk_id: int
+    chapter_title: str | None = None
+    rank: int
+    score: float | None = None
+    score_label: str | None = None
+    previous_rank: int | None = None
+    selected: bool = False
+
+
+class AgentStep(BaseModel):
+    step: int
+    reason: str
+    tool: str
+    args: dict = Field(default_factory=dict)
+    observation: str
+    source_ids: list[str] = Field(default_factory=list)
+
+
 class TraceStep(BaseModel):
     step: str
     detail: str
     # 本阶段耗时（毫秒）。可选：历史会话里存的旧记录没有这个字段。
     ms: int | None = None
+    stage_key: str | None = None
+    candidates: list[RetrievalCandidate] = Field(default_factory=list)
 
 
 class SourceItem(BaseModel):

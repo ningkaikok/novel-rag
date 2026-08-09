@@ -30,6 +30,7 @@ export const MOCK_INDEX_TASK = {
     unchanged: MOCK_BOOKS,
     contextualized: 0,
     relations: 0,
+    hierarchy_nodes: 0,
   },
   created_at: "2026-08-09T00:00:00Z",
   started_at: "2026-08-09T00:00:00Z",
@@ -37,7 +38,22 @@ export const MOCK_INDEX_TASK = {
 };
 
 export interface MockAskOptions {
-  trace?: { step: string; detail: string }[];
+  trace?: {
+    step: string;
+    detail: string;
+    ms?: number;
+    stage_key?: string;
+    candidates?: Array<{
+      novel: string;
+      chunk_id: number;
+      chapter_title?: string;
+      rank: number;
+      score?: number;
+      score_label?: string;
+      previous_rank?: number;
+      selected?: boolean;
+    }>;
+  }[];
   sources?: { novel: string; chunk_id: number; text: string }[];
   tokens?: string[];
 }
@@ -45,8 +61,46 @@ export interface MockAskOptions {
 const DEFAULT_TRACE = [
   { step: "理解问题", detail: "识别到你在问《雾隐山庄》" },
   { step: "检索范围", detail: "只在《雾隐山庄》内检索" },
-  { step: "多路召回", detail: "语义召回 3 条 · 关键词召回 0 条" },
-  { step: "融合排序", detail: "合并去重后共 3 个候选，取最相关的 2 段作为依据" },
+  {
+    step: "向量召回",
+    detail: "按语义相似度召回 2 个片段",
+    ms: 18,
+    stage_key: "vector",
+    candidates: [
+      { novel: "雾隐山庄", chunk_id: 1, rank: 1, score: 0.82, score_label: "余弦相似度" },
+      { novel: "雾隐山庄", chunk_id: 0, rank: 2, score: 0.76, score_label: "余弦相似度" },
+    ],
+  },
+  {
+    step: "BM25 召回",
+    detail: "按关键词相关性召回 2 个片段",
+    ms: 7,
+    stage_key: "bm25",
+    candidates: [
+      { novel: "雾隐山庄", chunk_id: 0, rank: 1, score: 8.3, score_label: "BM25" },
+      { novel: "雾隐山庄", chunk_id: 1, rank: 2, score: 4.1, score_label: "BM25" },
+    ],
+  },
+  {
+    step: "融合排序",
+    detail: "合并去重后共 2 个候选",
+    ms: 1,
+    stage_key: "rrf",
+    candidates: [
+      { novel: "雾隐山庄", chunk_id: 0, rank: 1, score: 0.0325, score_label: "RRF", selected: true },
+      { novel: "雾隐山庄", chunk_id: 1, rank: 2, score: 0.0325, score_label: "RRF", selected: true },
+    ],
+  },
+  {
+    step: "精排",
+    detail: "取最相关的 2 段",
+    ms: 80,
+    stage_key: "rerank",
+    candidates: [
+      { novel: "雾隐山庄", chunk_id: 1, rank: 1, previous_rank: 2, score: 0.99, score_label: "CrossEncoder", selected: true },
+      { novel: "雾隐山庄", chunk_id: 0, rank: 2, previous_rank: 1, score: 0.91, score_label: "CrossEncoder", selected: true },
+    ],
+  },
 ];
 
 // 注意：文本要足够长（在桌面视口宽度下超过一行），否则 antd 的省略号组件判断
@@ -81,6 +135,35 @@ function buildSseBody(opts: MockAskOptions): string {
   }
   body += "event: done\ndata: {}\n\n";
   return body;
+}
+
+function buildAgentSseBody(): string {
+  const steps = [
+    {
+      step: 1,
+      reason: "先定位与问题相关的原文",
+      tool: "search_novels",
+      args: { query: "顾长风为什么卧床" },
+      observation: "检索到 2 个相关原文片段",
+      source_ids: ["S1", "S2"],
+    },
+    {
+      step: 2,
+      reason: "证据已足够，生成带引用答案",
+      tool: "answer_with_citations",
+      args: { source_ids: ["S1", "S2"] },
+      observation: "使用 2 个原文片段生成带引用答案",
+      source_ids: ["S1", "S2"],
+    },
+  ];
+  let body = steps
+    .map((step) => `event: agent_step\ndata: ${JSON.stringify(step)}\n\n`)
+    .join("");
+  body += `event: sources\ndata: ${JSON.stringify(DEFAULT_SOURCES)}\n\n`;
+  for (const token of DEFAULT_TOKENS) {
+    body += `event: token\ndata: ${JSON.stringify(token)}\n\n`;
+  }
+  return body + "event: done\ndata: {}\n\n";
 }
 
 /** 拦截页面加载时用到的所有 /api/* 请求，换成受控的假数据。 */
@@ -129,6 +212,14 @@ export async function mockApi(
 
   await page.route("**/api/model", async (route) => {
     await route.fulfill({ json: { current: JSON.parse(route.request().postData() ?? "{}").model } });
+  });
+
+  await page.route("**/api/agent/ask", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: buildAgentSseBody(),
+    });
   });
 
   await page.route("**/api/ask", async (route) => {

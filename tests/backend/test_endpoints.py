@@ -349,3 +349,56 @@ def test_auto_novel_question_still_requires_index(client):
         "/api/ask", json={"question": "《凡人修仙传》的结局是什么？", "mode": "auto"}
     )
     assert resp.status_code == 409
+
+
+def test_agent_lab_streams_steps_sources_and_tokens(client, monkeypatch):
+    """Agent Lab 使用独立事件类型，不应污染普通 /api/ask 的协议。"""
+    main.state["rag"] = object()
+    main.state["model"] = "fake-model"
+    source = type(
+        "S",
+        (),
+        {
+            "novel": "雾隐山庄",
+            "chunk_id": 4,
+            "chapter_title": "第二章",
+            "text": "顾长风守住了山庄",
+        },
+    )()
+
+    def fake_run_agent(*_args, **_kwargs):
+        yield "agent_step", {
+            "step": 1,
+            "reason": "先搜索",
+            "tool": "search_novels",
+            "args": {"query": "顾长风"},
+            "observation": "找到 S1",
+            "source_ids": ["S1"],
+        }
+        yield "sources", [source]
+        yield "token", "顾长风[1]"
+        yield "done", {}
+
+    monkeypatch.setattr(main, "run_agent", fake_run_agent)
+
+    resp = client.post(
+        "/api/agent/ask", json={"question": "顾长风做了什么？", "max_steps": 3}
+    )
+
+    assert resp.status_code == 200
+    assert "event: agent_step" in resp.text
+    assert '"tool": "search_novels"' in resp.text
+    assert "event: sources" in resp.text
+    assert "顾长风守住了山庄" in resp.text
+    assert 'data: "顾长风[1]"' in resp.text
+    assert "event: done" in resp.text
+
+
+def test_agent_lab_validates_three_to_five_steps(client):
+    main.state["rag"] = object()
+
+    response = client.post(
+        "/api/agent/ask", json={"question": "测试", "max_steps": 2}
+    )
+
+    assert response.status_code == 422

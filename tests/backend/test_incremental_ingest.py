@@ -64,6 +64,28 @@ def test_old_index_without_manifest_gets_one_time_migration(tmp_path, monkeypatc
     assert plan.modified == ["旧书"]
 
 
+def test_unchanged_book_without_hierarchy_manifest_gets_summary_backfill(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "旧书.txt"
+    path.write_text("第一章 开始\n旧索引内容没有变化", encoding="utf-8")
+    monkeypatch.setattr(ingest, "index_pipeline_hash", lambda: "pipeline-v1")
+    monkeypatch.setattr(ingest, "hierarchy_pipeline_hash", lambda: "hierarchy-v1")
+    source_hash = ingest._file_hash(path)
+
+    plan = ingest.plan_index(
+        tmp_path,
+        manifest={"旧书": _manifest(source_hash, "pipeline-v1")},
+        database_novels={"旧书"},
+        hierarchy_manifest={},
+    )
+
+    assert plan.modified == []
+    assert plan.unchanged == ["旧书"]
+    assert plan.hierarchy_pending == ["旧书"]
+    assert plan.hierarchy_hash == "hierarchy-v1"
+
+
 class _FakeEmbedder:
     def get_sentence_embedding_dimension(self):
         return 2
@@ -89,11 +111,13 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "plan_index", lambda *args, **kwargs: plan)
     monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
     monkeypatch.setattr(ingest, "index_chunk_count", lambda: 9)
+    monkeypatch.setattr(ingest, "hierarchy_node_count", lambda: 2)
     monkeypatch.setattr(
         ingest,
         "replace_novel_index",
-        lambda novel, rows, terms, source_hash, pipeline_hash, relations, check: replaced.append(
-            (novel, rows, terms, source_hash, pipeline_hash)
+        lambda novel, rows, terms, source_hash, pipeline_hash, relations, check,
+        hierarchy_rows, hierarchy_hash: replaced.append(
+            (novel, rows, terms, source_hash, pipeline_hash, hierarchy_rows, hierarchy_hash)
         ),
     )
 
@@ -104,10 +128,13 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
     )
 
     assert [item[0] for item in replaced] == ["变化"]
-    assert replaced[0][3:] == ("new-hash", "pipeline-v2")
+    assert replaced[0][3:5] == ("new-hash", "pipeline-v2")
+    assert len(replaced[0][5]) == 2  # 一个章节节点 + 一个全书节点
+    assert replaced[0][6] == ""
     assert result["modified"] == ["变化"]
     assert result["unchanged"] == ["未变化"]
     assert result["chunk_count"] == 9
+    assert result["hierarchy_nodes"] == 2
     assert {stage for stage, _ in stages} >= {
         "scan",
         "split",
@@ -158,3 +185,46 @@ def test_build_index_cancelled_before_write_keeps_database_untouched(
         raise AssertionError("expected cancellation")
 
     assert writes == []
+
+
+def test_build_index_backfills_only_hierarchy_for_unchanged_book(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "旧书.txt"
+    path.write_text("第一章 开始\n正文内容", encoding="utf-8")
+    plan = ingest.IndexPlan(
+        paths={"旧书": path},
+        source_hashes={"旧书": "same-hash"},
+        added=[],
+        modified=[],
+        deleted=[],
+        unchanged=["旧书"],
+        pipeline_hash="pipeline-v1",
+        hierarchy_pending=["旧书"],
+        hierarchy_hash="hierarchy-v1",
+    )
+    base_writes = []
+    hierarchy_writes = []
+    monkeypatch.setattr(ingest, "plan_index", lambda *args, **kwargs: plan)
+    monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
+    monkeypatch.setattr(ingest, "index_chunk_count", lambda: 1)
+    monkeypatch.setattr(ingest, "hierarchy_node_count", lambda: 2)
+    monkeypatch.setattr(
+        ingest, "replace_novel_index", lambda *args: base_writes.append(args)
+    )
+    monkeypatch.setattr(
+        ingest, "replace_novel_hierarchy", lambda *args: hierarchy_writes.append(args)
+    )
+
+    result = ingest.build_index(model=_FakeEmbedder(), novels_dir=tmp_path)
+
+    assert base_writes == []
+    assert len(hierarchy_writes) == 1
+    novel, rows, source_hash, hierarchy_hash, _check = hierarchy_writes[0]
+    assert (novel, source_hash, hierarchy_hash) == (
+        "旧书",
+        "same-hash",
+        "hierarchy-v1",
+    )
+    assert len(rows) == 2
+    assert result["hierarchy_nodes"] == 2

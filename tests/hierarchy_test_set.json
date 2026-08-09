@@ -1,0 +1,30 @@
+[
+  {
+    "id": "H01",
+    "category": "主题分析",
+    "question": "《凡人修仙传》贯穿全书的主题是什么？",
+    "expect_novels": ["凡人修仙传"],
+    "min_chapters_per_novel": 2
+  },
+  {
+    "id": "H02",
+    "category": "人物成长",
+    "question": "《诡秘之主》中主角在全书里的成长和变化是什么？",
+    "expect_novels": ["诡秘之主"],
+    "min_chapters_per_novel": 2
+  },
+  {
+    "id": "H03",
+    "category": "跨书比较",
+    "question": "比较《凡人修仙传》和《诡秘之主》的主题异同。",
+    "expect_novels": ["凡人修仙传", "诡秘之主"],
+    "min_chapters_per_novel": 2
+  },
+  {
+    "id": "H04",
+    "category": "跨书人物",
+    "question": "对比《凡人修仙传》和《诡秘之主》两位主角的成长变化。",
+    "expect_novels": ["凡人修仙传", "诡秘之主"],
+    "min_chapters_per_novel": 2
+  }
+]

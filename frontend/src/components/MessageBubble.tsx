@@ -1,6 +1,6 @@
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Avatar, Collapse, Typography } from "antd";
-import type { Source, TraceStep } from "../api";
+import type { AgentStep, RetrievalCandidate, Source, TraceStep } from "../api";
 
 /** 毫秒转成人读的时长：1200 → "1.2s"，340 → "340ms" */
 function humanMs(ms: number): string {
@@ -12,10 +12,45 @@ export interface ChatMessage {
   content: string;
   sources?: Source[];
   trace?: TraceStep[];
+  agentSteps?: AgentStep[];
   streaming?: boolean;
   // 用户点了「停止」：内容是不完整的，界面上要明确告知，别让人以为这就是完整答案
   interrupted?: boolean;
 }
+
+const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
+  if (!steps.length) return null;
+  return (
+    <Collapse
+      className="agent-run-panel"
+      size="small"
+      defaultActiveKey={["agent"]}
+      items={[
+        {
+          key: "agent",
+          label: `🧪 Agent Lab · ${steps.length} 步`,
+          children: (
+            <ol className="agent-run-steps">
+              {steps.map((step) => (
+                <li key={`${step.step}-${step.tool}`}>
+                  <div className="agent-run-action">
+                    <span className="agent-run-index">{step.step}</span>
+                    <code>{step.tool}</code>
+                    {step.source_ids.length > 0 && (
+                      <span>{step.source_ids.join(" · ")}</span>
+                    )}
+                  </div>
+                  <div className="agent-run-reason">选择：{step.reason}</div>
+                  <div className="agent-run-observation">观察：{step.observation}</div>
+                </li>
+              ))}
+            </ol>
+          ),
+        },
+      ]}
+    />
+  );
+});
 
 // 「思考过程」折叠面板：展示检索流水线每一步的真实动作。
 //
@@ -113,6 +148,80 @@ function shortName(novel: string): string {
   if (m) return m[1];
   return novel.length > 12 ? novel.slice(0, 12) + "…" : novel;
 }
+
+function formatScore(candidate: RetrievalCandidate): string {
+  if (candidate.score == null) return "—";
+  return Math.abs(candidate.score) >= 100
+    ? candidate.score.toFixed(1)
+    : candidate.score.toFixed(4);
+}
+
+/** 检索评测面板：同一个片段在各阶段的 rank 变化，比单看最终答案更能定位问题。 */
+const RetrievalEvaluation = memo(function RetrievalEvaluation({
+  trace,
+}: {
+  trace: TraceStep[];
+}) {
+  const stages = trace.filter((step) => (step.candidates?.length ?? 0) > 0);
+  if (!stages.length) return null;
+  return (
+    <Collapse
+      className="retrieval-eval-panel"
+      size="small"
+      items={[
+        {
+          key: "evaluation",
+          label: `📊 检索评测 · ${stages.length} 个排名阶段`,
+          children: (
+            <div className="retrieval-eval-stages">
+              {stages.map((stage, stageIndex) => (
+                <section className="retrieval-eval-stage" key={`${stage.stage_key}-${stageIndex}`}>
+                  <div className="retrieval-eval-title">
+                    <strong>{stage.step}</strong>
+                    {stage.ms != null && stage.ms > 0 && <span>{humanMs(stage.ms)}</span>}
+                  </div>
+                  <div className="retrieval-eval-table-wrap">
+                    <table className="retrieval-eval-table">
+                      <thead>
+                        <tr>
+                          <th>名次</th>
+                          <th>原文位置</th>
+                          <th>{stage.candidates?.[0]?.score_label || "分数"}</th>
+                          <th>上一阶段</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stage.candidates!.map((candidate) => (
+                          <tr
+                            className={candidate.selected ? "candidate-selected" : ""}
+                            key={`${candidate.novel}:${candidate.chunk_id}`}
+                          >
+                            <td>#{candidate.rank}</td>
+                            <td title={candidate.chapter_title || candidate.novel}>
+                              《{shortName(candidate.novel)}》#{candidate.chunk_id}
+                            </td>
+                            <td>{formatScore(candidate)}</td>
+                            <td>
+                              {candidate.previous_rank == null
+                                ? "—"
+                                : candidate.previous_rank === candidate.rank
+                                  ? `#${candidate.previous_rank}`
+                                  : `#${candidate.previous_rank} → #${candidate.rank}`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ))}
+            </div>
+          ),
+        },
+      ]}
+    />
+  );
+});
 
 // 出处卡片单独 memo：打字机每帧都会刷新气泡内容，但 sources 引用在一次回答里不变，
 // 所以这一块（含 5 个会做 DOM 测量的省略号组件）在流式输出期间不会重渲染。
@@ -220,6 +329,10 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       <div className="bubble">
         {!isUser && hasTrace && (
           <Thinking trace={msg.trace!} live={waiting} />
+        )}
+        {!isUser && hasTrace && <RetrievalEvaluation trace={msg.trace!} />}
+        {!isUser && msg.agentSteps && msg.agentSteps.length > 0 && (
+          <AgentRun steps={msg.agentSteps} />
         )}
         {waiting ? (
           // 正文还没到。trace 已经在的话，「生成中」由思考过程面板标题里的动画点表示，

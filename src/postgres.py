@@ -8,10 +8,12 @@
          └── character_relations 以 novel 为范围保存可选的人物关系边
 
     index_manifest       一行 = 一本书的文件哈希、流水线哈希和片段数
+    hierarchy_summaries  一行 = 一个章节/全书导航摘要 + 原文片段范围 + 向量
+    hierarchy_manifest   一行 = 一本书的层级算法指纹和摘要节点数
 
-``novel_chunks`` 是最终回答可引用的事实来源；其他三张表都是可以从小说原文重新
-计算出来的派生数据。manifest 不是检索索引，而是增量构建的“检查点”：它告诉系统
-哪些文件已经使用当前切分/Embedding 配置处理过。
+``novel_chunks`` 是最终回答可引用的事实来源；其余索引表都是可以从小说原文重新
+计算出来的派生数据。两个 manifest 不是检索索引，而是两条增量流水线各自的
+“检查点”：基础切分规则变化时重建片段，只有摘要规则变化时只补建层级节点。
 
 本模块同时服务 FastAPI 和命令行脚本，所以 ``connect()`` 返回统一的上下文管理器：
 Web 请求复用连接池，脚本则临时创建连接。业务代码不需要知道连接来自哪里。
@@ -162,6 +164,46 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         "CREATE INDEX IF NOT EXISTS novel_chunks_embedding_hnsw_idx "
         "ON novel_chunks USING hnsw (embedding vector_cosine_ops)"
     )
+    _ensure_hierarchy_schema(conn, dimension)
+
+
+def _ensure_hierarchy_schema(conn, dimension: int) -> None:
+    """幂等准备章节/全书摘要索引；与片段表共用同一个 embedding 维度。"""
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS hierarchy_summaries (
+            novel          TEXT NOT NULL,
+            level          TEXT NOT NULL CHECK (level IN ('chapter', 'novel')),
+            node_id        TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            node_order     INTEGER NOT NULL,
+            start_chunk_id INTEGER NOT NULL,
+            end_chunk_id   INTEGER NOT NULL,
+            summary        TEXT NOT NULL,
+            embedding      vector({dimension}) NOT NULL,
+            PRIMARY KEY (novel, level, node_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hierarchy_manifest (
+            novel         TEXT PRIMARY KEY,
+            source_hash   TEXT NOT NULL,
+            pipeline_hash TEXT NOT NULL,
+            node_count    INTEGER NOT NULL,
+            indexed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS hierarchy_summaries_embedding_hnsw_idx "
+        "ON hierarchy_summaries USING hnsw (embedding vector_cosine_ops)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS hierarchy_summaries_scope_idx "
+        "ON hierarchy_summaries (level, novel, node_order)"
+    )
 
 
 def ensure_index_schema(dimension: int) -> None:
@@ -173,6 +215,8 @@ def ensure_index_schema(dimension: int) -> None:
 def recreate_schema(dimension: int) -> None:
     """兼容旧脚本的全量清空入口；Web 增量任务不再调用它。"""
     with connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS hierarchy_summaries")
+        conn.execute("DROP TABLE IF EXISTS hierarchy_manifest")
         conn.execute("DROP TABLE IF EXISTS chunk_terms")
         conn.execute("DROP TABLE IF EXISTS novel_chunks")
         conn.execute("DROP TABLE IF EXISTS character_relations")
@@ -191,6 +235,21 @@ def load_index_manifest() -> dict[str, dict]:
         rows = conn.execute(
             "SELECT novel, source_hash, pipeline_hash, chunk_count "
             "FROM index_manifest"
+        ).fetchall()
+    return {row["novel"]: dict(row) for row in rows}
+
+
+def load_hierarchy_manifest() -> dict[str, dict]:
+    """返回层级摘要清单；旧数据库尚未建表时返回空，供无损补建使用。"""
+    with connect() as conn:
+        table = conn.execute(
+            "SELECT to_regclass('public.hierarchy_manifest') AS table_name"
+        ).fetchone()
+        if not table or not table["table_name"]:
+            return {}
+        rows = conn.execute(
+            "SELECT novel, source_hash, pipeline_hash, node_count "
+            "FROM hierarchy_manifest"
         ).fetchall()
     return {row["novel"]: dict(row) for row in rows}
 
@@ -215,6 +274,8 @@ def replace_novel_index(
     pipeline_hash: str,
     relations: list[tuple[str, str, str, str, int]] | None = None,
     cancel_check: Callable[[], None] | None = None,
+    hierarchy_rows: list[tuple] | None = None,
+    hierarchy_hash: str | None = None,
 ) -> None:
     """在一个事务里原子替换单本书的全部派生数据。
 
@@ -233,6 +294,9 @@ def replace_novel_index(
         conn.execute("DELETE FROM chunk_terms WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM novel_chunks WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM character_relations WHERE novel = %s", (novel,))
+        if hierarchy_rows is not None:
+            conn.execute("DELETE FROM hierarchy_summaries WHERE novel = %s", (novel,))
+            conn.execute("DELETE FROM hierarchy_manifest WHERE novel = %s", (novel,))
         with conn.cursor() as cursor:
             cursor.executemany(
                 "INSERT INTO novel_chunks "
@@ -261,6 +325,28 @@ def replace_novel_index(
                     "VALUES (%s, %s, %s, %s, %s)",
                     relations,
                 )
+        if hierarchy_rows is not None:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    "INSERT INTO hierarchy_summaries "
+                    "(novel, level, node_id, title, node_order, start_chunk_id, "
+                    "end_chunk_id, summary, embedding) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)",
+                    hierarchy_rows,
+                )
+            conn.execute(
+                """
+                INSERT INTO hierarchy_manifest
+                    (novel, source_hash, pipeline_hash, node_count, indexed_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (novel) DO UPDATE SET
+                    source_hash = EXCLUDED.source_hash,
+                    pipeline_hash = EXCLUDED.pipeline_hash,
+                    node_count = EXCLUDED.node_count,
+                    indexed_at = NOW()
+                """,
+                (novel, source_hash, hierarchy_hash or "", len(hierarchy_rows)),
+            )
         check()
         conn.execute(
             """
@@ -288,6 +374,76 @@ def delete_novel_index(
         conn.execute("DELETE FROM novel_chunks WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM character_relations WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM index_manifest WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM hierarchy_summaries WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM hierarchy_manifest WHERE novel = %s", (novel,))
+
+
+def replace_novel_hierarchy(
+    novel: str,
+    rows: list[tuple],
+    source_hash: str,
+    pipeline_hash: str,
+    cancel_check: Callable[[], None] | None = None,
+) -> None:
+    """只补建一本旧书的层级摘要，不触碰已经可用的片段向量/BM25。"""
+    check = cancel_check or (lambda: None)
+    with connect() as conn:
+        check()
+        conn.execute("DELETE FROM hierarchy_summaries WHERE novel = %s", (novel,))
+        conn.execute("DELETE FROM hierarchy_manifest WHERE novel = %s", (novel,))
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO hierarchy_summaries "
+                "(novel, level, node_id, title, node_order, start_chunk_id, "
+                "end_chunk_id, summary, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)",
+                rows,
+            )
+        check()
+        conn.execute(
+            """
+            INSERT INTO hierarchy_manifest
+                (novel, source_hash, pipeline_hash, node_count, indexed_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (novel) DO UPDATE SET
+                source_hash = EXCLUDED.source_hash,
+                pipeline_hash = EXCLUDED.pipeline_hash,
+                node_count = EXCLUDED.node_count,
+                indexed_at = NOW()
+            """,
+            (novel, source_hash, pipeline_hash, len(rows)),
+        )
+
+
+def search_hierarchy(
+    query_vector: str,
+    *,
+    level: str,
+    limit: int,
+    novels: list[str] | None = None,
+) -> list[dict]:
+    """按摘要向量搜索章节或全书节点；返回范围用于映射回原文。"""
+    if level not in {"chapter", "novel"}:
+        raise ValueError("level must be chapter or novel")
+    scope = "AND novel = ANY(%s)" if novels else ""
+    params: list = [query_vector, level]
+    if novels:
+        params.append(novels)
+    params.extend([query_vector, limit])
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT novel, level, node_id, title, node_order,
+                   start_chunk_id, end_chunk_id, summary,
+                   embedding <=> %s::vector AS distance
+            FROM hierarchy_summaries
+            WHERE level = %s {scope}
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+            """,
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def index_chunk_count() -> int:
@@ -300,6 +456,18 @@ def index_chunk_count() -> int:
                 "count"
             ]
         )
+
+
+def hierarchy_node_count() -> int:
+    """返回当前章节 + 全书摘要节点总数；尚未迁移时为 0。"""
+    with connect() as conn:
+        table = conn.execute(
+            "SELECT to_regclass('public.hierarchy_summaries') AS table_name"
+        ).fetchone()
+        if not table or not table["table_name"]:
+            return 0
+        row = conn.execute("SELECT count(*) AS count FROM hierarchy_summaries").fetchone()
+    return int(row["count"])
 
 
 def has_index() -> bool:
