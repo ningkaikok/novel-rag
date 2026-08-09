@@ -21,5 +21,7 @@ def client():
 def clean_state():
     """每个测试前后都清空 state，避免上一个测试塞的假数据漏到下一个测试里。"""
     main.state.clear()
+    main.index_tasks.reset_for_tests()
     yield
+    main.index_tasks.reset_for_tests()
     main.state.clear()

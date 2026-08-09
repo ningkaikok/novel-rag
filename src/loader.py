@@ -221,23 +221,35 @@ def _chunk_paragraphs(paragraphs: list[str]) -> list[str]:
     return chunks
 
 
+def load_novel_file(path: Path) -> list[Chunk]:
+    """读取并切分单本小说。
+
+    增量索引必须以“书”为最小替换单位，不能为了处理一个变化文件再次扫描、切分
+    整个目录。把单文件入口公开出来后，全量加载和增量加载仍然共用完全相同的
+    清洗、章节识别和切分规则，不会出现两条路径结果不一致。
+    """
+    chunks: list[Chunk] = []
+    raw = _read_text(path)
+    text = _clean_text(raw)
+    paragraphs = _split_paragraphs(text)
+    next_chunk_id = 0
+    for chapter_title, chapter_paragraphs in _split_chapter_sections(paragraphs):
+        for chunk_text in _chunk_paragraphs(chapter_paragraphs):
+            chunks.append(
+                Chunk(
+                    novel=path.stem,
+                    chunk_id=next_chunk_id,
+                    text=chunk_text,
+                    chapter_title=chapter_title,
+                )
+            )
+            next_chunk_id += 1
+    return chunks
+
+
 def load_novel_chunks(novels_dir: Path = NOVELS_DIR) -> list[Chunk]:
     """读取 novels_dir 下所有 .txt 文件，清洗并切分为 Chunk 列表。"""
     chunks: list[Chunk] = []
     for path in sorted(novels_dir.glob("*.txt")):
-        raw = _read_text(path)
-        text = _clean_text(raw)
-        paragraphs = _split_paragraphs(text)
-        next_chunk_id = 0
-        for chapter_title, chapter_paragraphs in _split_chapter_sections(paragraphs):
-            for chunk_text in _chunk_paragraphs(chapter_paragraphs):
-                chunks.append(
-                    Chunk(
-                        novel=path.stem,
-                        chunk_id=next_chunk_id,
-                        text=chunk_text,
-                        chapter_title=chapter_title,
-                    )
-                )
-                next_chunk_id += 1
+        chunks.extend(load_novel_file(path))
     return chunks

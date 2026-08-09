@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mockApi } from "./mock-api";
+import { MOCK_INDEX_TASK, mockApi } from "./mock-api";
 
 test.describe("上传小说", () => {
   test("选择 .txt 文件后触发上传，书架刷新，出现成功提示", async ({ page }) => {
@@ -10,7 +10,7 @@ test.describe("上传小说", () => {
       if (route.request().method() === "POST") {
         const body = route.request().postDataBuffer()?.toString("utf-8") ?? "";
         uploadedFilenames = [...body.matchAll(/filename="([^"]+)"/g)].map((m) => m[1]);
-        await route.fulfill({ json: { saved: ["新小说"], chunk_count: 42 } });
+        await route.fulfill({ json: { saved: ["新小说"], task: MOCK_INDEX_TASK } });
       } else {
         await route.fulfill({ json: { books: ["雾隐山庄"] } });
       }
@@ -24,7 +24,9 @@ test.describe("上传小说", () => {
       buffer: Buffer.from("这是一本测试用的小说正文。", "utf-8"),
     });
 
-    await expect(page.getByText("📖 已加入书架！")).toBeVisible();
+    const progress = page.getByLabel("索引任务进度");
+    await expect(progress.getByText("书架索引已更新")).toBeVisible();
+    await expect(progress).toContainText("已完成");
     expect(uploadedFilenames).toContain("新小说.txt");
   });
 

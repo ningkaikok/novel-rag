@@ -12,6 +12,30 @@ export const MOCK_MODELS = {
   current: "qwen2.5:7b",
 };
 
+export const MOCK_INDEX_TASK = {
+  id: "index-task-1",
+  status: "completed",
+  stage: "complete",
+  progress: 100,
+  message: "书架索引已更新",
+  error: null,
+  force: false,
+  retry_of: null,
+  result: {
+    novels: MOCK_BOOKS,
+    chunk_count: 3,
+    added: ["新小说"],
+    modified: [],
+    deleted: [],
+    unchanged: MOCK_BOOKS,
+    contextualized: 0,
+    relations: 0,
+  },
+  created_at: "2026-08-09T00:00:00Z",
+  started_at: "2026-08-09T00:00:00Z",
+  finished_at: "2026-08-09T00:00:01Z",
+};
+
 export interface MockAskOptions {
   trace?: { step: string; detail: string }[];
   sources?: { novel: string; chunk_id: number; text: string }[];
@@ -82,8 +106,21 @@ export async function mockApi(
       await route.fulfill({ json: { books } });
     } else {
       // 上传：读一下 multipart 里的文件名，回显为"已保存"，方便测试断言
-      await route.fulfill({ json: { saved: books, chunk_count: 3 } });
+      await route.fulfill({ json: { saved: books, task: MOCK_INDEX_TASK } });
     }
+  });
+
+  await page.route("**/api/index-tasks/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/current")) {
+      await route.fulfill({ json: null });
+    } else {
+      await route.fulfill({ json: MOCK_INDEX_TASK });
+    }
+  });
+
+  await page.route("**/api/reindex**", async (route) => {
+    await route.fulfill({ json: MOCK_INDEX_TASK });
   });
 
   await page.route("**/api/models", async (route) => {

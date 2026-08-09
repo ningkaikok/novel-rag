@@ -24,7 +24,7 @@ chapter_title TEXT
 
 后端启动时会用 `ADD COLUMN IF NOT EXISTS` 兼容旧表，因此旧服务不会因为缺列直接
 启动失败；但旧片段本身没有章节信息，升级后仍需运行一次 `python src/ingest.py`
-重建索引，才能填充章节标题。
+增量迁移，才能填充章节标题。M2 的 manifest 建立后，后续只处理变化书。
 
 ## 二、引用编号为什么以 prompt 为准
 

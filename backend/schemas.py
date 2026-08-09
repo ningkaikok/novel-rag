@@ -7,7 +7,7 @@ TS 类型，这里就是唯一真源，不用再靠人肉对着 main.py 的返�
 注意：本模块依赖 `backend/main.py` 顶部已经把 src/ 加进 sys.path
 （`from config import TOP_K` 才能找到）——不要在别处独立导入这个模块。
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import TOP_K
 from query_router import AnswerMode
@@ -33,17 +33,40 @@ class BookList(BaseModel):
     books: list[str]
 
 
-class ReindexResult(BaseModel):
+class IndexResult(BaseModel):
     novels: list[str]
     chunk_count: int
+    added: list[str] = Field(default_factory=list)
+    modified: list[str] = Field(default_factory=list)
+    deleted: list[str] = Field(default_factory=list)
+    unchanged: list[str] = Field(default_factory=list)
+    contextualized: int = 0
+    relations: int = 0
 
 
-class UploadResult(ReindexResult):
+class IndexTaskStatus(BaseModel):
+    id: str
+    status: str
+    stage: str
+    progress: int
+    message: str
+    error: str | None = None
+    force: bool = False
+    retry_of: str | None = None
+    result: IndexResult | None = None
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class UploadResult(BaseModel):
     saved: list[str]
+    task: IndexTaskStatus
 
 
-class DeleteResult(ReindexResult):
+class DeleteResult(BaseModel):
     deleted: str
+    task: IndexTaskStatus
 
 
 # ----------------------------------------------------------------- 全文搜索

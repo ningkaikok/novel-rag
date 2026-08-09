@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.errors import ErrorCode
+from backend.index_tasks import TaskAlreadyRunning, TaskNotFound
 
 
 def _error_body(resp):
@@ -45,6 +46,37 @@ def test_search_index_not_ready(client, monkeypatch):
     assert resp.status_code == 409
     error = _error_body(resp)
     assert error["code"] == ErrorCode.index_not_ready
+
+
+def test_second_index_task_returns_conflict_with_progress(client, monkeypatch):
+    active = {
+        "id": "running-task",
+        "status": "running",
+        "progress": 42,
+        "message": "正在生成 Embedding",
+    }
+
+    def reject(*args, **kwargs):
+        raise TaskAlreadyRunning(active)
+
+    monkeypatch.setattr(main.index_tasks, "start", reject)
+    resp = client.post("/api/reindex")
+
+    assert resp.status_code == 409
+    error = _error_body(resp)
+    assert error["code"] == ErrorCode.index_task_running
+    assert "42%" in error["message"]
+
+
+def test_unknown_index_task_returns_typed_404(client, monkeypatch):
+    def missing(task_id):
+        raise TaskNotFound(task_id)
+
+    monkeypatch.setattr(main.index_tasks, "get", missing)
+    resp = client.get("/api/index-tasks/does-not-exist")
+
+    assert resp.status_code == 404
+    assert _error_body(resp)["code"] == ErrorCode.index_task_not_found
 
 
 def test_ask_index_not_ready(client):
