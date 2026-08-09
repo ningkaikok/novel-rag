@@ -31,16 +31,18 @@ const DEFAULT_SOURCES = [
   {
     novel: "雾隐山庄",
     chunk_id: 0,
+    chapter_title: "第一章 风雪来客",
     text: "三个月前旧疾复发，卧床不起，庄里的药材已经快要用尽，正愁没有人能翻山进来采买，眼下唯一的指望，就是能有名医恰好路过此地。",
   },
   {
     novel: "雾隐山庄",
     chunk_id: 1,
+    chapter_title: "第二章 蚀骨奇毒",
     text: "沈砚之带着师父的信前往雾隐山庄寻访名医顾长风，恰逢顾长风旧疾复发且庄中药材匮乏，正是雪中送炭的好时机。",
   },
 ];
 
-const DEFAULT_TOKENS = ["雾隐", "山庄", "的庄主是", "顾长风", "。"];
+const DEFAULT_TOKENS = ["雾隐", "山庄", "的庄主是", "顾长风", "[1]", "。"];
 
 /** 把 SSE 事件序列拼成一段符合后端格式的响应体：event: xxx\ndata: ...\n\n */
 function buildSseBody(opts: MockAskOptions): string {

@@ -18,6 +18,30 @@ test.describe("首页与欢迎引导", () => {
 });
 
 test.describe("提问与流式回答", () => {
+  test("可以切换自由问答，并把所选模式随同一个输入框提交", async ({ page }) => {
+    await mockApi(page);
+    await page.goto("/");
+
+    await page.locator(".answer-mode-select").click();
+    await page.locator(".ant-select-dropdown:visible").getByText("💬 自由问答").click();
+    await expect(page.locator(".composer input")).toHaveAttribute(
+      "placeholder",
+      "自由提问，不搜索小说书架……"
+    );
+
+    const requestPromise = page.waitForRequest(
+      (request) => request.url().endsWith("/api/ask") && request.method() === "POST"
+    );
+    await page.locator(".composer input").fill("什么是 RAG？");
+    await page.locator(".composer .ant-btn-primary").click();
+    const request = await requestPromise;
+
+    expect(request.postDataJSON()).toMatchObject({
+      question: "什么是 RAG？",
+      mode: "free",
+    });
+  });
+
   test("点击示例问题后：思考过程、原文出处、打字机回答都正确渲染", async ({ page }) => {
     await mockApi(page);
     await page.goto("/");
@@ -32,7 +56,7 @@ test.describe("提问与流式回答", () => {
     // 打字机效果：Playwright 的断言自带轮询重试，会一直等到逐字输出完成，
     // 不需要手动 sleep，也不会因为 mock 响应到达得快慢而变得脆弱。
     await expect(page.locator(".row-bot .content")).toHaveText(
-      "雾隐山庄的庄主是顾长风。",
+      "雾隐山庄的庄主是顾长风[1]。",
       { timeout: 10_000 }
     );
     // 打完之后光标应当消失、输入框恢复可用
@@ -52,6 +76,14 @@ test.describe("提问与流式回答", () => {
     const sources = page.locator(".source-card");
     await expect(sources).toHaveCount(2);
     await expect(sources.nth(0).locator(".source-book")).toHaveText("《雾隐山庄》");
+    await expect(sources.nth(0).locator(".source-chapter")).toHaveText(
+      "第一章 风雪来客"
+    );
+
+    // 答案里的 [1] 是真实按钮；点击后会定位并高亮对应的第一张原文卡片。
+    await page.getByRole("button", { name: "查看原文出处 1" }).click();
+    await expect(sources.nth(0)).toHaveClass(/source-card-active/);
+    await expect(sources.nth(1)).not.toHaveClass(/source-card-active/);
 
     // 出处默认只显示一行，点"展开"后能看到完整原文（mock 文本足够长，必定会被截断）
     const firstSourceText = sources.nth(0).locator(".source-text");

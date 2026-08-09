@@ -94,7 +94,14 @@ class _FakeConn:
 
 def test_search_shape(client, monkeypatch):
     monkeypatch.setattr(main, "has_index", lambda: True)
-    rows = [{"novel": "雾隐山庄", "chunk_id": 0, "text": "顾长风是雾隐山庄的庄主"}]
+    rows = [
+        {
+            "novel": "雾隐山庄",
+            "chunk_id": 0,
+            "chapter_title": "第一章 风雪来客",
+            "text": "顾长风是雾隐山庄的庄主",
+        }
+    ]
     monkeypatch.setattr(main, "connect", lambda: _FakeConn(rows))
 
     resp = client.get("/api/search", params={"q": "庄主"})
@@ -104,7 +111,13 @@ def test_search_shape(client, monkeypatch):
     assert body["query"] == "庄主"
     assert body["total"] == 1
     assert body["results"] == [
-        {"novel": "雾隐山庄", "chunk_id": 0, "text": "顾长风是雾隐山庄的庄主", "match_count": 1}
+        {
+            "novel": "雾隐山庄",
+            "chunk_id": 0,
+            "chapter_title": "第一章 风雪来客",
+            "text": "顾长风是雾隐山庄的庄主",
+            "match_count": 1,
+        }
     ]
 
 
@@ -154,7 +167,16 @@ class _FakeRag:
         yield "step", {"step": "理解问题", "detail": "识别到你在问《雾隐山庄》", "ms": 12}
         yield "step", {"step": "精排", "detail": "取最相关的 3 段", "ms": 2100}
         yield "result", [
-            type("S", (), {"novel": "雾隐山庄", "chunk_id": 0, "text": "顾长风是庄主"})()
+            type(
+                "S",
+                (),
+                {
+                    "novel": "雾隐山庄",
+                    "chunk_id": 0,
+                    "chapter_title": "第一章 风雪来客",
+                    "text": "顾长风是庄主",
+                },
+            )()
         ]
 
     def expand_neighbors(self, sources):
@@ -163,27 +185,29 @@ class _FakeRag:
     def build_prompt(self, question, sources):
         return f"问题：{question}"
 
-    def generate_stream(self, question, sources, model):
-        yield "顾长"
-        yield "风。"
-
-
-def test_ask_streams_trace_sources_and_tokens(client):
+def test_ask_streams_trace_sources_and_tokens(client, monkeypatch):
     main.state["rag"] = _FakeRag()
-    main.state["model"] = "fake-model"  # 不带 claude:/glm: 前缀，走 rag.generate_stream
+    main.state["model"] = "fake-model"  # 不带 claude:/glm: 前缀，走本地 Ollama 适配器
+    monkeypatch.setattr(
+        main,
+        "generate_ollama_prompt_stream",
+        lambda prompt, model: iter(["顾长", "风。"]),
+    )
 
     resp = client.post("/api/ask", json={"question": "雾隐山庄的庄主是谁", "top_k": 5})
 
     assert resp.status_code == 200
     body = resp.text
     # 每一步单独一个 step 事件——不是等检索全跑完再整包推
-    assert body.count("event: step") == 2, "两个阶段应各推一条，而不是合成一条"
+    assert body.count("event: step") == 3, "回答路径和两个检索阶段应逐条推送"
+    assert body.index("回答路径") < body.index("理解问题")
     assert "识别到你在问《雾隐山庄》" in body
     assert '"ms": 2100' in body, "每步耗时要带上，界面才能显示慢在哪"
     # step 必须全部排在 sources 前面：检索没跑完就没有出处可发
     assert body.index("event: sources") > body.rindex("event: step")
     assert "event: sources" in body
     assert "顾长风是庄主" in body
+    assert "第一章 风雪来客" in body
     assert 'data: "顾长"' in body
     assert 'data: "风。"' in body
     assert "event: done" in body
@@ -192,4 +216,53 @@ def test_ask_streams_trace_sources_and_tokens(client):
 def test_ask_without_index_returns_409(client):
     # state 里没有 "rag" key（索引未建立时 lifespan 也会是这个状态）
     resp = client.post("/api/ask", json={"question": "随便问问"})
+    assert resp.status_code == 409
+
+
+def test_free_mode_works_without_index(client, monkeypatch):
+    """自由问答不依赖书架；这是模式拆分最重要的行为边界。"""
+    main.state["model"] = "fake-model"
+    received = {}
+
+    def fake_generate(prompt, model):
+        received["prompt"] = prompt
+        received["model"] = model
+        yield "RAG 是检索增强生成。"
+
+    monkeypatch.setattr(main, "generate_ollama_prompt_stream", fake_generate)
+
+    resp = client.post(
+        "/api/ask", json={"question": "什么是 RAG？", "mode": "free"}
+    )
+
+    assert resp.status_code == 200
+    assert "不搜索小说" in resp.text
+    assert "RAG 是检索增强生成" in resp.text
+    assert "event: sources\ndata: []" in resp.text
+    assert "不检索用户的小说书架" in received["prompt"]
+
+
+def test_auto_open_question_works_without_index(client, monkeypatch):
+    main.state["model"] = "fake-model"
+    monkeypatch.setattr(
+        main, "generate_ollama_prompt_stream", lambda prompt, model: iter(["你好！"])
+    )
+
+    resp = client.post("/api/ask", json={"question": "你好", "mode": "auto"})
+
+    assert resp.status_code == 200
+    assert "识别为闲聊" in resp.text
+
+
+def test_grounded_mode_still_requires_index(client):
+    resp = client.post(
+        "/api/ask", json={"question": "什么是 RAG？", "mode": "grounded"}
+    )
+    assert resp.status_code == 409
+
+
+def test_auto_novel_question_still_requires_index(client):
+    resp = client.post(
+        "/api/ask", json={"question": "《凡人修仙传》的结局是什么？", "mode": "auto"}
+    )
     assert resp.status_code == 409

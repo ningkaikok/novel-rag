@@ -6,13 +6,13 @@
 [![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](requirements.txt)
 [![React](https://img.shields.io/badge/React-18-20232a?logo=react&logoColor=61DAFB)](frontend/package.json)
 
-基于本地向量检索的小说问答 demo。检索和 Embedding 全部在本机运行；生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅（见下文"切换生成模型"）。
+基于本地向量检索的小说问答 demo。检索和 Embedding 全部在本机运行；生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅或智谱 GLM（见下文“切换生成模型”）。
 
 技术栈：
 - **文本切分**：按段落聚合成约 500 字的片段，片段间有重叠，避免切断语义。
 - **Embedding**：`sentence-transformers`，本地模型 `BAAI/bge-small-zh-v1.5`（中文效果较好，体积约 95MB）。
 - **数据库**：PostgreSQL + pgvector，片段、原文和 embedding 存储在 `novel_rag` 数据库的 `novel_chunks` 表中。
-- **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型，或切到你自己的 Claude 订阅（云端，需额外知情——见下文）。
+- **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型、你自己的 Claude 订阅或智谱 GLM（云端模型会发送问题和召回片段，见下文）。
 - **后端**：FastAPI（`backend/main.py`），把检索/生成逻辑包成 HTTP 接口，回答用 SSE 逐字流式返回。
 - **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。用 antd 组件 + `ConfigProvider` 主题令牌保留藏青主色与暖底书卷气，支持浅色/深色主题、上传/删除书籍、示例问题、流式回答，以及可点击的原文出处引用。
 - **对话体验**：生成中可以点「停止」——不只是前端不再显示新字，后端会真的停止向模型索取内容（用云端模型时不多花钱）；刷新页面或重开浏览器后，之前的问答、原文出处、思考过程会自动恢复，中途被停止的那轮也会如实标出来；往上翻看历史时，下面来了新回答会提示「有新回复」，不会悄悄错过。
@@ -31,7 +31,7 @@ novel-rag/
 └── chroma_db/     # 旧 Chroma 数据目录（迁移后不再使用）
 ```
 
-## 📖 想学 RAG？从这两份文档开始
+## 📖 学习路线
 
 这个项目也是一份 RAG 学习材料，每个技术点都配了**真实的失败案例和实测数据**，
 不是纸上谈兵：
@@ -41,9 +41,17 @@ novel-rag/
 | [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | ⭐ 从这里开始 |
 | [**代码导读**](docs/code-walkthrough.md) | 这份代码怎么读、建议的阅读顺序、可直接上手跑的实验 | 第一次接触这个项目 |
 | [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写、GraphRAG 的原理与实测 | 想深入某个具体技术 |
+| [**问答模式与自动路由**](docs/answer-routing.md) | 一个输入框如何区分开放问题与小说问题，以及怎样离线评测 | 想理解新增的路由层 |
+| [**章节元数据与可核验引用**](docs/citations-and-chapters.md) | 章节识别、`[n]` 引用定位、兼容迁移和引用评测 | 想理解回答如何回到原文证据 |
+| [**架构决策：是否需要 LangGraph**](docs/architecture-decisions.md) | 当前请求链路为什么保持显式编排、GraphRAG 和 LangGraph 的区别、什么情况下再引入 | 想学习技术选型 |
+| [**项目路线图**](docs/roadmap.md) | 已完成能力、后续里程碑和每阶段验收标准 | 想继续完善项目 |
 
 另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
 [从项目里提炼的 20 道面试题](docs/interview-questions.md)。
+
+> 当前项目**不依赖 LangChain/LangGraph**。这是有意的架构选择，不是遗漏：先用普通
+> Python 函数看清切分、召回、融合、重排和生成的数据流；当流程出现可恢复的长任务、
+> 人工审批或 Agent 工具循环时，再引入 LangGraph。判断依据见上面的架构决策文档。
 
 ## 环境准备
 
@@ -113,7 +121,13 @@ cd frontend
 npm run dev
 ```
 
-浏览器打开 `http://localhost:5173`。左侧「我的书架」可上传/删除小说、在「更多设置」里重建索引和调整参考原文数量；底部输入框会同时召回关键词和语义相关片段，合并排序后交给模型生成回答。问答命中片段后会自动带入同一本书前后相邻片段，回答会逐字流式显示，展开出处卡片可核实依据。前端 `/api` 请求由 Vite 代理到后端 `127.0.0.1:8000`。
+浏览器打开 `http://localhost:5173`。左侧「我的书架」可上传/删除小说、在「更多设置」里重建索引和调整参考原文数量。底部保持一个输入框，并提供三种回答模式：
+
+- **自动判断**：开放问题直接问模型，小说问题先检索原文；拿不准时保守地检索。
+- **仅依据原文**：强制执行混合检索、重排和引用，资料不足就明确拒答。
+- **自由问答**：不搜索小说书架，适合技术概念、写作、翻译和闲聊；没有索引也能用。
+
+实际采用的路径和原因会显示在「思考过程」中。原文问答命中片段后会自动带入同一本书前后相邻片段，回答逐字流式显示；正文中的 `[1]` 可以点击并定位到对应的书名、章节名和片段编号，方便核实依据。前端 `/api` 请求由 Vite 代理到后端 `127.0.0.1:8000`。
 
 > 生产部署：`cd frontend && npm run build` 生成静态文件，再由 FastAPI 或 Nginx 托管，即可单端口对外。
 
@@ -162,6 +176,9 @@ python src/ingest.py
 ```
 
 这一步会清空并重建 PostgreSQL `novel_chunks` 表里的向量索引；不会删除 `data/novels/` 原文，也不会删除旧的 `chroma_db/` 目录。
+
+从不含章节字段的旧版本升级时也需要执行一次：后端会自动补上可空的
+`chapter_title` 列以保证兼容，但只有重新切分和入库后，旧片段才会得到章节标题。
 
 ## 可调参数（环境变量）
 

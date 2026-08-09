@@ -22,22 +22,26 @@
     ↓  frontend/src/api.ts  askStream()
 POST /api/ask                                    backend/main.py
     ↓
-① 多轮改写      "他后来怎么样了" → "李化元后来怎么样了"
-    ↓           src/query_rewriter.py
-② 多路检索                                        src/rag.py
+① 回答路径      auto / grounded / free          src/query_router.py
+    ├── free  ───────────────→ 跳过检索
+    └── grounded
+          ↓
+② 多轮改写      "他后来怎么样了" → "李化元后来怎么样了"
+    ↓           src/query_rewriter.py（只在原文路径）
+③ 多路检索                                        src/rag.py
     ├── 语义检索      向量相似度，懂近义但对人名不可靠
     ├── BM25 检索     按词精确匹配，人名/专有名词的强项
     ├── 结构性检索    按位置取书的开头/结尾
     ├── RRF 融合      三路合并成候选池
     └── 交叉编码器重排 从候选池精选                src/reranker.py
     ↓
-③ 补相邻片段    避免语义被切断
+④ 补相邻片段    避免语义被切断
     ↓
-④ 拼 prompt，按模型前缀路由                       backend/{zhipu,claude_cli}.py
+⑤ 拼 prompt，按模型前缀路由                       backend/{zhipu,claude_cli}.py
     ↓
-⑤ SSE 流式推送 trace / sources / token / done
+⑥ SSE 流式推送 trace / sources / token / done
     ↓
-⑥ 落库到 chat_turns                              src/postgres.py
+⑦ 落库到 chat_turns                              src/postgres.py
 ```
 
 ### 目录职责
@@ -62,9 +66,16 @@ tests/        pytest（后端）+ 评测集与历史基线
 
 不要从 `main.py` 开始逐行读——那样会淹没在路由和流式细节里。按数据流动的顺序读：
 
+### 第 0 站：`src/query_router.py` — 这次到底要不要检索
+
+**看点**：为什么自动模式只放行高置信度开放问题、拿不准时默认查原文，以及显式模式
+如何覆盖规则。配合 [answer-routing.md](answer-routing.md) 和
+`python scripts/eval_routing.py` 阅读。
+
 ### 第 1 站：`src/loader.py` — 文本怎么变成可检索的片段
 
-**看点**：为什么不能整本书直接塞进向量、切分要平衡什么、重叠是干什么的。
+**看点**：为什么不能整本书直接塞进向量、切分要平衡什么、重叠是干什么的，以及
+为什么先识别章节边界再切分，避免一个片段同时混入前后两章。
 
 这个文件的模块 docstring 里记录了一个真实的坑：早期版本按空行切分，切出平均
 3108 字的巨块，而 embedding 模型上限是 512 token——**每块只有开头约 500 字
@@ -103,9 +114,15 @@ BM25 倒排索引      按词精确匹配并加权，人名/专有名词的强�
 | `retrieve` | 向量检索 | pgvector 的 `<=>` 余弦距离操作符 |
 | `keyword_retrieve` | **BM25** | 公式三项逐项对应写在 SQL 里，注释里拆解了每项解决什么问题 |
 | `positional_retrieve` | 结构性检索 | 为什么"结局是什么"这类问题语义检索必然失败 |
-| `retrieve_hybrid_traced` | 串起全流程 | RRF 融合、重排的接入点、trace 怎么生成 |
+| `retrieve_hybrid_stream` | 串起 Web 主流程 | 多路召回、RRF、重排，以及 trace 为什么能逐步流出 |
+| `retrieve_hybrid_traced` | 收集流式结果 | 给评测和测试提供一次性返回的适配层 |
 | `expand_neighbors` | 补相邻片段 | |
 | `build_prompt` | 拼 prompt | |
+
+`build_prompt` 还有一个容易忽略的约束：它给**邻居扩展后的最终来源**编号 `[1]`、
+`[2]`……，API 必须把同一份来源按同一顺序交给前端。否则引用格式看起来正确，
+点击后却可能跳到另一段原文。完整说明见
+[citations-and-chapters.md](citations-and-chapters.md)。
 
 **读 `keyword_retrieve` 时重点看** `_strip_novel_titles` 的说明：那里记录了一个
 实测出来的 bug——用户问「《凡人修仙传》里韩立的绰号」时，书名被切成「凡人」
@@ -135,6 +152,7 @@ BM25 倒排索引      按词精确匹配并加权，人名/专有名词的强�
 - 为什么是 `async def` 而不是 `def`（关系到"用户点停止后还会不会继续烧钱"）
 - `_next_or_sentinel` 这个哨兵模式（`StopIteration` 不能穿过 `await` 边界）
 - SSE 事件序列怎么对应到界面上的三块区域
+- 为什么 `sources` 事件必须发送模型实际看到的扩展后上下文，而不是扩展前 top-k
 
 ---
 
@@ -220,14 +238,16 @@ Contextual Retrieval 看起来很美（官方数据检索失败率降 49%），�
 
 ---
 
-## 五、还没做的部分（如实记录）
+## 五、当前边界与后续方向（如实记录）
 
 | 项目 | 状态 |
 | --- | --- |
-| 交叉编码器重排 | 代码完成、单元测试通过，但**模型在本机下载不了**，没有实测指标 |
-| 长上下文取舍 | 四杠杆里唯一的空缺。`TOP_K=5` 是拍脑袋定的，没测过 3/5/10 哪个好 |
-| GraphRAG | 未开始。能解决"韩立有哪些伴侣"这类全书范围的关系聚合问题 |
+| 交叉编码器重排 | 已实现并完成评测；recall@3 达到 0.846，但约 2 秒延迟是明确代价 |
+| 长上下文取舍 | 已完成 `TOP_K=3/5/10` 对比，并加入小文档全文短路；默认 `TOP_K=3` |
+| GraphRAG | 已完成关系图原型和端到端实验，但共现推断误报较多，默认关闭 |
 | 语义切分 / Late Chunking | 未做，需要换长上下文 embedding 模型 |
+| LangGraph | 当前不引入；固定 RAG 流水线用显式函数更容易学习，触发条件见[架构决策](architecture-decisions.md) |
 
-`CONTEXT_NEIGHBORS` 还有个已知现象：理论上该把 5 段扩展成 15 段，
-实测扩展后还是 5 段（检索到的片段本来就相邻，去重后没增加）。待查。
+`CONTEXT_NEIGHBORS` 已确认正常工作。它不会机械地把 5 段变成 15 段：不同命中
+片段的邻居可能重叠，去重后数量会少于理论上限。上下文预算实验中，`TOP_K=5`
+时扩展后的实际平均片段数是 13.1。

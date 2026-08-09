@@ -1,4 +1,12 @@
-"""检索 + 生成：从 PostgreSQL + pgvector 检索相关片段，调用本地 Ollama 生成回答。"""
+"""RAG 核心：多路召回、融合、重排、上下文组装和本地生成。
+
+这个模块刻意用普通 Python 函数显式编排，而不是交给 LangGraph：当前请求是一条
+短生命周期、方向固定的流水线，没有工具调用循环、人工审批或失败后跨进程恢复的
+需求。学习时可以直接沿着 ``retrieve_hybrid_stream`` 阅读每个阶段的数据变化。
+
+Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，因此评测脚本
+可以直接调用检索逻辑。完整选型理由见 ``docs/architecture-decisions.md``。
+"""
 import json
 import re
 import time
@@ -27,8 +35,14 @@ from reranker import rerank
 from tokenizer import query_terms
 
 
-PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的原文片段回答问题。
+PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的编号原文片段回答问题。
 如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
+
+引用要求：
+- 每个来自原文的关键事实后标注支持它的片段编号，例如“顾长风中了蚀骨散[2]”。
+- 只能使用下面真实存在的编号，不能编造引用。
+- 如果一句话由多个片段共同支持，可以写成[1][3]。
+- 不要把编号写成脚注列表；直接放在对应事实后，方便用户点击核对。
 
 原文片段：
 {context}
@@ -36,6 +50,29 @@ PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供�
 问题：{question}
 
 回答："""
+
+
+def generate_ollama_prompt_stream(
+    prompt: str, model: str = OLLAMA_MODEL
+) -> Iterator[str]:
+    """把已经构造好的 prompt 交给 Ollama，并逐 token 返回。
+
+    独立成模块函数是为了让“自由问答”在书架尚未建立索引、无法创建 NovelRAG
+    实例时仍能使用本地模型。NovelRAG.generate_stream 也复用它，避免维护两套协议。
+    """
+    with requests.post(
+        f"{OLLAMA_HOST}/api/generate",
+        json={"model": model, "prompt": prompt, "stream": True},
+        stream=True,
+        timeout=120,
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line).get("response", "")
+            if chunk:
+                yield chunk
 
 
 def _novel_titles(novel: str) -> list[str]:
@@ -204,6 +241,8 @@ class SourceChunk:
     chunk_id: int
     text: str
     distance: float
+    # 章节识别是增强元数据：旧索引和无规范标题的 txt 都可能为空。
+    chapter_title: str | None = None
     # Contextual Retrieval 生成的上下文说明（没做增强时是空串）。
     # 重排要用它（见 reranker.rerank 里 indexed_text 的说明），
     # 但 build_prompt 只用 text——不把 AI 生成的说明当原文依据给模型。
@@ -242,7 +281,7 @@ class NovelRAG:
         with connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT novel, chunk_id, text, context,
+                SELECT novel, chunk_id, chapter_title, text, context,
                        embedding <=> %s::vector AS distance
                 FROM novel_chunks
                 {scope}
@@ -257,6 +296,7 @@ class NovelRAG:
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
                 distance=float(row["distance"]),
+                chapter_title=row.get("chapter_title"),
                 context=row.get("context") or "",
             )
             for row in rows
@@ -347,7 +387,7 @@ class NovelRAG:
                 WHERE TRUE {scope_and.replace("novel", "ct.novel")}
                 GROUP BY ct.term
             )
-            SELECT nc.novel, nc.chunk_id, nc.text, nc.context,
+            SELECT nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context,
                    SUM(
                        ln((c.n - d.df + 0.5) / (d.df + 0.5) + 1)
                        * (ct.tf * ({k1} + 1))
@@ -360,7 +400,7 @@ class NovelRAG:
               ON nc.novel = ct.novel AND nc.chunk_id = ct.chunk_id
             CROSS JOIN corpus c
             WHERE TRUE {scope_and.replace("novel", "nc.novel")}
-            GROUP BY nc.novel, nc.chunk_id, nc.text, nc.context
+            GROUP BY nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context
             ORDER BY score DESC
             LIMIT %s
         """
@@ -375,6 +415,7 @@ class NovelRAG:
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
                 context=row.get("context") or "",
+                chapter_title=row.get("chapter_title"),
                 # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
                 # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
                 # 按同一个字段排序时把最相关的排到最后。
@@ -436,7 +477,7 @@ class NovelRAG:
                     # 番外、后记当成结局（很多"全本+番外"的 txt 末尾都不是正文结局）。
                     rows = conn.execute(
                         """
-                        SELECT novel, chunk_id, text, context
+                        SELECT novel, chunk_id, chapter_title, text, context
                         FROM novel_chunks
                         WHERE novel = %s AND chunk_id <= %s
                         ORDER BY chunk_id DESC
@@ -447,7 +488,7 @@ class NovelRAG:
                 else:
                     rows = conn.execute(
                         f"""
-                        SELECT novel, chunk_id, text, context
+                            SELECT novel, chunk_id, chapter_title, text, context
                         FROM novel_chunks
                         WHERE novel = %s
                         ORDER BY chunk_id {order}
@@ -464,6 +505,7 @@ class NovelRAG:
                             chunk_id=int(row["chunk_id"]),
                             text=row["text"],
                             distance=0.0,
+                            chapter_title=row.get("chapter_title"),
                             context=row.get("context") or "",
                         )
                     )
@@ -497,7 +539,7 @@ class NovelRAG:
             if not total or total > FULL_TEXT_MAX_CHARS:
                 return None
             rows = conn.execute(
-                "SELECT novel, chunk_id, text, context FROM novel_chunks "
+                "SELECT novel, chunk_id, chapter_title, text, context FROM novel_chunks "
                 "WHERE novel = %s ORDER BY chunk_id",
                 (novel,),
             ).fetchall()
@@ -507,6 +549,7 @@ class NovelRAG:
                 chunk_id=int(r["chunk_id"]),
                 text=r["text"],
                 distance=0.0,
+                chapter_title=r.get("chapter_title"),
                 context=r.get("context") or "",
             )
             for r in rows
@@ -746,7 +789,8 @@ class NovelRAG:
         params = [value for item in ranges for value in item]
         with connect() as conn:
             rows = conn.execute(
-                f"SELECT novel, chunk_id, text, context FROM novel_chunks WHERE {conditions}",
+                f"SELECT novel, chunk_id, chapter_title, text, context "
+                f"FROM novel_chunks WHERE {conditions}",
                 params,
             ).fetchall()
         by_key: dict[tuple[str, int], SourceChunk] = {}
@@ -757,6 +801,7 @@ class NovelRAG:
                 chunk_id=int(row["chunk_id"]),
                 text=row["text"],
                 distance=0.0,
+                chapter_title=row.get("chapter_title"),
                 context=row.get("context") or "",
             )
 
@@ -786,9 +831,14 @@ class NovelRAG:
         线索明确标注了"是统计推断不是确定事实"，让模型拿它当线索去核对原文，
         而不是直接照抄。
         """
-        context = "\n\n---\n\n".join(
-            f"[{s.novel} #{s.chunk_id}]\n{s.text}" for s in sources
-        )
+        blocks = []
+        for index, source in enumerate(sources, start=1):
+            location = f"《{_display_title(source.novel).strip('《》')}》"
+            if source.chapter_title:
+                location += f" · {source.chapter_title}"
+            location += f" · 片段 #{source.chunk_id}"
+            blocks.append(f"[{index}] {location}\n{source.text}")
+        context = "\n\n---\n\n".join(blocks)
         hint = self._graph_hint(question)
         if hint:
             context = f"{hint}\n\n---\n\n{context}"
@@ -838,24 +888,17 @@ class NovelRAG:
         self, question: str, sources: list[SourceChunk], model: str = OLLAMA_MODEL
     ) -> Iterator[str]:
         """逐字（token）流式返回回答，供界面实时展示。model 可按次调用覆盖，便于前端切换模型。"""
-        prompt = self.build_prompt(question, sources)
-        with requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": True},
-            stream=True,
-            timeout=120,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                chunk = json.loads(line).get("response", "")
-                if chunk:
-                    yield chunk
+        yield from generate_ollama_prompt_stream(self.build_prompt(question, sources), model)
 
     def query(
         self, question: str, top_k: int = TOP_K, model: str = OLLAMA_MODEL
     ) -> tuple[str, list[SourceChunk]]:
+        """最小化的“纯向量检索 → Ollama 生成”示例。
+
+        这是方便在 REPL 里讲解基础 RAG 的入口，不是 Web 应用的生产调用链。
+        Web 接口使用 ``retrieve_hybrid_stream``，还会经过 BM25、结构性召回、
+        RRF、重排和邻居扩展。学习者若从这里调试，要注意两条路径的能力不同。
+        """
         sources = self.retrieve(question, top_k)
         answer = self.generate(question, sources, model=model)
         return answer, sources

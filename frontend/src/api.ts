@@ -15,6 +15,8 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
 export interface Source {
   novel: string;
   chunk_id: number;
+  /** 旧索引或没有规范章节标题的 txt 可能为空。 */
+  chapter_title?: string | null;
   text: string;
 }
 
@@ -35,6 +37,9 @@ export interface SearchResponse {
   total: number;
   results: SearchResult[];
 }
+
+/** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。 */
+export type AnswerMode = "auto" | "grounded" | "free";
 
 export async function searchBooks(
   query: string,
@@ -121,7 +126,7 @@ export async function askStream(
   question: string,
   topK: number,
   handlers: AskHandlers,
-  options: { signal?: AbortSignal; sessionId?: string } = {}
+  options: { signal?: AbortSignal; sessionId?: string; mode?: AnswerMode } = {}
 ): Promise<void> {
   try {
     const res = await fetch("/api/ask", {
@@ -131,6 +136,7 @@ export async function askStream(
         question,
         top_k: topK,
         session_id: options.sessionId,
+        mode: options.mode ?? "auto",
       }),
       signal: options.signal,
     });

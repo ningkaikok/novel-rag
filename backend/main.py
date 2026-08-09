@@ -4,27 +4,31 @@
 --------------------------------------------------------
     前端 POST /api/ask
         ↓
-    ① _rewrite_for_search()     多轮追问补全指代（"他"→"李化元"）
-        ↓                        ⚠️ 必须在检索之前——检索发生在生成之前
-    ② rag.retrieve_hybrid_stream()   每完成一步就推一条 step 事件
+    ① choose_answer_route()     自动 / 仅原文 / 自由问答
+        ├─ 自由问答 ────────────→ 跳过索引和检索，直接生成
+        └─ 原文问答
+             ↓
+    ② _rewrite_for_search()     多轮追问补全指代（"他"→"李化元"）
+        ↓                        ⚠️ 只在原文路径触发，且必须在检索之前
+    ③ rag.retrieve_hybrid_stream()   每完成一步就推一条 step 事件
         ├─ 语义检索（向量，pgvector HNSW）
         ├─ BM25 检索（倒排索引）
         ├─ 结构性检索（按 chunk_id 定位开头/结尾）
         ├─ RRF 融合成候选池
         └─ 交叉编码器重排，精选出 top_k
         ↓
-    ③ rag.expand_neighbors()    补上相邻片段，避免语义被切断
+    ④ rag.expand_neighbors()    补上相邻片段，避免语义被切断
         ↓
-    ④ 按模型前缀路由到生成后端
+    ⑤ 按模型前缀路由到生成后端
         claude: → 本地 Claude CLI ／ glm: → 智谱 ／ 其余 → 本地 Ollama
         ↓
-    ⑤ SSE 流式推送
+    ⑥ SSE 流式推送
         event: step    → 「思考过程」的一步（检索期间逐条推，一条一条点亮）
         event: sources → 原文出处卡片
         event: token   → 逐字打字机
         event: done
         ↓
-    ⑥ 落库到 chat_turns（带 session_id 时），刷新页面能恢复
+    ⑦ 落库到 chat_turns（带 session_id 时），刷新页面能恢复
 
 为什么 src/ 和 backend/ 分开
 -----------------------------
@@ -32,6 +36,13 @@
 跑、pytest 也能直接测。`backend/` 只做"把它包成 HTTP"这一件事：路由、流式、
 错误信封、会话持久化。这条边界让检索逻辑可以脱离 HTTP 单独验证
 （`scripts/eval_retrieval.py` 就是直接调 `src/rag.py`，完全不经过这个文件）。
+
+为什么没有 LangGraph
+---------------------
+当前链路虽然有多个阶段，但方向固定、一次请求内就能结束；SSE 进度、会话历史和失败
+降级也已经分别由生成器、PostgreSQL 和普通异常处理覆盖。显式函数调用更适合观察
+RAG 的真实数据流。等到出现工具调用循环、人工审批、跨进程断点恢复等需求，再把这些
+阶段提升为图节点。决策记录见 `docs/architecture-decisions.md`。
 
 运行：uvicorn backend.main:app --reload --port 8000
 （在项目根目录 novel-rag/ 下运行）
@@ -92,12 +103,14 @@ from config import (  # noqa: E402
     QUERY_REWRITE_MODEL,
 )
 from query_rewriter import rewrite_query  # noqa: E402
-from rag import NovelRAG  # noqa: E402
+from rag import NovelRAG, generate_ollama_prompt_stream  # noqa: E402
+from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
 from loader import load_novel_chunks  # noqa: E402
 from postgres import (  # noqa: E402
     close_pool,
     connect,
     ensure_chat_schema,
+    ensure_novel_metadata_schema,
     has_index,
     init_pool,
     load_turns,
@@ -133,6 +146,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         # 建表失败只影响"刷新后恢复历史"，问答本身不受影响，所以不阻断启动
         logger.warning(f"对话历史表初始化失败（会话持久化不可用）：{exc}")
+    # 旧索引没有 chapter_title。先幂等补列保证新查询兼容；值仍为空，用户重建
+    # 索引后才会真正得到章节归属。
+    try:
+        ensure_novel_metadata_schema()
+    except Exception as exc:
+        logger.warning(f"小说索引元数据升级失败（章节名暂不可用）：{exc}")
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
@@ -235,7 +254,7 @@ def search(
     with connect() as conn:
         rows = conn.execute(
             f"""
-            SELECT novel, chunk_id, text
+            SELECT novel, chunk_id, chapter_title, text
             FROM novel_chunks
             WHERE {where_sql}
             ORDER BY novel, chunk_id
@@ -247,6 +266,7 @@ def search(
         SearchMatch(
             novel=row["novel"],
             chunk_id=int(row["chunk_id"]),
+            chapter_title=row.get("chapter_title"),
             text=row["text"],
             match_count=row["text"].casefold().count(needle),
         )
@@ -315,14 +335,20 @@ async def ask(req: AskRequest, request: Request):
     客户端断开后那个线程仍会把生成跑到底——白烧本地 GPU，或继续消耗用户的
     Claude/GLM 付费额度。这不是优化，是避免"用户点了停止还在扣他的钱"。
     """
+    decision = choose_answer_route(req.question, req.mode)
     rag: NovelRAG | None = state.get("rag")
-    if rag is None:
+    if decision.route is AnswerMode.grounded and rag is None:
         raise APIError(409, ErrorCode.index_not_ready, "书架为空或索引未建立，请先上传小说")
 
     # 多轮改写：把"他后来怎么样了"这类带指代的追问补全成独立完整的问题，
     # 再拿补全后的问题去检索。**只影响检索**——存库、显示、送给模型的都还是
-    # 用户original的原话（见下面 save_turn 用的是 req.question）。
-    search_question = _rewrite_for_search(req)
+    # 用户原始问题（见下面 save_turn 用的是 req.question）。
+    # 自由问答不检索，所以也没必要额外花一次模型调用做“面向检索”的问题改写。
+    search_question = (
+        _rewrite_for_search(req)
+        if decision.route is AnswerMode.grounded
+        else req.question
+    )
 
     model = state["model"]
 
@@ -339,7 +365,7 @@ async def ask(req: AskRequest, request: Request):
             session_id = None
 
     async def event_stream():
-        # ---------------------------------------------------------- 检索阶段
+        # ----------------------------------------------------- 路由与检索阶段
         # 检索放在流里逐步跑，有两个原因：
         #
         # 1）**不阻塞事件循环**。之前是在这个 async def 里同步调用检索，
@@ -350,6 +376,17 @@ async def ask(req: AskRequest, request: Request):
         #    前 2 秒界面上什么都没有。现在每完成一步就推一条，界面可以像
         #    成熟的 AI 应用那样把步骤一条条点亮。等待时长没变，但心理感受完全不同。
         trace_payload: list[dict] = []
+        route_step = TraceStep(
+            step="回答路径",
+            detail=(
+                f"{decision.reason}，将检索小说原文后回答"
+                if decision.route is AnswerMode.grounded
+                else f"{decision.reason}，将直接使用模型回答，不搜索小说"
+            ),
+        ).model_dump()
+        trace_payload.append(route_step)
+        yield f"event: step\ndata: {json.dumps(route_step, ensure_ascii=False)}\n\n"
+
         if search_question != req.question:
             # 让用户在「思考过程」里看得见改写发生了——改写是个会改变检索结果的
             # 隐式步骤，不展示出来的话，用户无法理解"为什么搜出了这些"。
@@ -360,45 +397,65 @@ async def ask(req: AskRequest, request: Request):
             yield f"event: step\ndata: {json.dumps(first, ensure_ascii=False)}\n\n"
 
         sources = []
-        step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
-        while True:
-            # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
-            # 每个 await 都是一次让出控制权的机会。
-            item = await run_in_threadpool(_next_or_sentinel, step_iter)
-            if item is _SENTINEL:
-                break
-            kind, value = item
-            if kind == "result":
-                sources = value
-                continue
-            # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
-            # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
-            payload_step = TraceStep(**value).model_dump()
-            trace_payload.append(payload_step)
-            yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+        context_sources = []
+        if decision.route is AnswerMode.grounded:
+            # 上面已经保证 grounded 路径下 rag 不为 None；assert 也让类型和不变量
+            # 对阅读代码的人保持一致，而不是在后面散落一串 if rag。
+            assert rag is not None
+            step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+            while True:
+                # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
+                # 每个 await 都是一次让出控制权的机会。
+                item = await run_in_threadpool(_next_or_sentinel, step_iter)
+                if item is _SENTINEL:
+                    break
+                kind, value = item
+                if kind == "result":
+                    sources = value
+                    continue
+                # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
+                # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
+                payload_step = TraceStep(**value).model_dump()
+                trace_payload.append(payload_step)
+                yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
 
-        context_sources = rag.expand_neighbors(sources)
+            context_sources = rag.expand_neighbors(sources)
+        # 引用编号必须与模型看到的 context_sources 一一对应。之前只把最初 top-k
+        # 发给前端、邻居片段只给模型；加了 [n] 后那会导致模型引用 [4]，界面却只有
+        # 3 张卡片。现在 SSE、历史记录和 prompt 共用同一份最终上下文来源。
         payload = [
-            SourceItem(novel=s.novel, chunk_id=s.chunk_id, text=s.text).model_dump()
-            for s in sources
+            SourceItem(
+                novel=s.novel,
+                chunk_id=s.chunk_id,
+                chapter_title=getattr(s, "chapter_title", None),
+                text=s.text,
+            ).model_dump()
+            for s in context_sources
         ]
-        # 把来源发出，前端可立即渲染出处
+        # 把最终上下文来源发出，前端可立即渲染并接受 [n] 定位
         yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         # 逐 token 流式推送答案：按模型名前缀路由到对应的生成后端
         # claude:xxx → 本地 Claude Code CLI（用户自己的订阅）
         # glm:xxx    → 智谱开放平台（用户自己的 ZHIPU_API_KEY）
         # 其余       → 本地 Ollama
+        prompt = (
+            rag.build_prompt(req.question, context_sources)
+            if decision.route is AnswerMode.grounded and rag is not None
+            else build_free_prompt(req.question)
+        )
         if model.startswith(claude_cli.MODEL_PREFIX):
             token_iter = claude_cli.generate_stream(
-                rag.build_prompt(req.question, context_sources), model
+                prompt, model
             )
         elif model.startswith(zhipu.MODEL_PREFIX):
             token_iter = zhipu.generate_stream(
-                rag.build_prompt(req.question, context_sources), model
+                prompt, model
             )
         else:
-            token_iter = rag.generate_stream(req.question, context_sources, model=model)
+            # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
+            # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
+            token_iter = generate_ollama_prompt_stream(prompt, model=model)
 
         parts: list[str] = []
         interrupted = False
