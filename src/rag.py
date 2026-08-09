@@ -4,6 +4,19 @@
 短生命周期、方向固定的流水线，没有工具调用循环、人工审批或失败后跨进程恢复的
 需求。学习时可以直接沿着 ``retrieve_hybrid_stream`` 阅读每个阶段的数据变化。
 
+核心对象在各阶段的变化如下，阅读时注意“召回候选”和“最终上下文”不是一回事：
+
+    question
+      → semantic / BM25 / positional 三路 SourceChunk 候选
+      → RRF 去重融合后的候选池
+      → CrossEncoder 重排后的 top-k
+      → expand_neighbors 补齐相邻片段
+      → 带 [n] 编号的 prompt
+      → 模型 token 流
+
+召回负责“别漏掉”，重排负责“把正确答案提到前面”，邻居扩展负责“别让切分边界
+截断证据”。把三者混为一个步骤，会很难判断检索质量究竟坏在哪一层。
+
 Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，因此评测脚本
 可以直接调用检索逻辑。完整选型理由见 ``docs/architecture-decisions.md``。
 """

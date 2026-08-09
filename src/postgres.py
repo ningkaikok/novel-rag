@@ -1,4 +1,21 @@
-"""PostgreSQL/pgvector 连接与索引工具。"""
+"""PostgreSQL/pgvector 连接与索引工具。
+
+初学者可以把这里看成 RAG 的“持久化层”，主要表之间的关系是：
+
+    novel_chunks         一行 = 一个原文片段 + 向量 + 章节等元数据
+         │ (novel, chunk_id)
+         ├── chunk_terms 一行 = 该片段中某个词的词频，供 BM25 使用
+         └── character_relations 以 novel 为范围保存可选的人物关系边
+
+    index_manifest       一行 = 一本书的文件哈希、流水线哈希和片段数
+
+``novel_chunks`` 是最终回答可引用的事实来源；其他三张表都是可以从小说原文重新
+计算出来的派生数据。manifest 不是检索索引，而是增量构建的“检查点”：它告诉系统
+哪些文件已经使用当前切分/Embedding 配置处理过。
+
+本模块同时服务 FastAPI 和命令行脚本，所以 ``connect()`` 返回统一的上下文管理器：
+Web 请求复用连接池，脚本则临时创建连接。业务代码不需要知道连接来自哪里。
+"""
 import json
 from collections.abc import Callable, Iterable
 
@@ -208,6 +225,9 @@ def replace_novel_index(
     if len(rows) != len(per_chunk_terms):
         raise ValueError("rows and per_chunk_terms must have the same length")
     check = cancel_check or (lambda: None)
+    # psycopg 的连接上下文管理器就是这里的事务边界：正常离开自动 COMMIT，
+    # 中途任何 SQL、COPY 或 check() 抛异常都会自动 ROLLBACK。不要在循环里手动
+    # commit，否则“用户取消”可能只回滚后半段，留下向量和 BM25 版本不一致。
     with connect() as conn:
         check()
         conn.execute("DELETE FROM chunk_terms WHERE novel = %s", (novel,))
@@ -222,6 +242,8 @@ def replace_novel_index(
             )
         check()
         with conn.cursor() as cursor:
+            # BM25 的“一个片段 × 多个词”会产生大量行，COPY 比逐条 INSERT 快得多。
+            # COPY 仍属于外层同一个事务，并不会削弱原子性。
             with cursor.copy(
                 "COPY chunk_terms (novel, chunk_id, term, tf) FROM STDIN"
             ) as copy:

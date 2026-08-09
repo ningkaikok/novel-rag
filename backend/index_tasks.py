@@ -4,6 +4,19 @@
 一致性由 ``src/postgres.py`` 的单书事务保证，任务管理器只负责生命周期、进度、
 取消信号和重试所需的状态。服务重启时内存状态会消失，但正在进行的数据库事务会
 回滚，下一次按 manifest 扫描即可继续未完成的书。
+
+任务状态机（状态变化比线程实现本身更值得先看）：
+
+    queued ──线程启动──→ running ──成功──→ completed
+                            │  │
+                     用户取消  └─异常──→ failed ──重试──→ 新任务
+                            ↓
+                       cancelling ──到达检查点──→ cancelled
+
+``cancelling`` 不是取消失败，而是“信号已经收到，后台正走向安全检查点”。Python
+无法安全地强杀一个正在执行模型推理或数据库 COPY 的线程，因此这里使用协作式取消：
+任务定期调用 ``check_cancel``，发现 Event 后主动抛出 ``IndexCancelled``，数据库层
+再通过事务回滚保证一致性。这也是很多 Agent 长任务实现取消/暂停时的基本模式。
 """
 from __future__ import annotations
 
@@ -38,6 +51,12 @@ class TaskNotFound(KeyError):
 
 @dataclass
 class _Task:
+    """任务的可变内部状态；API 调用方只能拿到 ``snapshot()`` 生成的普通字典。
+
+    如果直接把这个对象交给 Web 层，序列化过程中后台线程可能同时改字段，前端就
+    可能看到“状态已完成但 progress 还是 70”这类撕裂快照。
+    """
+
     id: str
     force: bool
     retry_of: str | None = None
@@ -121,6 +140,8 @@ class IndexTaskManager:
                 target=self._run,
                 args=(task.id, build),
                 name=f"novel-index-{task.id[:8]}",
+                # daemon 线程不会阻止 Python 进程退出；真正的优雅停止仍由 shutdown()
+                # 发取消信号并等待。daemon 只是最后一道兜底，不能代替事务回滚。
                 daemon=True,
             )
             self._threads[task.id] = thread
@@ -144,6 +165,8 @@ class IndexTaskManager:
                     current.message = message
 
         def check_cancel() -> None:
+            # Event 是跨线程传递“请停止”的信号，不承载业务状态。具体在哪些循环中
+            # 检查由 ingest.build_index 决定，因此取消延迟取决于检查点的密度。
             if self._tasks[task_id].cancel_event.is_set():
                 raise IndexCancelled("用户取消了索引任务")
 
