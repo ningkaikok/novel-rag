@@ -66,11 +66,21 @@ test.describe("提问与流式回答", () => {
     // 思考过程面板：生成结束后标题右侧从跳动的点切换成「N 步」徽章
     const thinking = page.locator(".thinking-panel");
     await expect(thinking.locator(".thinking-panel-label")).toContainText("🔍 思考过程");
-    await expect(thinking.locator(".thinking-panel-count")).toHaveText("4 步");
+    await expect(thinking.locator(".thinking-panel-count")).toContainText("6 步");
+    // 回答完成后面板按产品设计自动收起；手动展开后再核对详细步骤。
+    await thinking.locator(".ant-collapse-header").click();
     await expect(thinking.locator(".thinking-step-name").nth(0)).toHaveText("理解问题");
     await expect(thinking.locator(".thinking-step-detail").nth(0)).toContainText(
       "《雾隐山庄》"
     );
+
+    // 检索评测面板保留每一阶段的名次和分数，能看见片段 #1 经重排从第 2 升到第 1。
+    const evaluation = page.locator(".retrieval-eval-panel");
+    await expect(evaluation).toContainText("4 个排名阶段");
+    await evaluation.locator(".ant-collapse-header").click();
+    await expect(evaluation).toContainText("向量召回");
+    await expect(evaluation).toContainText("BM25 召回");
+    await expect(evaluation).toContainText("#2 → #1");
 
     // 原文出处：2 段 mock 数据都渲染成了出处卡片
     const sources = page.locator(".source-card");

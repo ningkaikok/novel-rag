@@ -29,17 +29,18 @@ POST /api/ask                                    backend/main.py
 ② 多轮改写      "他后来怎么样了" → "李化元后来怎么样了"
     ↓           src/query_rewriter.py（只在原文路径）
 ③ 多路检索                                        src/rag.py
+    ├── 全局问题      全书摘要 → 章节摘要 → 回到原文  src/hierarchy.py
     ├── 语义检索      向量相似度，懂近义但对人名不可靠
     ├── BM25 检索     按词精确匹配，人名/专有名词的强项
     ├── 结构性检索    按位置取书的开头/结尾
-    ├── RRF 融合      三路合并成候选池
+    ├── RRF 融合      多路合并成候选池
     └── 交叉编码器重排 从候选池精选                src/reranker.py
     ↓
 ④ 补相邻片段    避免语义被切断
     ↓
 ⑤ 拼 prompt，按模型前缀路由                       backend/{zhipu,claude_cli}.py
     ↓
-⑥ SSE 流式推送 trace / sources / token / done
+⑥ SSE 流式推送 trace（含各层排名）/ sources / token / done
     ↓
 ⑦ 落库到 chat_turns                              src/postgres.py
 ```
@@ -103,6 +104,9 @@ BM25、关系边和 manifest。取消或异常会回滚当前书。
 Web 路径还要配合 `backend/index_tasks.py` 阅读：它只管理单后台线程的状态、进度和
 取消信号，数据安全并不依赖线程管理器，而是来自上面的 PostgreSQL 单书事务。
 
+再看 `src/hierarchy.py`：章节/全书摘要有独立算法指纹，所以旧书升级 M3 时只补摘要，
+不重算基础向量。摘要节点的原文范围是“导航回证据”的关键，不应直接拿摘要回答。
+
 ### 第 3 站：`src/tokenizer.py` — 一个小而关键的模块
 
 **看点**：为什么分词规则必须索引和查询共用。
@@ -120,6 +124,7 @@ Web 路径还要配合 `backend/index_tasks.py` 阅读：它只管理单后台�
 | `retrieve` | 向量检索 | pgvector 的 `<=>` 余弦距离操作符 |
 | `keyword_retrieve` | **BM25** | 公式三项逐项对应写在 SQL 里，注释里拆解了每项解决什么问题 |
 | `positional_retrieve` | 结构性检索 | 为什么"结局是什么"这类问题语义检索必然失败 |
+| `hierarchy_retrieve` | 层级检索 | 全书/章节摘要怎样定位后再映射回原文 |
 | `retrieve_hybrid_stream` | 串起 Web 主流程 | 多路召回、RRF、重排，以及 trace 为什么能逐步流出 |
 | `retrieve_hybrid_traced` | 收集流式结果 | 给评测和测试提供一次性返回的适配层 |
 | `expand_neighbors` | 补相邻片段 | |
@@ -159,6 +164,12 @@ Web 路径还要配合 `backend/index_tasks.py` 阅读：它只管理单后台�
 - `_next_or_sentinel` 这个哨兵模式（`StopIteration` 不能穿过 `await` 边界）
 - SSE 事件序列怎么对应到界面上的三块区域
 - 为什么 `sources` 事件必须发送模型实际看到的扩展后上下文，而不是扩展前 top-k
+
+### 第 7 站：`src/agent_lab.py` — 把固定流水线变成有限工具循环
+
+标准 RAG 读完后再看 Agent Lab，差异会很清楚：`run_agent` 不预先规定下一步工具，
+而是把观察交给规划器，每次执行一个白名单 action。重点看证据注册表、重复动作保护、
+无证据拒答和最大步数；它们比“模型会选工具”本身更接近真实 Agent 工程。
 
 ---
 
@@ -250,9 +261,12 @@ Contextual Retrieval 看起来很美（官方数据检索失败率降 49%），�
 | --- | --- |
 | 交叉编码器重排 | 已实现并完成评测；recall@3 达到 0.846，但约 2 秒延迟是明确代价 |
 | 长上下文取舍 | 已完成 `TOP_K=3/5/10` 对比，并加入小文档全文短路；默认 `TOP_K=3` |
+| 层级检索 | 已实现章节/全书摘要导航、原文回溯和跨书公平配额；抽取式摘要仍有质量上限 |
+| 排名可视化 | 已展示向量、BM25、RRF、重排前后名次与耗时，可定位候选在哪层掉队 |
+| Agent Lab | 已实现五个只读工具和最多五步循环；当前不做跨进程恢复 |
 | GraphRAG | 已完成关系图原型和端到端实验，但共现推断误报较多，默认关闭 |
 | 语义切分 / Late Chunking | 未做，需要换长上下文 embedding 模型 |
-| LangGraph | 当前不引入；固定 RAG 流水线用显式函数更容易学习，触发条件见[架构决策](architecture-decisions.md) |
+| LangGraph | 当前不引入；固定 RAG 和五步 Agent 都能被显式 Python 清楚表达，触发条件见[架构决策](architecture-decisions.md) |
 
 `CONTEXT_NEIGHBORS` 已确认正常工作。它不会机械地把 5 段变成 15 段：不同命中
 片段的邻居可能重叠，去重后数量会少于理论上限。上下文预算实验中，`TOP_K=5`

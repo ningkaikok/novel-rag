@@ -45,6 +45,7 @@
    │       └─ 小书短路 ──  全文 < 8000 字？直接把全书塞进去，跳过检索
    │
    ├─ ④ 多路召回（当前按顺序执行）
+   │      ├─ 层级检索  ──  全局问题先搜全书/章节摘要，再回到原文
    │      ├─ 向量检索  ──  pgvector HNSW，懂语义
    │      ├─ BM25      ──  自建倒排索引，记得住「窝头」这种只出现 1 次的词
    │      └─ 结构检索  ──  问开头/结局时按 chunk_id 定位，语义相似度不适用
@@ -68,10 +69,11 @@
 章节切分、来源编号不变式和引用评测见
 [citations-and-chapters.md](citations-and-chapters.md)。
 
-这张流程图看起来像“图”，但当前不需要 LangGraph。它是固定的数据处理流水线，
-不是会自主选择工具、循环重试或等待人工审批的 Agent。详细判断和未来引入条件见
-[架构决策：是否需要 LangGraph](architecture-decisions.md)。另外，本文的 GraphRAG
-指“人物关系图检索”，和用于编排 Agent 工作流的 LangGraph 不是同一个概念。
+这张标准 RAG 流程图看起来像“图”，但当前不需要 LangGraph，因为它仍是固定的数据
+处理流水线。独立的 Agent Lab 虽会自主选择五个只读工具，但最多五步、无需恢复，普通
+Python 循环更适合学习。详细判断见[架构决策](architecture-decisions.md)和
+[Agent Lab](agent-lab.md)。另外，本文的 GraphRAG 指“人物关系图检索”，和用于编排
+Agent 工作流的 LangGraph 不是同一个概念。
 
 ---
 

@@ -77,6 +77,19 @@ def rerank(
     candidates 是 SourceChunk 列表（只要有 .text 属性即可，不依赖具体类型，
     方便测试时传假对象）。返回的是原对象，顺序按相关性重排。
     """
+    return [
+        chunk
+        for chunk, _ in rerank_with_scores(question, candidates, top_k, model)
+    ]
+
+
+def rerank_with_scores(
+    question: str,
+    candidates: list,
+    top_k: int,
+    model: CrossEncoder | None = None,
+) -> list[tuple[object, float]]:
+    """与 ``rerank`` 相同，但保留分数，供可视化评测比较重排前后名次。"""
     if not candidates:
         return []
     model = model or load_reranker()
@@ -96,4 +109,4 @@ def rerank(
     scores = model.predict(pairs)
 
     ranked = sorted(zip(candidates, scores), key=lambda pair: pair[1], reverse=True)
-    return [chunk for chunk, _ in ranked[:top_k]]
+    return [(chunk, float(score)) for chunk, score in ranked[:top_k]]

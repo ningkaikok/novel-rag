@@ -99,6 +99,21 @@ BM25_B = float(os.environ.get("BM25_B", 0.75))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
 
+# --- 层级检索（片段 → 章节摘要 → 全书摘要，见 src/hierarchy.py）---
+# 默认开启且不调用 LLM：摘要采用可重复、无额外费用的抽取式策略。它们只负责
+# 帮系统定位“应该看哪些章节”，最终回答仍使用并引用 novel_chunks 里的原文。
+HIERARCHY_ENABLED = os.environ.get("HIERARCHY_ENABLED", "1") != "0"
+# 单个摘要控制在 embedding 模型能有效编码的范围内；不是生成模型的上下文上限。
+HIERARCHY_SUMMARY_MAX_CHARS = int(
+    os.environ.get("HIERARCHY_SUMMARY_MAX_CHARS", 800)
+)
+# 没有章节标题的 txt 按固定片段窗口构造“虚拟章节”，保证任何小说都能建立层级。
+HIERARCHY_UNTITLED_CHUNKS = int(
+    os.environ.get("HIERARCHY_UNTITLED_CHUNKS", 12)
+)
+# 全局问题最多选择多少个章节节点进入候选池。之后还会映射回原文并经过重排。
+HIERARCHY_TOP_K = int(os.environ.get("HIERARCHY_TOP_K", 6))
+
 # 后端日志级别（DEBUG/INFO/WARNING/ERROR）
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 

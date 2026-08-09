@@ -11,6 +11,7 @@
     ② _rewrite_for_search()     多轮追问补全指代（"他"→"李化元"）
         ↓                        ⚠️ 只在原文路径触发，且必须在检索之前
     ③ rag.retrieve_hybrid_stream()   每完成一步就推一条 step 事件
+        ├─ 全局问题：全书/章节摘要导航后回到原文
         ├─ 语义检索（向量，pgvector HNSW）
         ├─ BM25 检索（倒排索引）
         ├─ 结构性检索（按 chunk_id 定位开头/结尾）
@@ -23,7 +24,7 @@
         claude: → 本地 Claude CLI ／ glm: → 智谱 ／ 其余 → 本地 Ollama
         ↓
     ⑥ SSE 流式推送
-        event: step    → 「思考过程」的一步（检索期间逐条推，一条一条点亮）
+        event: step    → 「思考过程」的一步，也可带候选排名供评测面板复盘
         event: sources → 原文出处卡片
         event: token   → 逐字打字机
         event: done
@@ -39,10 +40,10 @@
 
 为什么没有 LangGraph
 ---------------------
-当前链路虽然有多个阶段，但方向固定、一次请求内就能结束；SSE 进度、会话历史和失败
-降级也已经分别由生成器、PostgreSQL 和普通异常处理覆盖。显式函数调用更适合观察
-RAG 的真实数据流。等到出现工具调用循环、人工审批、跨进程断点恢复等需求，再把这些
-阶段提升为图节点。决策记录见 `docs/architecture-decisions.md`。
+标准 RAG 虽有多个阶段，但方向固定、一次请求内就能结束。独立的 `/api/agent/ask`
+确实会“选择工具 → 观察 → 再判断”，但它只有五个只读工具、最多五步、无需检查点，
+普通 Python 循环更容易学习和测试。等到需要人工审批、并行子任务或跨进程断点恢复，
+再把已测试的工具提升为图节点。决策记录见 `docs/architecture-decisions.md`。
 
 运行：uvicorn backend.main:app --reload --port 8000
 （在项目根目录 novel-rag/ 下运行）
@@ -84,6 +85,8 @@ from backend.index_tasks import (  # noqa: E402
     TaskNotFound,
 )
 from backend.schemas import (  # noqa: E402
+    AgentAskRequest,
+    AgentStep,
     AskRequest,
     BookList,
     CurrentModel,
@@ -109,6 +112,7 @@ from config import (  # noqa: E402
     QUERY_REWRITE_MODEL,
 )
 from query_rewriter import rewrite_query  # noqa: E402
+from agent_lab import run_agent  # noqa: E402
 from rag import NovelRAG, generate_ollama_prompt_stream  # noqa: E402
 from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
 from postgres import (  # noqa: E402
@@ -407,6 +411,15 @@ def _next_or_sentinel(iterator):
     return next(iterator, _SENTINEL)
 
 
+def _generate_for_model(prompt: str, model: str):
+    """统一三种生成后端，普通问答和 Agent Lab 共用同一条模型路由。"""
+    if model.startswith(claude_cli.MODEL_PREFIX):
+        return claude_cli.generate_stream(prompt, model)
+    if model.startswith(zhipu.MODEL_PREFIX):
+        return zhipu.generate_stream(prompt, model)
+    return generate_ollama_prompt_stream(prompt, model=model)
+
+
 @app.post("/api/ask")
 async def ask(req: AskRequest, request: Request):
     """流式回答。支持用户中断：前端 abort 后，这里会停止向上游模型要 token。
@@ -525,18 +538,9 @@ async def ask(req: AskRequest, request: Request):
             if decision.route is AnswerMode.grounded and rag is not None
             else build_free_prompt(req.question)
         )
-        if model.startswith(claude_cli.MODEL_PREFIX):
-            token_iter = claude_cli.generate_stream(
-                prompt, model
-            )
-        elif model.startswith(zhipu.MODEL_PREFIX):
-            token_iter = zhipu.generate_stream(
-                prompt, model
-            )
-        else:
-            # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
-            # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
-            token_iter = generate_ollama_prompt_stream(prompt, model=model)
+        # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
+        # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
+        token_iter = _generate_for_model(prompt, model)
 
         parts: list[str] = []
         interrupted = False
@@ -577,6 +581,65 @@ async def ask(req: AskRequest, request: Request):
 
         if not interrupted:
             yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/agent/ask")
+async def agent_ask(req: AgentAskRequest, request: Request):
+    """运行独立 Agent Lab；最多五步，只能调用白名单只读工具。"""
+    rag: NovelRAG | None = state.get("rag")
+    if rag is None:
+        raise APIError(409, ErrorCode.index_not_ready, "书架为空或索引未建立，请先上传小说")
+    model = state["model"]
+
+    def planner(prompt: str) -> str:
+        # 普通回答可以边生成边展示；工具规划不同，必须先拿到完整 JSON 才能校验
+        # tool/args，不能收到半个对象就执行。这里仍复用同一模型适配器，只在边界
+        # 处把 token 流合并成一次 action。
+        return "".join(_generate_for_model(prompt, model))
+
+    iterator = run_agent(
+        req.question,
+        rag=rag,
+        planner=planner,
+        answerer=lambda prompt: _generate_for_model(prompt, model),
+        max_steps=req.max_steps,
+    )
+
+    async def event_stream():
+        # Agent 的 Python 循环是同步生成器，放进线程池逐步 next，避免模型规划、
+        # 数据库工具或最终生成阻塞 FastAPI 事件循环。客户端断开时 close() 会让
+        # 生成器 finally 生效，与普通问答的“停止生成”保持相同资源边界。
+        try:
+            while True:
+                item = await run_in_threadpool(_next_or_sentinel, iterator)
+                if item is _SENTINEL:
+                    break
+                kind, value = item
+                if kind == "agent_step":
+                    payload = AgentStep(**value).model_dump()
+                    yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                elif kind == "sources":
+                    payload = [
+                        SourceItem(
+                            novel=source.novel,
+                            chunk_id=source.chunk_id,
+                            chapter_title=source.chapter_title,
+                            text=source.text,
+                        ).model_dump()
+                        for source in value
+                    ]
+                    yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                elif kind == "token":
+                    yield f"event: token\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
+                elif kind == "done":
+                    yield "event: done\ndata: {}\n\n"
+                if await request.is_disconnected():
+                    iterator.close()
+                    break
+        finally:
+            iterator.close()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

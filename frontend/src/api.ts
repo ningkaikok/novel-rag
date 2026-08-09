@@ -31,6 +31,29 @@ export interface TraceStep {
   detail: string;
   /** 本阶段耗时（毫秒）。历史会话里存的旧记录没有这个字段。 */
   ms?: number;
+  /** 稳定的机器可读阶段名，用于评测面板，不依赖中文展示文案。 */
+  stage_key?: string | null;
+  candidates?: RetrievalCandidate[];
+}
+
+export interface RetrievalCandidate {
+  novel: string;
+  chunk_id: number;
+  chapter_title?: string | null;
+  rank: number;
+  score?: number | null;
+  score_label?: string | null;
+  previous_rank?: number | null;
+  selected?: boolean;
+}
+
+export interface AgentStep {
+  step: number;
+  reason: string;
+  tool: string;
+  args: Record<string, unknown>;
+  observation: string;
+  source_ids: string[];
 }
 
 export interface SearchResult extends Source {
@@ -60,6 +83,7 @@ export interface IndexResult {
   unchanged: string[];
   contextualized: number;
   relations: number;
+  hierarchy_nodes: number;
 }
 
 export interface IndexTask {
@@ -177,12 +201,13 @@ export async function setModel(model: string): Promise<void> {
   if (!res.ok) throw new Error("切换模型失败");
 }
 
-interface AskHandlers {
+export interface AskHandlers {
   /** 检索每完成一步就回调一次，用于把「思考过程」逐条点亮。 */
   onStep?: (step: TraceStep) => void;
   onTrace?: (trace: TraceStep[]) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (token: string) => void;
+  onAgentStep?: (step: AgentStep) => void;
   onDone?: () => void;
   onError?: (err: Error) => void;
 }
@@ -215,30 +240,57 @@ export async function askStream(
       throw new Error(await extractErrorMessage(res, "请求失败"));
     }
 
-    const reader = res.body.getReader();
-    // 网络分片不等于 SSE 事件分片：一次 reader.read() 可能只拿到半个 JSON，
-    // 也可能同时拿到多个事件。TextDecoder 的 stream:true 保留跨分片的 UTF-8
-    // 字节状态，buffer 则保留尚未遇到空行终止符的半个 SSE 事件。
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE 以空行分隔事件。循环处理是因为一个网络包里可能粘着多个事件；
-      // 最后不足一个事件的尾巴继续留在 buffer，等待下一次 read() 补齐。
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const raw = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        handleEvent(raw, handlers);
-      }
-    }
+    await consumeEventStream(res, handlers);
     handlers.onDone?.();
   } catch (err) {
     handlers.onError?.(err as Error);
+  }
+}
+
+/** Agent Lab 使用独立端点，但沿用 sources/token/done，并多出 agent_step 事件。 */
+export async function askAgentStream(
+  question: string,
+  handlers: AskHandlers,
+  options: { signal?: AbortSignal; maxSteps?: number } = {}
+): Promise<void> {
+  try {
+    const res = await fetch("/api/agent/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, max_steps: options.maxSteps ?? 5 }),
+      signal: options.signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(await extractErrorMessage(res, "Agent Lab 请求失败"));
+    }
+    await consumeEventStream(res, handlers);
+    handlers.onDone?.();
+  } catch (err) {
+    handlers.onError?.(err as Error);
+  }
+}
+
+async function consumeEventStream(res: Response, handlers: AskHandlers) {
+  const reader = res.body!.getReader();
+  // 网络分片不等于 SSE 事件分片：一次 reader.read() 可能只拿到半个 JSON，
+  // 也可能同时拿到多个事件。TextDecoder 的 stream:true 保留跨分片的 UTF-8
+  // 字节状态，buffer 则保留尚未遇到空行终止符的半个 SSE 事件。
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE 以空行分隔事件。循环处理是因为一个网络包里可能粘着多个事件；
+    // 最后不足一个事件的尾巴继续留在 buffer，等待下一次 read() 补齐。
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      handleEvent(raw, handlers);
+    }
   }
 }
 
@@ -269,6 +321,7 @@ function handleEvent(raw: string, handlers: AskHandlers) {
   if (!data) return;
   // step 是检索期间逐条推的（新），trace 是一次性整包（历史会话恢复走这条）
   if (event === "step") handlers.onStep?.(JSON.parse(data));
+  else if (event === "agent_step") handlers.onAgentStep?.(JSON.parse(data));
   else if (event === "trace") handlers.onTrace?.(JSON.parse(data));
   else if (event === "sources") handlers.onSources?.(JSON.parse(data));
   else if (event === "token") handlers.onToken?.(JSON.parse(data));

@@ -1,21 +1,23 @@
 """RAG 核心：多路召回、融合、重排、上下文组装和本地生成。
 
-这个模块刻意用普通 Python 函数显式编排，而不是交给 LangGraph：当前请求是一条
+这个模块刻意用普通 Python 函数显式编排，而不是交给 LangGraph：标准 RAG 请求是一条
 短生命周期、方向固定的流水线，没有工具调用循环、人工审批或失败后跨进程恢复的
 需求。学习时可以直接沿着 ``retrieve_hybrid_stream`` 阅读每个阶段的数据变化。
 
 核心对象在各阶段的变化如下，阅读时注意“召回候选”和“最终上下文”不是一回事：
 
     question
-      → semantic / BM25 / positional 三路 SourceChunk 候选
+      → 全局问题可选：全书/章节摘要定位 → 映射回 SourceChunk 原文
+      → semantic / BM25 / positional 等多路 SourceChunk 候选
       → RRF 去重融合后的候选池
       → CrossEncoder 重排后的 top-k
       → expand_neighbors 补齐相邻片段
       → 带 [n] 编号的 prompt
       → 模型 token 流
 
-召回负责“别漏掉”，重排负责“把正确答案提到前面”，邻居扩展负责“别让切分边界
-截断证据”。把三者混为一个步骤，会很难判断检索质量究竟坏在哪一层。
+层级摘要只负责导航，不能充当原文证据；召回负责“别漏掉”，重排负责“把正确答案
+提到前面”，邻居扩展负责“别让切分边界截断证据”。把这些步骤混为一个阶段，会很难
+判断检索质量究竟坏在哪一层。
 
 Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，因此评测脚本
 可以直接调用检索逻辑。完整选型理由见 ``docs/architecture-decisions.md``。
@@ -35,6 +37,8 @@ from config import (
     BM25_K1,
     CONTEXT_NEIGHBORS,
     FULL_TEXT_MAX_CHARS,
+    HIERARCHY_ENABLED,
+    HIERARCHY_TOP_K,
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     OLLAMA_HOST,
@@ -43,8 +47,15 @@ from config import (
     TOP_K,
 )
 from graph import detect_relation_question, format_graph_hint
-from postgres import connect, has_index, query_relations, vector_literal
-from reranker import rerank
+from hierarchy import is_global_question
+from postgres import (
+    connect,
+    has_index,
+    query_relations,
+    search_hierarchy,
+    vector_literal,
+)
+from reranker import rerank_with_scores
 from tokenizer import query_terms
 
 
@@ -269,6 +280,37 @@ class SourceChunk:
         就会把上下文增强的效果整个抵消掉。
         """
         return f"{self.context}\n{self.text}" if self.context else self.text
+
+
+_TRACE_CANDIDATE_LIMIT = 10
+
+
+def _trace_candidates(
+    sources: list[SourceChunk],
+    *,
+    score_label: str,
+    score_of,
+    previous_ranks: dict[tuple[str, int], int] | None = None,
+    selected_count: int = 0,
+) -> list[dict]:
+    """把内部候选压成适合 SSE/JSONB 的轻量排名记录，避免保存大段原文。"""
+    payload: list[dict] = []
+    for rank, source in enumerate(sources[:_TRACE_CANDIDATE_LIMIT], start=1):
+        key = (source.novel, source.chunk_id)
+        score = score_of(source, key)
+        payload.append(
+            {
+                "novel": source.novel,
+                "chunk_id": source.chunk_id,
+                "chapter_title": source.chapter_title,
+                "rank": rank,
+                "score": round(float(score), 6) if score is not None else None,
+                "score_label": score_label,
+                "previous_rank": (previous_ranks or {}).get(key),
+                "selected": bool(selected_count and rank <= selected_count),
+            }
+        )
+    return payload
 
 
 class NovelRAG:
@@ -579,6 +621,79 @@ class NovelRAG:
             ]
         return [n for n in novels if _mentions_novel(question, n)]
 
+    def hierarchy_retrieve(
+        self,
+        question: str,
+        *,
+        named_novels: list[str] | None = None,
+        top_k: int = HIERARCHY_TOP_K,
+    ) -> tuple[list[SourceChunk], list[dict]]:
+        """先搜索摘要节点，再把命中章节映射回可引用的原文代表片段。
+
+        全书节点只用于判断“应该看哪本书”，章节节点负责定位具体范围。每个命中
+        章节取开头/中间/结尾三处原文，随后仍会进入 RRF 和交叉编码器重排。
+        """
+        query_embedding = self.embedder.encode([question], normalize_embeddings=True)
+        query_vector = vector_literal(query_embedding[0])
+
+        targets = list(named_novels or [])
+        book_hits: list[dict] = []
+        if not targets:
+            book_hits = search_hierarchy(
+                query_vector,
+                level="novel",
+                limit=2,
+            )
+            targets = list(dict.fromkeys(hit["novel"] for hit in book_hits))
+        if not targets:
+            return [], []
+
+        # 跨书比较必须让每本书都有候选，不能全局 LIMIT 后被其中一本包揽。
+        per_novel = max(2, (top_k + len(targets) - 1) // len(targets))
+        chapter_hits: list[dict] = []
+        for novel in targets:
+            chapter_hits.extend(
+                search_hierarchy(
+                    query_vector,
+                    level="chapter",
+                    limit=per_novel,
+                    novels=[novel],
+                )
+            )
+        chapter_hits.sort(key=lambda hit: float(hit["distance"]))
+
+        sources: list[SourceChunk] = []
+        seen: set[tuple[str, int]] = set()
+        with connect() as conn:
+            for hit in chapter_hits[: max(top_k, len(targets) * 2)]:
+                start = int(hit["start_chunk_id"])
+                end = int(hit["end_chunk_id"])
+                representative_ids = sorted({start, (start + end) // 2, end})
+                rows = conn.execute(
+                    "SELECT novel, chunk_id, chapter_title, text, context "
+                    "FROM novel_chunks WHERE novel = %s AND chunk_id = ANY(%s) "
+                    "ORDER BY chunk_id",
+                    (hit["novel"], representative_ids),
+                ).fetchall()
+                for row in rows:
+                    key = (row["novel"], int(row["chunk_id"]))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    sources.append(
+                        SourceChunk(
+                            novel=row["novel"],
+                            chunk_id=int(row["chunk_id"]),
+                            text=row["text"],
+                            # 摘要距离只表示这个章节整体与问题的相关性；后面重排会
+                            # 重新判断具体原文片段，因此这里只保留为候选排序信号。
+                            distance=float(hit["distance"]),
+                            chapter_title=row.get("chapter_title") or hit["title"],
+                            context=row.get("context") or "",
+                        )
+                    )
+        return sources, [*book_hits, *chapter_hits]
+
     def retrieve_hybrid(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
         """统一的两阶段召回：候选池合并后用轻量 RRF 排序，最终取 top-k。"""
         sources, _ = self.retrieve_hybrid_traced(question, top_k)
@@ -639,6 +754,7 @@ class NovelRAG:
         )
         # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
         named_novels = self._named_novels(question)
+        global_question = is_global_question(question)
 
         # 「长上下文取舍」：书小到能整本塞进模型窗口时，检索本身就是多余的。
         # 与其检索出几段（可能漏掉关键信息），不如直接给全文——零信息损失。
@@ -666,6 +782,8 @@ class NovelRAG:
             detail = "未点明书名，稍后根据检索内容自动判断属于哪本书"
         if structural:
             detail += f"，且在问「{structural}」这类结构性问题"
+        if global_question:
+            detail += "，识别为需要跨章节观察的全局问题"
         yield "step", {"step": "理解问题", "detail": detail, "ms": took()}
 
         # 阶段二：确定检索范围
@@ -675,10 +793,54 @@ class NovelRAG:
             scope_detail = "在全部书里检索"
         yield "step", {"step": "检索范围", "detail": scope_detail, "ms": took()}
 
+        hierarchy_sources: list[SourceChunk] = []
+        hierarchy_hits: list[dict] = []
+        if HIERARCHY_ENABLED and global_question:
+            try:
+                hierarchy_sources, hierarchy_hits = self.hierarchy_retrieve(
+                    question,
+                    named_novels=named_novels,
+                )
+                chapter_count = sum(hit.get("level") == "chapter" for hit in hierarchy_hits)
+                novels = list(dict.fromkeys(hit["novel"] for hit in hierarchy_hits))
+                yield "step", {
+                    "step": "层级检索",
+                    "stage_key": "hierarchy",
+                    "detail": (
+                        f"先用全书/章节摘要定位到 {chapter_count} 个章节，"
+                        f"再回到 {'、'.join(_display_title(n) for n in novels)} 的原文取证"
+                    ),
+                    "ms": took(),
+                    "candidates": _trace_candidates(
+                        hierarchy_sources,
+                        score_label="章节摘要相似度",
+                        score_of=lambda source, _key: 1 - source.distance,
+                    ),
+                }
+            except Exception as exc:
+                # 层级表尚未迁移或暂时不可用时，退回原有片段检索，不让升级过程阻断问答。
+                yield "step", {
+                    "step": "层级检索",
+                    "stage_key": "hierarchy",
+                    "detail": f"层级摘要暂不可用，退回片段检索（{exc}）",
+                    "ms": took(),
+                }
+
         # 阶段三：多路召回
         semantic_sources = self.retrieve(
             question, top_k=candidate_k, only_novels=named_novels
         )
+        yield "step", {
+            "step": "向量召回",
+            "stage_key": "vector",
+            "detail": f"按语义相似度召回 {len(semantic_sources)} 个片段",
+            "ms": took(),
+            "candidates": _trace_candidates(
+                semantic_sources,
+                score_label="余弦相似度",
+                score_of=lambda source, _key: 1 - source.distance,
+            ),
+        }
         # 关键词检索（分词后逐词匹配）如果不限定书的范围，像"伴侣"这种两本书
         # 都会用到的常见词，会把不相关小说的片段也拉进来。这里先用语义召回的
         # 结果猜一次书（没点名书名时），再拿这个猜测去收窄关键词检索——语义
@@ -692,21 +854,51 @@ class NovelRAG:
             top_k=candidate_k,
             only_novels=keyword_scope,
         )
+        yield "step", {
+            "step": "BM25 召回",
+            "stage_key": "bm25",
+            "detail": f"按关键词相关性召回 {len(keyword_sources)} 个片段",
+            "ms": took(),
+            "candidates": _trace_candidates(
+                keyword_sources,
+                score_label="BM25",
+                score_of=lambda source, _key: -source.distance,
+            ),
+        }
         hint_novels = named_novels or _dominant_novels(
-            semantic_sources + keyword_sources
+            hierarchy_sources + semantic_sources + keyword_sources
         )
         positional_sources = self.positional_retrieve(
             question, top_k=candidate_k, hint_novels=hint_novels
         )
+        if positional_sources:
+            yield "step", {
+                "step": "结构性召回",
+                "stage_key": "position",
+                "detail": f"按原文位置召回 {len(positional_sources)} 个片段",
+                "ms": took(),
+                "candidates": _trace_candidates(
+                    positional_sources,
+                    score_label="原文位置",
+                    score_of=lambda _source, _key: None,
+                ),
+            }
         recall_detail = f"语义召回 {len(semantic_sources)} 条 · 关键词召回 {len(keyword_sources)} 条"
         if positional_sources:
             ids = sorted(s.chunk_id for s in positional_sources)
             span = f"#{ids[0]}" if len(ids) == 1 else f"#{ids[0]}–{ids[-1]}"
             where = "结尾" if structural == "结局" else "开头" if structural == "开头" else "位置"
             recall_detail += f" · 结构性召回 {len(positional_sources)} 条（定位到{where} {span}）"
+        if hierarchy_sources:
+            recall_detail += f" · 层级召回映射原文 {len(hierarchy_sources)} 条"
         if not named_novels and hint_novels:
             recall_detail += f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
-        yield "step", {"step": "多路召回", "detail": recall_detail, "ms": took()}
+        yield "step", {
+            "step": "多路召回",
+            "stage_key": "recall_summary",
+            "detail": recall_detail,
+            "ms": 0,
+        }
 
         # Reciprocal Rank Fusion：把多路召回合并成一个候选池。
         # RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
@@ -715,13 +907,19 @@ class NovelRAG:
         rrf_k = 60
         scores: dict[tuple[str, int], float] = {}
         items: dict[tuple[str, int], SourceChunk] = {}
-        for ranked_sources in (semantic_sources, keyword_sources, positional_sources):
+        for ranked_sources in (
+            semantic_sources,
+            keyword_sources,
+            positional_sources,
+            hierarchy_sources,
+        ):
             for rank, source in enumerate(ranked_sources, start=1):
                 key = (source.novel, source.chunk_id)
                 scores[key] = scores.get(key, 0.0) + 1 / (rrf_k + rank)
                 items.setdefault(key, source)
 
         ranked_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
+        fused_sources = [items[key] for key in ranked_keys]
 
         # 阶段四：融合排序
         #
@@ -740,6 +938,13 @@ class NovelRAG:
                 )
             ),
             "ms": took(),
+            "stage_key": "rrf",
+            "candidates": _trace_candidates(
+                fused_sources,
+                score_label="RRF",
+                score_of=lambda _source, key: scores[key],
+                selected_count=min(candidate_k, len(fused_sources)),
+            ),
         }
 
         # 阶段五：交叉编码器重排。
@@ -753,11 +958,28 @@ class NovelRAG:
         candidates = [items[key] for key in ranked_keys[:candidate_k]]
         if RERANK_ENABLED and len(candidates) > top_k:
             try:
-                result = rerank(question, candidates, top_k)
+                scored = rerank_with_scores(question, candidates, len(candidates))
+                reranked = [source for source, _score in scored]
+                rerank_scores = {
+                    (source.novel, source.chunk_id): score for source, score in scored
+                }
+                previous_ranks = {
+                    (source.novel, source.chunk_id): rank
+                    for rank, source in enumerate(candidates, start=1)
+                }
+                result = reranked[:top_k]
                 yield "step", {
                     "step": "精排",
+                    "stage_key": "rerank",
                     "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
                     "ms": took(),
+                    "candidates": _trace_candidates(
+                        reranked,
+                        score_label="CrossEncoder",
+                        score_of=lambda _source, key: rerank_scores[key],
+                        previous_ranks=previous_ranks,
+                        selected_count=len(result),
+                    ),
                 }
             except Exception as exc:
                 # 重排是锦上添花，模型加载失败/推理出错都不该让整个问答挂掉，
@@ -765,8 +987,15 @@ class NovelRAG:
                 result = candidates[:top_k]
                 yield "step", {
                     "step": "精排",
+                    "stage_key": "rerank",
                     "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）",
                     "ms": took(),
+                    "candidates": _trace_candidates(
+                        candidates,
+                        score_label="RRF（降级）",
+                        score_of=lambda _source, key: scores[key],
+                        selected_count=len(result),
+                    ),
                 }
         else:
             result = candidates[:top_k]

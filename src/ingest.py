@@ -1,12 +1,15 @@
 """将 data/novels 下的小说文本切分、向量化并写入 PostgreSQL + pgvector。
 
-同时建两套索引，它们服务于两种互补的检索方式：
+基础层同时建两套索引，它们服务于两种互补的检索方式：
 - **向量索引**（HNSW）：按语义找，"讲的是同一个意思"就能命中，但对专有名词、
   人名这类"必须逐字匹配"的东西不可靠。
 - **BM25 倒排索引**：按词精确匹配并加权，专有名词、人名的强项，但完全不懂近义。
 
 两套索引必须基于同一批文本同时切换，否则检索结果会自相矛盾。当前实现按文件哈希
 只处理变化书，并用单书 PostgreSQL 事务原子替换向量、BM25、关系边和 manifest。
+
+M3 还会在基础片段之上建立“章节摘要 → 全书摘要”导航层。它有独立流水线指纹：
+摘要算法改变时，未变化的书只重算几千个层级节点，不重算几万个基础片段。
 
 开启 Contextual Retrieval 时（CONTEXTUAL_ENABLED=1），还会给"看不出在讲谁"的
 片段生成一句上下文说明，**索引「说明 + 原文」但 text 列仍存原文**——
@@ -21,9 +24,10 @@
         → 分批计算 embedding
         → 统计 BM25 词频
         → 可选人物关系边
+        → 建立章节/全书摘要并计算 embedding
         → 单书事务原子替换全部派生数据
 
-前六步可以很慢，但都在事务外准备，不会长时间锁住旧索引；最后一步才开启短事务。
+前面的计算可以很慢，但都在事务外准备，不会长时间锁住旧索引；最后一步才开启短事务。
 这是一种适合 RAG/Agent 长任务的通用模式：**先计算，后原子发布**。
 
 用法: python src/ingest.py
@@ -32,7 +36,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sentence_transformers import SentenceTransformer
@@ -45,6 +49,7 @@ from config import (
     GRAPH_MAX_CHUNKS_PER_RELATION,
     GRAPH_MIN_NAME_HITS,
     GRAPH_MODEL,
+    HIERARCHY_ENABLED,
     CONTEXTUAL_ENABLED,
     CONTEXTUAL_MAX_CHUNKS_PER_BOOK,
     CONTEXTUAL_MODEL,
@@ -65,18 +70,22 @@ from contextualizer import (
     text_hash,
 )
 from embedder import load_embedder
+from hierarchy import build_hierarchy_nodes, hierarchy_pipeline_hash
 from loader import load_novel_file
 from postgres import (
     delete_novel_index,
     ensure_context_cache,
     ensure_graph_cache,
     ensure_index_schema,
+    hierarchy_node_count,
     index_chunk_count,
     indexed_novels,
     load_index_manifest,
+    load_hierarchy_manifest,
     load_cached_contexts,
     load_cached_graph_characters,
     replace_novel_index,
+    replace_novel_hierarchy,
     save_contexts,
     save_graph_characters,
     vector_literal,
@@ -106,6 +115,9 @@ class IndexPlan:
     deleted: list[str]
     unchanged: list[str]
     pipeline_hash: str
+    # 基础片段索引没变，但层级摘要缺失/算法升级，需要无损补建的旧书。
+    hierarchy_pending: list[str] = field(default_factory=list)
+    hierarchy_hash: str = ""
 
 
 def _file_hash(path: Path) -> str:
@@ -143,6 +155,7 @@ def plan_index(
     force: bool = False,
     manifest: dict[str, dict] | None = None,
     database_novels: set[str] | None = None,
+    hierarchy_manifest: dict[str, dict] | None = None,
 ) -> IndexPlan:
     """比较目录和数据库清单，分类新增、修改、删除和未变化的书。
 
@@ -150,6 +163,7 @@ def plan_index(
     省略它们时读取真实数据库。旧索引没有 manifest 时，已有书会被视为修改并完成
     一次性迁移，而不是错误地假设旧索引一定由当前配置生成。
     """
+    external_state = manifest is not None or database_novels is not None
     paths = {path.stem: path for path in sorted(novels_dir.glob("*.txt"))}
     hashes = {novel: _file_hash(path) for novel, path in paths.items()}
     manifest = load_index_manifest() if manifest is None else manifest
@@ -175,7 +189,31 @@ def plan_index(
         else:
             unchanged.append(novel)
     deleted = sorted((set(manifest) | database_novels) - set(paths))
-    return IndexPlan(paths, hashes, added, modified, deleted, unchanged, pipeline)
+    hierarchy_hash = hierarchy_pipeline_hash() if HIERARCHY_ENABLED else ""
+    if HIERARCHY_ENABLED:
+        if hierarchy_manifest is None:
+            # 单元测试显式传入基础清单时，不应再偷偷连接真实 PostgreSQL。
+            hierarchy_manifest = {} if external_state else load_hierarchy_manifest()
+        hierarchy_pending = [
+            novel
+            for novel in unchanged
+            if not (previous := hierarchy_manifest.get(novel))
+            or previous.get("source_hash") != hashes[novel]
+            or previous.get("pipeline_hash") != hierarchy_hash
+        ]
+    else:
+        hierarchy_pending = []
+    return IndexPlan(
+        paths,
+        hashes,
+        added,
+        modified,
+        deleted,
+        unchanged,
+        pipeline,
+        hierarchy_pending,
+        hierarchy_hash,
+    )
 
 
 def _make_generate_fn(model: str = CONTEXTUAL_MODEL):
@@ -294,6 +332,43 @@ def _embedding_dimension(model: SentenceTransformer) -> int:
     return int(dimension)
 
 
+def _prepare_hierarchy_rows(
+    chunks: list,
+    model: SentenceTransformer,
+    check: CancelCheck,
+) -> list[tuple]:
+    """构造章节/全书摘要并分批向量化，返回数据库写入行。"""
+    nodes = build_hierarchy_nodes(chunks)
+    if not nodes:
+        return []
+    embeddings: list = []
+    batch_size = 32
+    for start in range(0, len(nodes), batch_size):
+        check()
+        batch = nodes[start : start + batch_size]
+        embeddings.extend(
+            model.encode(
+                [node.summary for node in batch],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        )
+    return [
+        (
+            node.novel,
+            node.level,
+            node.node_id,
+            node.title,
+            node.node_order,
+            node.start_chunk_id,
+            node.end_chunk_id,
+            node.summary,
+            vector_literal(embedding),
+        )
+        for node, embedding in zip(nodes, embeddings)
+    ]
+
+
 def build_index(
     model: SentenceTransformer | None = None,
     *,
@@ -313,11 +388,13 @@ def build_index(
     check()
     plan = plan_index(novels_dir, force=force)
     changed = plan.added + plan.modified
-    work_total = len(plan.deleted) + len(changed)
+    hierarchy_only = [n for n in plan.hierarchy_pending if n not in changed]
+    work_total = len(plan.deleted) + len(changed) + len(hierarchy_only)
 
     # 完全空的新项目不必为了创建空表加载 embedding 模型。
     if work_total == 0:
         count = index_chunk_count()
+        hierarchy_count = hierarchy_node_count() if HIERARCHY_ENABLED else 0
         _emit(progress, "complete", 100, "所有小说都已是最新版本")
         return {
             "novels": sorted(plan.paths),
@@ -328,6 +405,7 @@ def build_index(
             "unchanged": plan.unchanged,
             "contextualized": 0,
             "relations": 0,
+            "hierarchy_nodes": hierarchy_count,
         }
 
     if model is None:
@@ -336,6 +414,7 @@ def build_index(
 
     contextualized = 0
     edge_count = 0
+    hierarchy_count = 0
     completed_units = 0
 
     def book_progress(stage: str, local_percent: int, message: str) -> None:
@@ -417,6 +496,13 @@ def build_index(
             relations = _build_relation_edges(chunks)
             edge_count += len(relations)
 
+        hierarchy_rows: list[tuple] | None = None
+        if HIERARCHY_ENABLED:
+            check()
+            book_progress("hierarchy", 86, f"正在建立《{novel}》的章节与全书摘要")
+            hierarchy_rows = _prepare_hierarchy_rows(chunks, model, check)
+            hierarchy_count += len(hierarchy_rows)
+
         rows = [
             (
                 chunk.novel,
@@ -432,7 +518,7 @@ def build_index(
             )
         ]
         check()
-        book_progress("database", 88, f"正在原子写入《{novel}》的两套索引")
+        book_progress("database", 92, f"正在原子写入《{novel}》的片段与层级索引")
         replace_novel_index(
             novel,
             rows,
@@ -441,8 +527,29 @@ def build_index(
             plan.pipeline_hash,
             relations,
             check,
+            hierarchy_rows,
+            plan.hierarchy_hash,
         )
         book_progress("database", 100, f"《{novel}》已安全切换到新索引")
+        completed_units += 1
+
+    # M3 之前已经存在且文件未变化的书，只补建层级摘要。基础向量和 BM25 保持原样，
+    # 因而升级成本与“章节数”相关，而不是与“片段数”相关。
+    for novel in hierarchy_only:
+        check()
+        book_progress("hierarchy", 10, f"正在补建《{novel}》的章节与全书摘要")
+        chunks = load_novel_file(plan.paths[novel])
+        rows = _prepare_hierarchy_rows(chunks, model, check)
+        book_progress("hierarchy", 85, f"正在写入《{novel}》的 {len(rows)} 个层级节点")
+        replace_novel_hierarchy(
+            novel,
+            rows,
+            plan.source_hashes[novel],
+            plan.hierarchy_hash,
+            check,
+        )
+        hierarchy_count += len(rows)
+        book_progress("hierarchy", 100, f"《{novel}》的层级摘要已可检索")
         completed_units += 1
 
     check()
@@ -457,6 +564,7 @@ def build_index(
         "unchanged": plan.unchanged,
         "contextualized": contextualized,
         "relations": edge_count,
+        "hierarchy_nodes": hierarchy_node_count() if HIERARCHY_ENABLED else 0,
     }
 
 
