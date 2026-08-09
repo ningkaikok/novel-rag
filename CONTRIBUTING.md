@@ -16,6 +16,25 @@ uvicorn backend.main:app --port 8000
 cd frontend && npm run dev
 ```
 
+## 分支与合并流程
+
+`main` 分支已开启保护：禁止 force push、禁止删除，并且必须通过 PR 和 CI 合并。
+不要直接执行 `git push origin main`；新提交还没有 required status checks，直推会被保护
+规则拒绝。
+
+标准流程如下：
+
+```bash
+git switch -c feat/xxx
+# 修改代码，并按 Conventional Commits 提交
+git push -u origin feat/xxx
+gh pr create --fill
+# 等待 GitHub Actions 全部通过
+gh pr merge --squash --delete-branch
+```
+
+分支名建议与提交类型和功能对应。使用 squash 合并，保持 `main` 历史简洁。
+
 ## 提交前自查
 
 CI 会在每个 PR 上跑这三项，本地先过一遍能省一个来回：
@@ -93,19 +112,75 @@ python tests/run_qa_tests.py --model qwen2.5:7b --out tests/results_7b.json
    有检查没过是红色；内容包含分支/PR、提交、触发人，Push 触发时带上这次提交信息，
    PR 触发时带上 PR 标题和链接，底部有个「查看详情」按钮直接跳到这次运行。
 
-`notify` job 没有被列入 main 分支保护的必需检查（见下方「main 已开启保护」），
+`notify` job 没有被列入 main 分支保护的必需检查（见上方「分支与合并流程」），
 所以就算飞书配置错了（比如密钥填错、机器人被移出群），也只会让这一个 job 显示失败，
 不会挡住任何 PR 合并。
 
 ## 提交规范
 
-本项目用 [Conventional Commits](https://www.conventionalcommits.org/)，
-具体格式、type 白名单、CHANGELOG 生成方式都写在 [CLAUDE.md](CLAUDE.md)。要点：
+本项目使用 [Conventional Commits](https://www.conventionalcommits.org/)，格式为：
 
-- 前缀 `<type>(<scope>):` 用英文小写，description 可以用中文。
-- 只有 `feat` / `fix` / `perf` / `refactor` 会进 CHANGELOG。
-- CHANGELOG 从用户视角写。生成命令见 [CLAUDE.md](CLAUDE.md)（用 `--output` 到临时文件
-  再跑 `scripts/merge_changelog.py`，**不要用 `--prepend`**），生成后仍需润色。
+```text
+<type>(<scope>): <description>
+```
+
+允许的 type：
+
+| type | 用途 |
+| --- | --- |
+| `feat` | 新功能 |
+| `fix` | 修 bug |
+| `perf` | 性能优化 |
+| `refactor` | 不改变外部行为的重构 |
+| `docs` | 文档 |
+| `test` | 测试 |
+| `chore` | 构建、依赖和杂项 |
+
+本项目常用 scope：`retrieval`、`ingest`、`ui`、`backend`、`models`、`deps`。
+description 可以使用中文，但 type 和 scope 必须使用英文小写。
+
+示例：
+
+```text
+feat(ingest): 支持单书增量索引
+fix(api): 处理任务取消时的竞态条件
+```
+
+## CHANGELOG 规范
+
+`CHANGELOG.md` 使用 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
+只有以下提交类型需要进入 CHANGELOG：
+
+| 提交 type | CHANGELOG 分组 |
+| --- | --- |
+| `feat` | `### Added` |
+| `fix` | `### Fixed` |
+| `perf`、`refactor` | `### Changed` |
+
+`docs`、`style`、`chore`、`test` 不收录。条目必须从用户视角描述收益或修复结果，
+不要只复述内部实现。新条目放在 `## [未发布]` 下；发布时填写版本号和绝对日期。
+
+配置位于 `cliff.toml`。日常生成未发布内容时，先写入临时文件，再合并未发布段：
+
+```bash
+git cliff --unreleased --strip header --output /tmp/unreleased.md \
+  && python3 scripts/merge_changelog.py /tmp/unreleased.md CHANGELOG.md
+```
+
+不要使用 `git cliff --prepend`，它会重复插入标题并破坏手写说明。生成后仍需人工润色。
+
+发布版本时可以运行：
+
+```bash
+git cliff --tag v0.2.0 -o CHANGELOG.md
+```
+
+本项目不使用 CI 自动提交 CHANGELOG：默认 `GITHUB_TOKEN` 创建的 PR 不会触发新的
+workflow，而 `main` 的 required checks 又要求 CI 结果，自动 PR 会因此无法合并。对当前
+项目体量，手动生成更简单，也无需额外维护 PAT 或 GitHub App 凭证。
+
+2026-08-01 及之前的旧提交不符合 Conventional Commits，无法由 `git-cliff` 自动收录；
+对应历史 CHANGELOG 保持手写内容。
 
 ## 版权红线
 

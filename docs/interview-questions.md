@@ -580,7 +580,8 @@ antd 的省略号组件判断"不需要截断"，压根没渲染「展开」链�
 - [`docs/streaming-interview-notes.md`](streaming-interview-notes.md) — 流式中断与 UI 性能的详细展开
 - [`tests/PERF_CHECK.md`](../tests/PERF_CHECK.md) — 渲染性能自查清单
 - [`CHANGELOG.md`](../CHANGELOG.md) — 每个改动的用户视角描述
-- [`CLAUDE.md`](../CLAUDE.md) — 提交规范与踩坑记录
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — 开发、测试、提交和发布规范
+- [`AGENTS.md`](../AGENTS.md) — AI 编程 Agent 的统一项目入口
 
 **面试建议**：这些题的价值不在"标准答案"，而在**能说出验证过程和踩过的坑**。
 比如 Q4（abort 后 reader 不一定抛异常）、Q14（我误判了 push 事件能绕过限制），
