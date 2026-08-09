@@ -20,3 +20,4 @@ data/novels/*
 
 # Claude Code 本地启动配置（端口/命令因人而异，不入库）
 .claude/
+CLAUDE.local.md
