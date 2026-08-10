@@ -399,6 +399,8 @@ function Main() {
           content: t.content,
           sources: t.sources ?? undefined,
           trace: t.trace ?? undefined,
+          // 只有 Agent Lab 的历史消息才会带这个字段；普通问答恒为 null。
+          agentSteps: t.agent_steps ?? undefined,
           // 历史消息一定不在流式中；被中断的那轮标出来，让用户知道内容不完整
           streaming: false,
           interrupted: t.status === "interrupted",
@@ -581,6 +583,7 @@ function Main() {
       await askAgentStream(question, handlers, {
         signal: controller.signal,
         maxSteps: 5,
+        sessionId: sessionIdRef.current,
       });
     } else {
       await askStream(question, topK, handlers, {

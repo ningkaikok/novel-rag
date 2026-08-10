@@ -402,3 +402,77 @@ def test_agent_lab_validates_three_to_five_steps(client):
     )
 
     assert response.status_code == 422
+
+
+def test_agent_lab_saves_history_when_session_id_provided(client, monkeypatch):
+    """带 session_id 时，Agent Lab 也要落库——这个端点上线时漏了这一步，
+    刷新页面必然清空 Agent Lab 的对话，跟普通问答模式的历史恢复不一致。
+    """
+    main.state["rag"] = object()
+    main.state["model"] = "fake-model"
+    source = type(
+        "S",
+        (),
+        {"novel": "雾隐山庄", "chunk_id": 4, "chapter_title": "第二章", "text": "守住了山庄"},
+    )()
+
+    def fake_run_agent(*_args, **_kwargs):
+        yield "agent_step", {
+            "step": 1,
+            "reason": "先搜索",
+            "tool": "search_novels",
+            "args": {"query": "顾长风"},
+            "observation": "找到 S1",
+            "source_ids": ["S1"],
+        }
+        yield "sources", [source]
+        yield "token", "顾长风[1]"
+        yield "done", {}
+
+    monkeypatch.setattr(main, "run_agent", fake_run_agent)
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(main, "next_turn_index", lambda _session_id: 0)
+    monkeypatch.setattr(
+        main, "save_turn", lambda *args, **kwargs: saved.append((args, kwargs))
+    )
+
+    resp = client.post(
+        "/api/agent/ask",
+        json={"question": "顾长风做了什么？", "max_steps": 3, "session_id": "s1"},
+    )
+
+    assert resp.status_code == 200
+    assert len(saved) == 2, "用户提问和最终回答都应该各存一次"
+
+    user_args, _ = saved[0]
+    assert user_args[:3] == ("s1", 0, "user")
+    assert user_args[3] == "顾长风做了什么？"
+
+    assistant_args, assistant_kwargs = saved[1]
+    assert assistant_args[:3] == ("s1", 1, "assistant")
+    assert assistant_args[3] == "顾长风[1]"
+    assert assistant_kwargs["agent_steps"][0]["tool"] == "search_novels"
+    assert assistant_kwargs["status"] == "complete"
+
+
+def test_agent_lab_skips_history_without_session_id(client, monkeypatch):
+    """不带 session_id 时行为不变：纯内存，不调用任何落库函数。"""
+    main.state["rag"] = object()
+    main.state["model"] = "fake-model"
+
+    def fake_run_agent(*_args, **_kwargs):
+        yield "token", "答案"
+        yield "done", {}
+
+    monkeypatch.setattr(main, "run_agent", fake_run_agent)
+    monkeypatch.setattr(
+        main, "save_turn", lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("不该调用 save_turn")
+        )
+    )
+
+    resp = client.post("/api/agent/ask", json={"question": "随便问问", "max_steps": 3})
+
+    assert resp.status_code == 200
+    assert 'data: "答案"' in resp.text

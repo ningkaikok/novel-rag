@@ -27,6 +27,10 @@ class AskRequest(BaseModel):
 class AgentAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     max_steps: int = Field(default=5, ge=3, le=5)
+    # 可选：带上会话 ID 就把这一轮 Agent 对话落库，刷新页面后能恢复。
+    # 之前这个端点完全没有这个字段——Agent Lab 里的每一次对话都是纯内存，
+    # 刷新页面必然清空，跟普通问答模式的历史恢复体验不一致。
+    session_id: str | None = None
 
 
 class SetModelRequest(BaseModel):
@@ -138,6 +142,8 @@ class StoredTurn(BaseModel):
     content: str
     sources: list[SourceItem] | None = None
     trace: list[TraceStep] | None = None
+    # 只有 Agent Lab 那条链路的对话会有这个字段；普通问答模式恒为 None。
+    agent_steps: list[AgentStep] | None = None
     status: str
 
 
