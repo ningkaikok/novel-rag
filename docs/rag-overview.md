@@ -184,6 +184,17 @@ Contextual Retrieval 给每个片段加了 context，索引侧用上了，
 "感觉变好了"和"真的变好了"分不开——上面那些"以为改好了其实改坏了"
 的坑，**没有一个是靠肉眼看出来的**。
 
+### 8. "检索有效"这个结论本身要小心被模型的记忆污染
+
+拿热门公开小说测出"给了检索内容答案就变对"，不能直接当成"检索系统有效"的证据——
+模型很可能**背过**这部小说，答对可能纯粹是记忆，跟你喂的那段文字毫无关系。
+测试对象本身有没有可能污染结论，要在设计阶段就想到，不能等结果出来再怀疑。
+
+> 用模型训练数据里**保证没有**的语料（比如项目自己原创的短篇）先验证一次，
+> 再用**篡改关键事实**的手法在热门语料上验证一次——如果模型跟着篡改后的假信息走，
+> 才能证明它这次真的在依据你给的文本，不是在表演。完整方法和数据见
+> [grounding-verification.md](grounding-verification.md)。
+
 ---
 
 ## 五、接着读什么
@@ -193,6 +204,7 @@ Contextual Retrieval 给每个片段加了 context，索引侧用上了，
 | [rag-techniques.md](rag-techniques.md) | 每个技术的完整原理推导 + 公式 + 前后对比数据 |
 | [code-walkthrough.md](code-walkthrough.md) | 代码逐个模块讲，配合源码读 |
 | [architecture-decisions.md](architecture-decisions.md) | 为什么当前不用 LangGraph，以及何时应该引入 |
+| [grounding-verification.md](grounding-verification.md) | 检索到的内容是不是真的被模型用上了，还是模型在凭记忆答题 |
 | [interview-questions.md](interview-questions.md) | 从这些改动整理出的面试问答 |
 | [streaming-interview-notes.md](streaming-interview-notes.md) | SSE 流式输出和中断恢复那部分的专题 |
 
