@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 from postgres import connect
-from rag import NovelRAG, SourceChunk
+from rag import NovelRAG, SourceChunk, _mentions_novel
 
 Planner = Callable[[str], str]
 Answerer = Callable[[str], Iterator[str]]
@@ -45,6 +45,17 @@ class AgentToolbox:
         return ToolResult("书架包含：" + ("、".join(books) if books else "（空）"))
 
     def _resolve_novel(self, requested: str) -> str:
+        """把规划器给的书名字符串解析成库里真实的 novel 主键。
+
+        规划器经常把用户原话里的书名（可能是错字）原样填进 `novel` 参数，
+        比如用户问"闺蜜之主"，规划器就会传 `novel="闺蜜之主"`。子串匹配对这种
+        情况必然失败——"闺蜜之主"不是"《诡秘之主》…"的子串。主对话链路
+        （`rag.py` 的 `_named_novels`）用带编辑距离容差的 `_mentions_novel`
+        处理过同样的问题，这里复用同一套逻辑，而不是让工具直接报错——
+        两套代码解决同一个"书名打错字"问题却给出不同结果，会让 Agent
+        没道理地卡在这一步（实测：规划器反复重试同一个坏参数，白白烧掉
+        步数预算，见 tests/backend/test_agent_lab.py 里的对应用例）。
+        """
         with connect() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT novel FROM novel_chunks ORDER BY novel"
@@ -59,6 +70,8 @@ class AgentToolbox:
             if requested.casefold() in novel.casefold()
             or novel.casefold() in requested.casefold()
         ]
+        if not fuzzy:
+            fuzzy = [novel for novel in novels if _mentions_novel(requested, novel)]
         if len(fuzzy) == 1:
             return fuzzy[0]
         raise ValueError(f"无法唯一确定小说：{requested}")
@@ -196,6 +209,16 @@ def run_agent(
     observations: list[dict] = []
     source_registry: dict[str, SourceChunk] = {}
     seen_actions: set[str] = set()
+    # 同一个工具连续失败的次数，只按工具名计数、不看具体参数。
+    #
+    # 下面的“重复动作”检测按完整 (tool, args) 精确匹配去重，但实测发现规划器
+    # 会在同一个坏参数上反复重试，每次只改一个无关紧要的参数（比如
+    # read_neighbors 的 radius 从 1 改成 3 再改成 0），核心的坏参数（比如打错的
+    # 书名）从没变过。args 一变，signature 就不同，精确匹配的重复检测完全失效，
+    # 三步预算里能白白烧掉两三步在一个注定失败的调用上。这里换一个更粗但更管用
+    # 的信号：只要同一个工具名连续失败两次，就不再信任这个工具，不管第三次的
+    # 参数长什么样。
+    tool_failure_streak: dict[str, int] = {}
 
     for step in range(1, max_steps + 1):
         if step == max_steps and source_registry:
@@ -232,15 +255,16 @@ def run_agent(
         args = action.get("args") or {}
         reason = str(action.get("reason", "未提供理由"))[:240]
         signature = json.dumps([tool, args], sort_keys=True, ensure_ascii=False)
-        if signature in seen_actions and tool != "answer_with_citations":
+        stuck = signature in seen_actions or tool_failure_streak.get(tool, 0) >= 2
+        if stuck and tool != "answer_with_citations":
             if source_registry:
                 tool = "answer_with_citations"
                 args = {"source_ids": list(source_registry)}
-                reason = "检测到重复动作，停止循环并使用已有证据回答"
+                reason = "检测到反复失败或重复动作，停止循环并使用已有证据回答"
             else:
                 args = {"query": question, "limit": 5}
                 tool = "search_novels"
-                reason = "检测到重复动作，改用原问题检索"
+                reason = "检测到反复失败或重复动作，改用原问题检索"
         seen_actions.add(signature)
 
         if tool == "answer_with_citations":
@@ -287,9 +311,11 @@ def run_agent(
                     source_registry[key] = source
                 source_ids.append(key)
             observation = result.summary
+            tool_failure_streak[tool] = 0
         except Exception as exc:
             source_ids = []
             observation = f"工具执行失败：{type(exc).__name__}: {exc}"
+            tool_failure_streak[tool] = tool_failure_streak.get(tool, 0) + 1
 
         event = {
             "step": step,

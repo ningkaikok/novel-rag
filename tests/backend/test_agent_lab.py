@@ -1,6 +1,8 @@
 """Agent Lab 的有限步循环测试：不调用真实模型和 PostgreSQL。"""
 import json
 
+import pytest
+
 import agent_lab
 from rag import SourceChunk
 
@@ -116,3 +118,119 @@ def test_invalid_planner_output_falls_back_to_search(monkeypatch):
     first = next(value for kind, value in events if kind == "agent_step")
     assert first["tool"] == "search_novels"
     assert "规划格式无效" in first["reason"]
+
+
+class _FakeConnCtx:
+    """假的 `with connect() as conn:` 上下文管理器，只支持 `_resolve_novel` 用到的查询。"""
+
+    def __init__(self, novels):
+        self._rows = [{"novel": n} for n in novels]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, _sql, _params=None):
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+
+_REAL_TITLE = "《诡秘之主》（精校版全本）作者：爱潜水的乌贼"
+
+
+def test_resolve_novel_falls_back_to_typo_tolerant_match(monkeypatch):
+    """规划器常把用户打错的书名原样传进来（用户问"闺蜜之主"，规划器就传
+    novel="闺蜜之主"）。子串匹配对这种情况必然失败——"闺蜜之主"不是
+    "《诡秘之主》…"的子串。主对话链路已经用编辑距离容差解决过这个问题，
+    这里必须退回同一套逻辑，而不是让工具直接报错、逼得规划器在坏参数上空转。
+    """
+    monkeypatch.setattr(agent_lab, "connect", lambda: _FakeConnCtx([_REAL_TITLE]))
+    toolbox = agent_lab.AgentToolbox(rag=None)
+    assert toolbox._resolve_novel("闺蜜之主") == _REAL_TITLE
+
+
+def test_resolve_novel_still_rejects_truly_unknown_titles(monkeypatch):
+    """纠错要有边界——完全不相关的书名不能被容错逻辑误接受。"""
+    monkeypatch.setattr(agent_lab, "connect", lambda: _FakeConnCtx([_REAL_TITLE]))
+    toolbox = agent_lab.AgentToolbox(rag=None)
+    with pytest.raises(ValueError):
+        toolbox._resolve_novel("完全不相关的书名")
+
+
+class _FlakyToolbox:
+    """read_neighbors 永远失败，search_novels 永远成功——用来复现"规划器在同一个
+    坏参数上反复重试、每次只改无关参数"的场景。
+    """
+
+    def __init__(self, _rag):
+        self.calls: list[tuple[str, dict]] = []
+
+    def execute(self, name, args):
+        self.calls.append((name, dict(args)))
+        if name == "read_neighbors":
+            raise ValueError("无法唯一确定小说：闺蜜之主")
+        if name == "search_novels":
+            return agent_lab.ToolResult("找到证据", [_source(9)])
+        raise AssertionError(f"未预期的工具调用：{name}")
+
+
+def test_repeated_failures_are_blocked_even_when_args_differ(monkeypatch):
+    """同一工具连续失败两次后，第三次哪怕参数变了（radius 1→3→0）也要被拦下来。
+
+    之前的"重复动作检测"按完整 (tool, args) 精确匹配去重，radius 变了签名就
+    不同，检测形同虚设——实测规划器会靠着这个漏洞，把 5 步预算里 3 步都烧在
+    同一个打错的书名上（见 docs/grounding-verification.md 之前的对话记录）。
+    """
+    toolbox_holder: dict[str, _FlakyToolbox] = {}
+
+    def _make_toolbox(rag):
+        box = _FlakyToolbox(rag)
+        toolbox_holder["box"] = box
+        return box
+
+    monkeypatch.setattr(agent_lab, "AgentToolbox", _make_toolbox)
+
+    actions = iter(
+        [
+            {
+                "reason": "读邻居，半径1",
+                "tool": "read_neighbors",
+                "args": {"novel": "闺蜜之主", "chunk_id": 1, "radius": 1},
+            },
+            {
+                "reason": "读邻居，半径3",
+                "tool": "read_neighbors",
+                "args": {"novel": "闺蜜之主", "chunk_id": 1, "radius": 3},
+            },
+            {
+                "reason": "读邻居，半径0",
+                "tool": "read_neighbors",
+                "args": {"novel": "闺蜜之主", "chunk_id": 1, "radius": 0},
+            },
+        ]
+    )
+
+    events = list(
+        agent_lab.run_agent(
+            "闺蜜之主里面哪些人是穿越过来的",
+            rag=_FakeRag(),
+            planner=lambda _prompt: json.dumps(next(actions), ensure_ascii=False),
+            answerer=lambda _prompt: iter([]),
+            max_steps=3,
+        )
+    )
+
+    calls = toolbox_holder["box"].calls
+    assert [name for name, _args in calls] == [
+        "read_neighbors",
+        "read_neighbors",
+        "search_novels",
+    ], "第三次不该再真的执行 read_neighbors——同一工具连续失败两次就该被拦住"
+
+    steps = [value for kind, value in events if kind == "agent_step"]
+    assert steps[-1]["tool"] == "search_novels"
+    assert "反复失败" in steps[-1]["reason"]
