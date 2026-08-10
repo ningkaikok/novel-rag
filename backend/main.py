@@ -607,10 +607,28 @@ async def agent_ask(req: AgentAskRequest, request: Request):
         max_steps=req.max_steps,
     )
 
+    # 和 /api/ask 同一套模式：有 session_id 才落库，没有就纯内存、行为不变。
+    # 这个端点上线时漏了这一步——Agent Lab 里的每一次对话都不会落库，
+    # 刷新页面必然清空，跟普通问答模式的历史恢复体验不一致。
+    session_id = req.session_id
+    user_index = assistant_index = None
+    if session_id:
+        try:
+            user_index = next_turn_index(session_id)
+            assistant_index = user_index + 1
+            save_turn(session_id, user_index, "user", req.question)
+        except Exception as exc:  # 落库失败不该让 Agent Lab 不可用
+            logger.warning(f"保存提问失败（忽略，不影响回答）：{exc}")
+            session_id = None
+
     async def event_stream():
         # Agent 的 Python 循环是同步生成器，放进线程池逐步 next，避免模型规划、
         # 数据库工具或最终生成阻塞 FastAPI 事件循环。客户端断开时 close() 会让
         # 生成器 finally 生效，与普通问答的“停止生成”保持相同资源边界。
+        agent_steps_payload: list[dict] = []
+        sources_payload: list[dict] = []
+        parts: list[str] = []
+        interrupted = False
         try:
             while True:
                 item = await run_in_threadpool(_next_or_sentinel, iterator)
@@ -619,9 +637,10 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                 kind, value = item
                 if kind == "agent_step":
                     payload = AgentStep(**value).model_dump()
+                    agent_steps_payload.append(payload)
                     yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif kind == "sources":
-                    payload = [
+                    sources_payload = [
                         SourceItem(
                             novel=source.novel,
                             chunk_id=source.chunk_id,
@@ -630,16 +649,31 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                         ).model_dump()
                         for source in value
                     ]
-                    yield f"event: sources\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    yield f"event: sources\ndata: {json.dumps(sources_payload, ensure_ascii=False)}\n\n"
                 elif kind == "token":
+                    parts.append(value)
                     yield f"event: token\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
                 elif kind == "done":
                     yield "event: done\ndata: {}\n\n"
                 if await request.is_disconnected():
+                    interrupted = True
                     iterator.close()
                     break
         finally:
             iterator.close()
+            if session_id and assistant_index is not None:
+                try:
+                    save_turn(
+                        session_id,
+                        assistant_index,
+                        "assistant",
+                        "".join(parts),
+                        sources=sources_payload,
+                        agent_steps=agent_steps_payload,
+                        status="interrupted" if interrupted else "complete",
+                    )
+                except Exception as exc:
+                    logger.warning(f"保存回答失败（忽略）：{exc}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

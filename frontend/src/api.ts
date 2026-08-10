@@ -247,17 +247,25 @@ export async function askStream(
   }
 }
 
-/** Agent Lab 使用独立端点，但沿用 sources/token/done，并多出 agent_step 事件。 */
+/** Agent Lab 使用独立端点，但沿用 sources/token/done，并多出 agent_step 事件。
+ *
+ * sessionId 传了就落库，刷新页面能恢复历史——之前这个端点没有这个参数，
+ * Agent Lab 的每一次对话都是纯内存，刷新必然清空。
+ */
 export async function askAgentStream(
   question: string,
   handlers: AskHandlers,
-  options: { signal?: AbortSignal; maxSteps?: number } = {}
+  options: { signal?: AbortSignal; maxSteps?: number; sessionId?: string } = {}
 ): Promise<void> {
   try {
     const res = await fetch("/api/agent/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, max_steps: options.maxSteps ?? 5 }),
+      body: JSON.stringify({
+        question,
+        max_steps: options.maxSteps ?? 5,
+        session_id: options.sessionId,
+      }),
       signal: options.signal,
     });
     if (!res.ok || !res.body) {
@@ -301,6 +309,8 @@ export interface StoredTurn {
   content: string;
   sources: Source[] | null;
   trace: TraceStep[] | null;
+  // 只有 Agent Lab 那条链路的对话会有这个字段；普通问答模式恒为 null。
+  agent_steps: AgentStep[] | null;
   status: "complete" | "interrupted";
 }
 

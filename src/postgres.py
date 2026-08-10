@@ -673,12 +673,19 @@ def ensure_chat_schema() -> None:
                 content     TEXT    NOT NULL DEFAULT '',
                 sources     JSONB,
                 trace       JSONB,
+                -- Agent Lab 那条独立链路的步骤记录，形状和 trace 不一样（tool/
+                -- reason/observation，不是 step/detail），所以单开一列，不往
+                -- trace 里塞两种形状——那样 StoredTurn 的类型就没法同时对两边诚实。
+                agent_steps JSONB,
                 -- complete：正常生成完；interrupted：用户中断，content 是部分内容
                 status      TEXT    NOT NULL DEFAULT 'complete',
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, turn_index)
             )
             """
+        )
+        conn.execute(
+            "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS agent_steps JSONB"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_turns_session_idx "
@@ -693,6 +700,7 @@ def save_turn(
     content: str,
     sources: list | None = None,
     trace: list | None = None,
+    agent_steps: list | None = None,
     status: str = "complete",
 ) -> None:
     """写入或覆盖一轮对话（幂等）。
@@ -704,14 +712,15 @@ def save_turn(
         conn.execute(
             """
             INSERT INTO chat_turns
-                (session_id, turn_index, role, content, sources, trace, status)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+                (session_id, turn_index, role, content, sources, trace, agent_steps, status)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
             ON CONFLICT (session_id, turn_index) DO UPDATE SET
-                role    = EXCLUDED.role,
-                content = EXCLUDED.content,
-                sources = EXCLUDED.sources,
-                trace   = EXCLUDED.trace,
-                status  = EXCLUDED.status
+                role        = EXCLUDED.role,
+                content     = EXCLUDED.content,
+                sources     = EXCLUDED.sources,
+                trace       = EXCLUDED.trace,
+                agent_steps = EXCLUDED.agent_steps,
+                status      = EXCLUDED.status
             """,
             (
                 session_id,
@@ -720,6 +729,7 @@ def save_turn(
                 content,
                 json.dumps(sources, ensure_ascii=False) if sources is not None else None,
                 json.dumps(trace, ensure_ascii=False) if trace is not None else None,
+                json.dumps(agent_steps, ensure_ascii=False) if agent_steps is not None else None,
                 status,
             ),
         )
@@ -730,7 +740,7 @@ def load_turns(session_id: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT turn_index, role, content, sources, trace, status
+            SELECT turn_index, role, content, sources, trace, agent_steps, status
             FROM chat_turns
             WHERE session_id = %s
             ORDER BY turn_index
