@@ -11,6 +11,11 @@
 | **本文** | 按代码结构 | 第一次接触这个项目，想知道从哪读起 |
 | [rag-techniques.md](rag-techniques.md) | 按技术点 | 想深入某个具体技术（BM25/重排/Contextual Retrieval…） |
 
+如果已经看完 Agent Lab，想继续学习生产级边界，再看
+[agent-platform-architecture.md](agent-platform-architecture.md)：它把当前白名单、有限
+循环和 SSE 轨迹映射到未来的 Tool Registry、Tool Gateway、状态恢复和 MCP 适配，不要求
+一次性引入这些基础设施。
+
 ---
 
 ## 一、先建立全局图景

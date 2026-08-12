@@ -44,6 +44,29 @@ Agent Lab 当前不保存到普通会话历史。这让实验轨迹和稳定聊�
 当它需要跨进程检查点、暂停等待人工批准、并行子任务、几十步重试或恢复某个中间节点时，
 再把这套已测试的工具函数迁入 LangGraph；框架应解决已经出现的问题，而不是遮住基本原理。
 
+## 从 Agent Lab 到生产架构
+
+Agent Lab 有意把“生产级系统”的复杂边界压缩成几个容易读懂的 Python 结构：工具白名单
+对应未来的 Tool Registry，`readonly_toolbox.execute` 对应未来的 Tool Gateway，`S1/S2`
+证据表对应未来的状态和事件记录。它是教学起点，不是生产安全边界。
+
+推荐的演进顺序是：
+
+```text
+五个函数白名单
+  → ToolSpec / Tool Registry
+  → Tool Gateway（权限、schema、超时、审计）
+  → Model Gateway（能力、预算、超时、显式降级）
+  → Agent 事件与评测（run_id、质量、延迟、成本）
+  → Chat/Run/Event 状态拆分与长任务恢复
+  → 需要跨客户端时再接 MCP
+```
+
+几个概念要分开：MCP 是连接工具、资源和提示模板的协议；它不会替代自己的权限和风险
+检查。Tool Discovery 解决“给模型看哪些候选工具”，Tool Router 解决“最终选择哪个
+工具”，Tool Gateway 才是实际执行前后的统一控制点。完整目标架构和 M6 验收标准见
+[Agent 平台化架构](agent-platform-architecture.md)。
+
 ## API 与测试
 
 ```http
