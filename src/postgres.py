@@ -141,9 +141,14 @@ def _ensure_index_schema(conn, dimension: int) -> None:
             source_hash   TEXT NOT NULL,
             pipeline_hash TEXT NOT NULL,
             chunk_count   INTEGER NOT NULL,
+            quality_report JSONB NOT NULL DEFAULT '{}'::jsonb,
             indexed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
+    )
+    conn.execute(
+        "ALTER TABLE index_manifest ADD COLUMN IF NOT EXISTS quality_report JSONB "
+        "NOT NULL DEFAULT '{}'::jsonb"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)"
@@ -232,10 +237,17 @@ def load_index_manifest() -> dict[str, dict]:
         ).fetchone()
         if not table or not table["table_name"]:
             return {}
-        rows = conn.execute(
-            "SELECT novel, source_hash, pipeline_hash, chunk_count "
-            "FROM index_manifest"
-        ).fetchall()
+        column = conn.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'index_manifest'
+              AND column_name = 'quality_report'
+            """
+        ).fetchone()
+        fields = "novel, source_hash, pipeline_hash, chunk_count"
+        if column:
+            fields += ", quality_report"
+        rows = conn.execute(f"SELECT {fields} FROM index_manifest").fetchall()
     return {row["novel"]: dict(row) for row in rows}
 
 
@@ -276,6 +288,7 @@ def replace_novel_index(
     cancel_check: Callable[[], None] | None = None,
     hierarchy_rows: list[tuple] | None = None,
     hierarchy_hash: str | None = None,
+    quality_report: dict | None = None,
 ) -> None:
     """在一个事务里原子替换单本书的全部派生数据。
 
@@ -351,15 +364,16 @@ def replace_novel_index(
         conn.execute(
             """
             INSERT INTO index_manifest
-                (novel, source_hash, pipeline_hash, chunk_count, indexed_at)
-            VALUES (%s, %s, %s, %s, NOW())
+                (novel, source_hash, pipeline_hash, chunk_count, quality_report, indexed_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, NOW())
             ON CONFLICT (novel) DO UPDATE SET
                 source_hash = EXCLUDED.source_hash,
                 pipeline_hash = EXCLUDED.pipeline_hash,
                 chunk_count = EXCLUDED.chunk_count,
+                quality_report = EXCLUDED.quality_report,
                 indexed_at = NOW()
             """,
-            (novel, source_hash, pipeline_hash, len(rows)),
+            (novel, source_hash, pipeline_hash, len(rows), json.dumps(quality_report or {}, ensure_ascii=False)),
         )
 
 

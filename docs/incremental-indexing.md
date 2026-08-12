@@ -14,6 +14,7 @@ CREATE TABLE index_manifest (
     source_hash   TEXT NOT NULL,
     pipeline_hash TEXT NOT NULL,
     chunk_count   INTEGER NOT NULL,
+    quality_report JSONB NOT NULL DEFAULT '{}'::jsonb,
     indexed_at    TIMESTAMPTZ NOT NULL
 );
 ```
@@ -21,6 +22,9 @@ CREATE TABLE index_manifest (
 - `source_hash` 是 txt 原始字节的 SHA-256。正文、编码或换行变化都会触发更新。
 - `pipeline_hash` 包含切分大小、重叠、Embedding 模型、上下文增强和关系图配置。
   文件不变但索引算法变化时也会正确失效。
+- `quality_report` 只保存编码元数据、token 分布、向量维度和质量闸门结果，不保存小说
+  原文；它让一次索引可以解释“输入是否被 tokenizer 截断、数据来自哪个版本”。旧表会
+  在下一次建表时自动补列。
 - 当前目录有、清单没有的是新增；哈希不同的是修改；数据库有、目录没有的是删除；
   两个哈希都一致的书直接跳过。
 
@@ -32,7 +36,7 @@ M2 之前的数据库没有 manifest。第一次运行会把已有书分类为�
 每本变化书分成“准备”和“切换”两段：
 
 ```text
-事务外：章节切分 → Context（可选）→ 分批 Embedding → BM25 分词 → 关系边（可选）
+事务外：章节切分 → Context（可选）→ tokenizer 质量门禁 → 分批 Embedding → BM25 分词 → 关系边（可选）
                                            ↓ 全部成功后
 事务内：删除该书旧 BM25/向量/关系 → 写新向量 → COPY 新 BM25 → 更新 manifest → COMMIT
 ```
@@ -81,6 +85,16 @@ python src/ingest.py
 python -m pytest
 cd frontend && npx tsc --noEmit && npm run test:e2e
 ```
+
+如果只想在真正写库前检查一本文本，可以运行：
+
+```bash
+python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
+```
+
+报告默认输出 JSON，退出码为 0 表示通过；超长 embedding 输入、空片段、无法读取真实
+tokenizer 或异常向量会以非零退出码阻止正式索引。章节识别率、疑似乱码和重复片段先作为
+警告，因为无标题小说和 overlap 都可能产生合理的非零结果。
 
 单元测试覆盖变化分类、只处理修改书、写库前取消、事务 COPY 失败、任务并发/取消/失败；
 端到端测试覆盖刷新恢复进度、安全停止、失败原因和重试按钮。
