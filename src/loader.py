@@ -69,6 +69,30 @@ class Chunk:
     chapter_title: str | None = None
 
 
+def read_text_with_metadata(path: Path) -> tuple[str, dict[str, object]]:
+    """读取文本，同时返回解码方式和降级信息。
+
+    ``errors="ignore"`` 仍然是最后的兼容兜底，但现在会把降级记录到索引质量
+    报告，避免编码错误悄悄变成“检索效果不好”。
+    """
+    raw_bytes = path.read_bytes()
+    for enc in _CANDIDATE_ENCODINGS:
+        try:
+            return raw_bytes.decode(enc), {
+                "encoding": enc,
+                "fallback": False,
+                "replacement_char_count": 0,
+            }
+        except UnicodeDecodeError:
+            continue
+    replaced = raw_bytes.decode("utf-8", errors="replace")
+    return raw_bytes.decode("utf-8", errors="ignore"), {
+        "encoding": "utf-8",
+        "fallback": True,
+        "replacement_char_count": replaced.count("�"),
+    }
+
+
 def _read_text(path: Path) -> str:
     """按候选编码依次严格解码，全失败才降级为忽略错误字节。
 
@@ -77,13 +101,7 @@ def _read_text(path: Path) -> str:
     乱码不会报错，只会让检索莫名其妙搜不到——非常难查。
     本项目的《降龙》就是 GB18030 编码的，靠这个回退才读对。
     """
-    raw_bytes = path.read_bytes()
-    for enc in _CANDIDATE_ENCODINGS:
-        try:
-            return raw_bytes.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return raw_bytes.decode("utf-8", errors="ignore")
+    return read_text_with_metadata(path)[0]
 
 
 def _clean_text(raw: str) -> str:

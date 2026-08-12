@@ -190,6 +190,17 @@ source venv/bin/activate
 python src/ingest.py
 ```
 
+正式写入前也可以先做一次不改数据库的质量预检：
+
+```bash
+python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
+```
+
+预检会使用当前 Embedding 模型的真实 tokenizer 检查输入 token 长度，并报告编码方式、
+空/重复片段、章节覆盖和乱码提示。索引同步时会再次执行同一门禁；超长输入、空内容、
+异常向量或维度不一致会阻止当前书替换旧索引。质量摘要会随 `index_manifest` 保存，
+不包含小说原文。
+
 这一步会比较文件哈希和 `index_manifest` 清单，只处理发生变化的书。准备新数据时旧索引
 仍可查询；最后在一个 PostgreSQL 事务里同时替换该书的向量、BM25 和清单记录。
 任务失败或被取消时当前书自动回滚，其他书不受影响。

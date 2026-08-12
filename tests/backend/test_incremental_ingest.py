@@ -87,6 +87,16 @@ def test_unchanged_book_without_hierarchy_manifest_gets_summary_backfill(
 
 
 class _FakeEmbedder:
+    class _Tokenizer:
+        name_or_path = "test-tokenizer"
+        model_max_length = 512
+
+        def __call__(self, text, **_kwargs):
+            return {"input_ids": list(range(len(text)))}
+
+    tokenizer = _Tokenizer()
+    max_seq_length = 512
+
     def get_sentence_embedding_dimension(self):
         return 2
 
@@ -116,7 +126,7 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
         ingest,
         "replace_novel_index",
         lambda novel, rows, terms, source_hash, pipeline_hash, relations, check,
-        hierarchy_rows, hierarchy_hash: replaced.append(
+        hierarchy_rows, hierarchy_hash, **kwargs: replaced.append(
             (novel, rows, terms, source_hash, pipeline_hash, hierarchy_rows, hierarchy_hash)
         ),
     )
@@ -171,7 +181,7 @@ def test_build_index_cancelled_before_write_keeps_database_untouched(
 
     monkeypatch.setattr(ingest, "plan_index", lambda *args, **kwargs: plan)
     monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
-    monkeypatch.setattr(ingest, "replace_novel_index", lambda *args: writes.append(args))
+    monkeypatch.setattr(ingest, "replace_novel_index", lambda *args, **kwargs: writes.append(args))
 
     try:
         ingest.build_index(

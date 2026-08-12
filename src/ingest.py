@@ -71,7 +71,15 @@ from contextualizer import (
 )
 from embedder import load_embedder
 from hierarchy import build_hierarchy_nodes, hierarchy_pipeline_hash
-from loader import load_novel_file
+from index_quality import (
+    QUALITY_GATE_VERSION,
+    assert_embedding_inputs,
+    assert_quality_report,
+    fit_text_to_embedding_limit,
+    make_quality_report,
+    validate_embedding_vectors,
+)
+from loader import load_novel_file, read_text_with_metadata
 from postgres import (
     delete_novel_index,
     ensure_context_cache,
@@ -136,7 +144,8 @@ def index_pipeline_hash() -> str:
     显式版本号用于分词规则等代码变化：修改这类逻辑时递增版本即可让所有书失效。
     """
     settings = {
-        "version": 2,
+        "version": 3,
+        "quality_gate_version": QUALITY_GATE_VERSION,
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
         "embedding_model": EMBEDDING_MODEL,
@@ -332,23 +341,106 @@ def _embedding_dimension(model: SentenceTransformer) -> int:
     return int(dimension)
 
 
+def _model_config(model: SentenceTransformer) -> dict[str, object]:
+    """把模型运行时的 tokenizer 信息写入质量报告，避免只相信环境变量。"""
+    tokenizer = getattr(model, "tokenizer", None)
+    max_length = getattr(model, "max_seq_length", None)
+    if max_length is None and tokenizer is not None:
+        max_length = getattr(tokenizer, "model_max_length", None)
+    try:
+        max_length = int(max_length) if max_length is not None else None
+    except (TypeError, ValueError):
+        max_length = None
+    return {
+        "model": EMBEDDING_MODEL,
+        "tokenizer": getattr(tokenizer, "name_or_path", None) if tokenizer else None,
+        "max_seq_length": max_length,
+    }
+
+
+def _quality_report(
+    *,
+    novel: str,
+    source_hash: str,
+    source_metadata: dict[str, object],
+    chunks: list,
+    model: SentenceTransformer,
+    indexed_texts: list[str],
+    hierarchy_texts: list[str],
+    embeddings: list,
+    hierarchy_embeddings: list,
+    pipeline_hash: str,
+) -> dict:
+    """创建并完成一本书的索引质量报告。
+
+    片段和层级摘要共用 tokenizer 门禁；向量检查放在这里，保证数据库事务开始前
+    所有硬性错误都已经被发现。
+    """
+    report = make_quality_report(
+        novel=novel,
+        source_hash=source_hash,
+        source=source_metadata,
+        chunks=chunks,
+        model=model,
+        embedding_inputs={
+            "chunk": indexed_texts,
+            "hierarchy": hierarchy_texts,
+        },
+        lineage={
+            "quality_gate_version": QUALITY_GATE_VERSION,
+            "pipeline_hash": pipeline_hash,
+            "embedding_model": EMBEDDING_MODEL,
+            "model": _model_config(model),
+        },
+    )
+    report.embedding["chunk"]["vectors"] = validate_embedding_vectors(
+        embeddings, expected_dimension=_embedding_dimension(model), kind="chunk"
+    )
+    report.embedding["hierarchy"]["vectors"] = validate_embedding_vectors(
+        hierarchy_embeddings,
+        expected_dimension=_embedding_dimension(model),
+        kind="hierarchy",
+    )
+    for kind, inputs in (("chunk", indexed_texts), ("hierarchy", hierarchy_texts)):
+        vector_info = report.embedding[kind]["vectors"]
+        vector_info["count_matches_input"] = len(inputs) == vector_info["vector_count"]
+        if not vector_info["count_matches_input"]:
+            report.errors.append(
+                f"{kind} embedding 数量与输入数量不一致："
+                f"{vector_info['vector_count']}/{len(inputs)}"
+            )
+    for kind in ("chunk", "hierarchy"):
+        vectors = report.embedding[kind]["vectors"]
+        if vectors["wrong_dimension_count"]:
+            report.errors.append(f"{kind} 有向量维度不一致")
+        if vectors["non_finite_count"]:
+            report.errors.append(f"{kind} 有非有限向量值")
+    assert_quality_report(report)
+    return report.as_dict()
+
+
 def _prepare_hierarchy_rows(
     chunks: list,
     model: SentenceTransformer,
     check: CancelCheck,
-) -> list[tuple]:
+) -> tuple[list[tuple], list[str], list]:
     """构造章节/全书摘要并分批向量化，返回数据库写入行。"""
     nodes = build_hierarchy_nodes(chunks)
     if not nodes:
-        return []
+        return [], [], []
     embeddings: list = []
+    summaries = []
+    for node in nodes:
+        summary, _compressed = fit_text_to_embedding_limit(model, node.summary)
+        summaries.append(summary)
+    assert_embedding_inputs(model, summaries, kind="hierarchy")
     batch_size = 32
     for start in range(0, len(nodes), batch_size):
         check()
         batch = nodes[start : start + batch_size]
         embeddings.extend(
             model.encode(
-                [node.summary for node in batch],
+                summaries[start : start + len(batch)],
                 normalize_embeddings=True,
                 show_progress_bar=False,
             )
@@ -362,11 +454,11 @@ def _prepare_hierarchy_rows(
             node.node_order,
             node.start_chunk_id,
             node.end_chunk_id,
-            node.summary,
+            summary,
             vector_literal(embedding),
         )
-        for node, embedding in zip(nodes, embeddings)
-    ]
+        for node, summary, embedding in zip(nodes, summaries, embeddings)
+    ], summaries, embeddings
 
 
 def build_index(
@@ -416,6 +508,7 @@ def build_index(
     edge_count = 0
     hierarchy_count = 0
     completed_units = 0
+    quality_reports: dict[str, dict] = {}
 
     def book_progress(stage: str, local_percent: int, message: str) -> None:
         # 扫描占前 4%，所有书的实际处理共享中间 94%，收尾占最后 2%。
@@ -436,6 +529,11 @@ def build_index(
         action = "新增" if novel in plan.added else "更新"
         book_progress("split", 3, f"正在{action}《{novel}》：识别章节并切分")
         chunks = load_novel_file(path)
+        _raw_text, source_metadata = read_text_with_metadata(path)
+        source_metadata = {
+            **source_metadata,
+            "byte_count": path.stat().st_size,
+        }
         check()
         if not chunks:
             raise RuntimeError(f"《{novel}》没有可索引的文本内容")
@@ -453,6 +551,9 @@ def build_index(
             else c.text
             for c in chunks
         ]
+        # 必须在 encode 前检查。SentenceTransformer 默认会截断超长输入，
+        # 如果等向量生成后再检查，已经无法恢复被静默丢失的正文。
+        assert_embedding_inputs(model, indexed_texts, kind="chunk")
 
         embeddings: list = []
         # 分批不只是为了内存：每批之间都会检查取消信号。若一次把整本书交给
@@ -497,11 +598,28 @@ def build_index(
             edge_count += len(relations)
 
         hierarchy_rows: list[tuple] | None = None
+        hierarchy_texts: list[str] = []
+        hierarchy_embeddings: list = []
         if HIERARCHY_ENABLED:
             check()
             book_progress("hierarchy", 86, f"正在建立《{novel}》的章节与全书摘要")
-            hierarchy_rows = _prepare_hierarchy_rows(chunks, model, check)
+            hierarchy_rows, hierarchy_texts, hierarchy_embeddings = _prepare_hierarchy_rows(
+                chunks, model, check
+            )
             hierarchy_count += len(hierarchy_rows)
+
+        quality_reports[novel] = _quality_report(
+            novel=novel,
+            source_hash=plan.source_hashes[novel],
+            source_metadata=source_metadata,
+            chunks=chunks,
+            model=model,
+            indexed_texts=indexed_texts,
+            hierarchy_texts=hierarchy_texts,
+            embeddings=embeddings,
+            hierarchy_embeddings=hierarchy_embeddings,
+            pipeline_hash=plan.pipeline_hash,
+        )
 
         rows = [
             (
@@ -529,6 +647,7 @@ def build_index(
             check,
             hierarchy_rows,
             plan.hierarchy_hash,
+            quality_report=quality_reports[novel],
         )
         book_progress("database", 100, f"《{novel}》已安全切换到新索引")
         completed_units += 1
@@ -539,7 +658,9 @@ def build_index(
         check()
         book_progress("hierarchy", 10, f"正在补建《{novel}》的章节与全书摘要")
         chunks = load_novel_file(plan.paths[novel])
-        rows = _prepare_hierarchy_rows(chunks, model, check)
+        rows, _summary_texts, _summary_embeddings = _prepare_hierarchy_rows(
+            chunks, model, check
+        )
         book_progress("hierarchy", 85, f"正在写入《{novel}》的 {len(rows)} 个层级节点")
         replace_novel_hierarchy(
             novel,
@@ -565,6 +686,7 @@ def build_index(
         "contextualized": contextualized,
         "relations": edge_count,
         "hierarchy_nodes": hierarchy_node_count() if HIERARCHY_ENABLED else 0,
+        "quality_reports": quality_reports,
     }
 
 

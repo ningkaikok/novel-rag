@@ -80,3 +80,17 @@ def test_cancel_before_replace_leaves_transaction_without_delete(monkeypatch):
         )
 
     assert connection.sql == []
+
+
+def test_quality_report_is_written_in_same_transaction(monkeypatch):
+    connection = _Connection()
+    monkeypatch.setattr(postgres, "connect", lambda: connection)
+    rows = [("书", 0, None, "正文", "[0.1,0.2]", 1, "")]
+
+    postgres.replace_novel_index(
+        "书", rows, [{}], "source", "pipeline", quality_report={"passed": True}
+    )
+
+    manifest_sql = [sql for sql in connection.sql if "INSERT INTO index_manifest" in sql]
+    assert manifest_sql
+    assert "quality_report" in manifest_sql[0]
