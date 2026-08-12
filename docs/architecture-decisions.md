@@ -104,6 +104,25 @@ for step in range(max_steps):                 # max_steps 只能是 3～5
 如果只是增加一种召回方式，优先在现有多路召回中加一个函数并纳入评测；“步骤变多”
 本身不是引入框架的理由。
 
+## 生产化时不要把框架当成全部架构
+
+如果项目从单用户学习 demo 走向生产，新增的重点不应是把所有代码改写成图，而是先
+明确以下边界：
+
+```text
+Domain Router → Planner → Tool Discovery → Tool Router → Tool Gateway → Tool
+```
+
+- Router 决定交给哪个领域流程；Planner 决定执行计划。
+- Tool Discovery 只负责从注册表筛选候选工具，并先做权限和状态过滤。
+- Tool Router 负责结构化选择，Tool Gateway 负责最终鉴权、schema、风险、超时、重试和审计。
+- MCP 是外部工具连接协议，不替代 Gateway 的权限边界。
+- OpenTelemetry 能串起 Trace/Span，但不会自动提供答案评测、成本控制或敏感信息脱敏。
+
+当前项目的五个工具太少，暂时用代码白名单表达这些概念更适合学习。真正开始 M6 时，
+先实现 `ToolSpec`、Registry、Gateway 和稳定事件，再决定是否增加 MCP 或 LangGraph。
+目标架构、迁移阶段和验收标准见 [Agent 平台化架构](agent-platform-architecture.md)。
+
 ## 将来迁移时怎样控制风险
 
 不要一次把整个后端重写成图。先保留现有纯函数，只把编排层替换掉：

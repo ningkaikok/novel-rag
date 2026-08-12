@@ -52,15 +52,17 @@ novel-rag/
 | [**检索可视化评测**](docs/retrieval-observability.md) | 向量/BM25/RRF/重排排名怎样逐层变化，如何定位丢失点 | 想调试检索质量 |
 | [**Agent Lab**](docs/agent-lab.md) | 五个只读工具、有限步循环、安全边界和 SSE 轨迹 | 想从普通 Python 学 Agent |
 | [**架构决策：是否需要 LangGraph**](docs/architecture-decisions.md) | 当前请求链路为什么保持显式编排、GraphRAG 和 LangGraph 的区别、什么情况下再引入 | 想学习技术选型 |
+| [**Agent 平台化架构**](docs/agent-platform-architecture.md) | Control/Data Plane、Tool/Model Gateway、安全、状态、Trace、MCP 与生产演进 | 想从 Agent Lab 走向生产设计 |
 | [**项目路线图**](docs/roadmap.md) | 已完成能力、后续里程碑和每阶段验收标准 | 想继续完善项目 |
 
 另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
-[从项目里提炼的 20 道面试题](docs/interview-questions.md)。
+[从项目里提炼的 28 道面试题](docs/interview-questions.md)。
 
 > 当前项目**不依赖 LangChain/LangGraph**。这是有意的架构选择，不是遗漏：先用普通
 > Python 函数看清切分、召回、融合、重排和生成的数据流。Agent Lab 也故意先用最多
 > 五步的普通循环展示基本原理；当它需要跨进程恢复、人工审批或复杂并行分支时，再引入
-> LangGraph。判断依据见上面的架构决策文档。
+> LangGraph。Tool Registry、Tool Gateway、MCP 和生产级 Trace 的演进边界见
+> [Agent 平台化架构](docs/agent-platform-architecture.md)，判断依据见上面的架构决策文档。
 
 ## 环境准备
 
