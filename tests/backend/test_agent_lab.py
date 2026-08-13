@@ -30,6 +30,29 @@ class _FakeToolbox:
         return agent_lab.ToolResult("找到两个片段", [_source(2), _source(3)])
 
 
+class _CatalogToolbox:
+    def __init__(self, _rag):
+        self.calls = []
+
+    def execute(self, name, args):
+        self.calls.append((name, args))
+        if name == "query_library":
+            return agent_lab.ToolResult(
+                "书架包含：甲、乙、丙",
+                facts={
+                    "kind": "library_query",
+                    "coverage": "complete",
+                    "domain": "books",
+                    "operation": "list",
+                    "total": 3,
+                    "items": ["甲", "乙", "丙"],
+                },
+            )
+        if name == "search_novels":
+            return agent_lab.ToolResult("找到局部片段", [_source(1)])
+        raise AssertionError(f"未预期的工具调用：{name}")
+
+
 def test_agent_searches_then_answers_with_selected_citations(monkeypatch):
     rag = _FakeRag()
     actions = iter(
@@ -65,6 +88,48 @@ def test_agent_searches_then_answers_with_selected_citations(monkeypatch):
     assert rag.prompt == "庄主是谁|3"
     assert [value for kind, value in events if kind == "token"] == ["顾长风", "[1]"]
     assert events[-1] == ("done", {})
+
+
+def test_catalog_questions_use_complete_facts_not_retrieval_count(monkeypatch):
+    """全集问题不能把 top-k 命中的书误当成书架总数。"""
+    toolbox_holder = {}
+
+    def _make_toolbox(rag):
+        box = _CatalogToolbox(rag)
+        toolbox_holder["box"] = box
+        return box
+
+    monkeypatch.setattr(agent_lab, "AgentToolbox", _make_toolbox)
+    actions = iter(
+        [
+            # 即使规划器误选 search，coverage 门禁也应先列完整目录。
+            {"reason": "先搜索", "tool": "search_novels", "args": {"query": "现在有几部小说"}},
+            {
+                "reason": "回答",
+                "tool": "answer_with_citations",
+                "args": {"source_ids": ["S1"]},
+            },
+        ]
+    )
+
+    events = list(
+        agent_lab.run_agent(
+            "现在一共有几部小说",
+            rag=_FakeRag(),
+            planner=lambda _prompt: json.dumps(next(actions), ensure_ascii=False),
+            answerer=lambda _prompt: (_ for _ in ()).throw(
+                AssertionError("完整目录事实应走确定性回答")
+            ),
+            max_steps=3,
+        )
+    )
+
+    steps = [value for kind, value in events if kind == "agent_step"]
+    assert steps[0]["tool"] == "query_library"
+    answer = "".join(value for kind, value in events if kind == "token")
+    assert "3 部小说" in answer
+    assert all(book in answer for book in ["甲", "乙", "丙"])
+    assert toolbox_holder["box"].calls[0][0] == "query_library"
 
 
 class _EmptyToolbox:

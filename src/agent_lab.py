@@ -28,6 +28,10 @@ Answerer = Callable[[str], Iterator[str]]
 class ToolResult:
     summary: str
     sources: list[SourceChunk] = field(default_factory=list)
+    # `summary` 给规划器快速阅读；`facts` 保存可机器校验的事实。
+    # 二者不能混为一谈：检索摘要通常只是局部召回，而结构化事实可以声明
+    # 自己的覆盖范围（complete / bounded / partial）。
+    facts: dict[str, object] = field(default_factory=dict)
 
 
 class AgentToolbox:
@@ -36,13 +40,151 @@ class AgentToolbox:
     def __init__(self, rag: NovelRAG):
         self.rag = rag
 
-    def list_books(self) -> ToolResult:
+    def query_library(
+        self,
+        *,
+        domain: str = "books",
+        operation: str = "list",
+        novel: str | None = None,
+        chapter: str | None = None,
+        limit: int = 100,
+    ) -> ToolResult:
+        """查询小说的结构化目录；参数是受限 DSL，不接受任意 SQL。
+
+        同一个能力接口可以覆盖书籍、章节和片段统计，避免为每一种问法增加工具。
+        返回的事实声明为 complete，表示查询范围内的数据来自数据库聚合结果，而不是
+        top-k 召回片段。
+        """
+        allowed_domains = {"books", "chapters", "chunks"}
+        allowed_operations = {"list", "count"}
+        if domain not in allowed_domains or operation not in allowed_operations:
+            raise ValueError("query_library 的 domain/operation 不受支持")
+        limit = max(1, min(int(limit), 100))
         with connect() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT novel FROM novel_chunks ORDER BY novel"
-            ).fetchall()
-        books = [row["novel"] for row in rows]
-        return ToolResult("书架包含：" + ("、".join(books) if books else "（空）"))
+            if domain == "books":
+                if operation == "count":
+                    row = conn.execute(
+                        "SELECT COUNT(DISTINCT novel) AS total FROM novel_chunks"
+                    ).fetchone()
+                    total = int(row["total"])
+                    return ToolResult(
+                        f"书架共有 {total} 部小说",
+                        facts={
+                            "kind": "library_query",
+                            "coverage": "complete",
+                            "domain": domain,
+                            "operation": operation,
+                            "total": total,
+                            "items": [],
+                        },
+                    )
+                rows = conn.execute(
+                    "SELECT DISTINCT novel FROM novel_chunks ORDER BY novel LIMIT %s",
+                    (limit + 1,),
+                ).fetchall()
+                complete = len(rows) <= limit
+                items = [row["novel"] for row in rows[:limit]]
+                return ToolResult(
+                    "书架包含：" + ("、".join(items) if items else "（空）"),
+                    facts={
+                        "kind": "library_query",
+                        "coverage": "complete" if complete else "bounded",
+                        "domain": domain,
+                        "operation": operation,
+                        "total": len(items),
+                        "items": items,
+                    },
+                )
+
+            clauses: list[str] = []
+            params: list[object] = []
+            if novel:
+                clauses.append("novel = %s")
+                params.append(novel)
+            if chapter and domain == "chunks":
+                clauses.append("chapter_title = %s")
+                params.append(chapter)
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+
+            if domain == "chapters":
+                if operation == "count":
+                    row = conn.execute(
+                        f"SELECT COUNT(DISTINCT chapter_title) AS total FROM novel_chunks{where}",
+                        tuple(params),
+                    ).fetchone()
+                    total = int(row["total"])
+                    return ToolResult(
+                        f"符合条件的章节共有 {total} 章",
+                        facts={
+                            "kind": "library_query",
+                            "coverage": "complete",
+                            "domain": domain,
+                            "operation": operation,
+                            "total": total,
+                            "items": [],
+                            "novel": novel,
+                        },
+                    )
+                rows = conn.execute(
+                    f"SELECT novel, chapter_title, COUNT(*) AS chunk_count "
+                    f"FROM novel_chunks{where} GROUP BY novel, chapter_title "
+                    f"ORDER BY novel, MIN(chunk_id) LIMIT %s",
+                    tuple(params) + (limit + 1,),
+                ).fetchall()
+                complete = len(rows) <= limit
+                items = [
+                    {
+                        "novel": row["novel"],
+                        "chapter_title": row["chapter_title"],
+                        "chunk_count": int(row["chunk_count"]),
+                    }
+                    for row in rows[:limit]
+                ]
+                return ToolResult(
+                    f"读取到 {len(items)} 个章节",
+                    facts={
+                        "kind": "library_query",
+                        "coverage": "complete" if complete else "bounded",
+                        "domain": domain,
+                        "operation": operation,
+                        "total": len(items),
+                        "items": items,
+                        "novel": novel,
+                    },
+                )
+
+            if operation == "count":
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS total FROM novel_chunks{where}",
+                    tuple(params),
+                ).fetchone()
+                total = int(row["total"])
+                return ToolResult(
+                    f"符合条件的片段共有 {total} 段",
+                    facts={
+                        "kind": "library_query",
+                        "coverage": "complete",
+                        "domain": domain,
+                        "operation": operation,
+                        "total": total,
+                        "items": [],
+                        "novel": novel,
+                        "chapter": chapter,
+                    },
+                )
+            raise ValueError("chunks 目前只支持 count 操作")
+
+    def list_books(self) -> ToolResult:
+        """兼容旧 action；新规划应使用 query_library(domain=books)。"""
+        result = self.query_library(domain="books", operation="list")
+        items = list(result.facts.get("items", []))
+        result.facts = {
+            "kind": "book_catalog",
+            "coverage": result.facts.get("coverage", "complete"),
+            "book_count": len(items),
+            "books": items,
+        }
+        return result
 
     def _resolve_novel(self, requested: str) -> str:
         """把规划器给的书名字符串解析成库里真实的 novel 主键。
@@ -81,7 +223,15 @@ class AgentToolbox:
     ) -> ToolResult:
         scoped_query = f"《{novel}》{query}" if novel else query
         sources = self.rag.retrieve_hybrid(scoped_query, top_k=max(1, min(limit, 8)))
-        return ToolResult(f"检索到 {len(sources)} 个相关原文片段", sources)
+        return ToolResult(
+            f"检索到 {len(sources)} 个相关原文片段",
+            sources,
+            facts={
+                "kind": "novel_passages",
+                "coverage": "partial",
+                "matched_count": len(sources),
+            },
+        )
 
     def read_neighbors(
         self, novel: str, chunk_id: int, radius: int = 1
@@ -96,7 +246,17 @@ class AgentToolbox:
                 (resolved, max(0, int(chunk_id) - radius), int(chunk_id) + radius),
             ).fetchall()
         sources = [_row_to_source(row) for row in rows]
-        return ToolResult(f"读取片段 #{chunk_id} 前后共 {len(sources)} 段", sources)
+        return ToolResult(
+            f"读取片段 #{chunk_id} 前后共 {len(sources)} 段",
+            sources,
+            facts={
+                "kind": "neighbor_context",
+                "coverage": "bounded",
+                "novel": resolved,
+                "center_chunk_id": int(chunk_id),
+                "returned_count": len(sources),
+            },
+        )
 
     def get_chapter(
         self, novel: str, chapter_title: str, limit: int = 8
@@ -110,9 +270,28 @@ class AgentToolbox:
                 (resolved, f"%{chapter_title}%", max(1, min(int(limit), 12))),
             ).fetchall()
         sources = [_row_to_source(row) for row in rows]
-        return ToolResult(f"章节“{chapter_title}”读取到 {len(sources)} 段原文", sources)
+        return ToolResult(
+            f"章节“{chapter_title}”读取到 {len(sources)} 段原文",
+            sources,
+            facts={
+                "kind": "chapter_passages",
+                "coverage": "bounded",
+                "novel": resolved,
+                "chapter_title": chapter_title,
+                "returned_count": len(sources),
+                "limit": max(1, min(int(limit), 12)),
+            },
+        )
 
     def execute(self, name: str, args: dict) -> ToolResult:
+        if name == "query_library":
+            return self.query_library(
+                domain=str(args.get("domain", "books")),
+                operation=str(args.get("operation", "list")),
+                novel=str(args["novel"]) if args.get("novel") else None,
+                chapter=str(args["chapter"]) if args.get("chapter") else None,
+                limit=int(args.get("limit", 100)),
+            )
         if name == "list_books":
             return self.list_books()
         if name == "search_novels":
@@ -149,7 +328,8 @@ def _row_to_source(row: dict) -> SourceChunk:
 
 _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个工具，不要直接回答。
 可用工具：
-- list_books: {{}}
+- query_library: {{"domain": "books|chapters|chunks", "operation": "list|count", "novel": "可选", "chapter": "可选", "limit": 1到100}}
+- list_books: {{}}（兼容旧 action，优先使用 query_library）
 - search_novels: {{"query": "检索问题", "novel": "可选书名", "limit": 1到8}}
 - read_neighbors: {{"novel": "书名", "chunk_id": 片段号, "radius": 0到3}}
 - get_chapter: {{"novel": "书名", "chapter_title": "章节名", "limit": 1到12}}
@@ -159,13 +339,122 @@ _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个
 1. 没有证据时不能 answer；先搜索或列书。
 2. 证据上下文不完整时可以读相邻片段或整章。
 3. 证据足够就选择 answer_with_citations，不要无意义重复搜索。
-4. 只输出一个 JSON 对象：
+4. “一共/全部/有哪些/多少”等全集问题必须选择能声明 `coverage=complete` 的工具；
+   搜索片段是 partial，不能用召回数量推断全集数量。
+5. 只输出一个 JSON 对象：
    {{"reason": "一句可展示的理由", "tool": "工具名", "args": {{...}}}}
 
 用户问题：{question}
 已有观察：
 {observations}
 """
+
+
+# 这里识别的是“问题需要什么覆盖范围”，不是为某一句用户话术写分支。
+# 后续增加人物目录、章节目录等完整工具时，只需给工具返回对应 kind/coverage，
+# 不必再把每一种自然语言问法硬编码进最终回答逻辑。
+_CATALOG_QUESTION_RE = re.compile(
+    r"(?:一共有|共有|总共有|多少部|几部|多少本|几本|有哪些小说|哪些书|所有小说|全部小说|书架)"
+)
+_EXHAUSTIVE_MARKER_RE = re.compile(r"(?:全部|所有|完整|一共|总共|共有|有哪些|多少|几部|几本|列出)")
+
+
+def _question_scope(question: str) -> str:
+    """返回问题所需的证据覆盖范围：catalog / library / exhaustive / open。"""
+    text = question.strip()
+    if _CATALOG_QUESTION_RE.search(text) and not re.search(r"章节|片段|段落", text):
+        return "catalog"
+    if re.search(r"章节|片段|段落", text) and _EXHAUSTIVE_MARKER_RE.search(text):
+        return "library"
+    if _EXHAUSTIVE_MARKER_RE.search(text):
+        return "exhaustive"
+    return "open"
+
+
+def _library_action_for_question(question: str) -> dict[str, object]:
+    """为结构化问题选择查询维度，不绑定某个具体自然语言问法。"""
+    text = question.strip()
+    if re.search(r"片段|段落", text) and re.search(r"多少|几|数量|总", text):
+        return {"domain": "chunks", "operation": "count"}
+    if re.search(r"章节|章", text):
+        return {"domain": "chapters", "operation": "list"}
+    return {"domain": "books", "operation": "list"}
+
+
+def _catalog_answer(question: str, facts: list[dict[str, object]]) -> str | None:
+    """用完整目录事实回答目录问题；没有完整事实就返回 None，禁止猜测。"""
+    if _question_scope(question) != "catalog":
+        return None
+    catalog = next(
+        (
+            item
+            for item in reversed(facts)
+            if item.get("kind") in {"book_catalog", "library_query"}
+            and item.get("coverage") == "complete"
+            and (
+                item.get("kind") == "book_catalog"
+                or item.get("domain") == "books"
+            )
+        ),
+        None,
+    )
+    if catalog is None:
+        return None
+    books = [
+        str(book)
+        for book in catalog.get("books", catalog.get("items", []))
+    ]
+    count = int(catalog.get("book_count", catalog.get("total", len(books))))
+    if not books:
+        return "当前书架中没有已建立索引的小说。"
+    return f"当前书架一共有 {count} 部小说：" + "、".join(books) + "。"
+
+
+def _library_answer(question: str, facts: list[dict[str, object]]) -> str | None:
+    """对可直接由完整目录事实计算的问题给出确定答案。"""
+    if _question_scope(question) != "library":
+        return None
+    result = next(
+        (
+            item
+            for item in reversed(facts)
+            if item.get("kind") == "library_query"
+            and item.get("coverage") == "complete"
+        ),
+        None,
+    )
+    if result is None:
+        return None
+    domain = result.get("domain")
+    operation = result.get("operation")
+    total = int(result.get("total", 0))
+    if domain == "chunks" and operation == "count":
+        return f"符合当前条件的片段共有 {total} 段。"
+    if domain == "chapters" and operation == "count":
+        return f"符合当前条件的章节共有 {total} 章。"
+    if domain == "chapters" and operation == "list":
+        items = result.get("items", [])
+        names = [
+            f"《{item['novel']}》{item['chapter_title']}"
+            for item in items
+            if isinstance(item, dict) and item.get("chapter_title")
+        ]
+        return f"共找到 {len(names)} 个章节：" + "、".join(names) + "。"
+    return None
+
+
+def _facts_prompt(facts: list[dict[str, object]]) -> str:
+    """把结构化事实附加给回答模型，并明确每条事实的覆盖边界。"""
+    if not facts:
+        return ""
+    payload = json.dumps(facts[-8:], ensure_ascii=False)
+    return (
+        "\n\n【结构化工具事实】\n"
+        f"{payload}\n"
+        "事实的 coverage=complete 才能支持全集、总数和全部列表；"
+        "partial/bounded 只能支持召回到的局部内容。若问题要求完整范围但没有"
+        "complete 事实，必须明确说明无法从当前证据确定，不要把片段数量当总数。"
+    )
 
 
 def _parse_action(raw: str) -> dict:
@@ -208,6 +497,8 @@ def run_agent(
     toolbox = AgentToolbox(rag)
     observations: list[dict] = []
     source_registry: dict[str, SourceChunk] = {}
+    # 与原文证据分开保存；原文可能是 top-k 局部召回，不能代表数据库全集。
+    fact_registry: list[dict[str, object]] = []
     seen_actions: set[str] = set()
     # 同一个工具连续失败的次数，只按工具名计数、不看具体参数。
     #
@@ -251,6 +542,16 @@ def run_agent(
                     }
                 )
 
+            # 对需要全集范围的目录问题，第一步固定读取完整目录。
+            # 这是通用的“覆盖范围门禁”，不是对某个最终答案字符串做特判。
+            if step == 1 and _question_scope(question) in {"catalog", "library"}:
+                library_args = _library_action_for_question(question)
+                action = {
+                    "reason": "这是结构化范围问题，先读取 coverage=complete 的目录事实",
+                    "tool": "query_library",
+                    "args": library_args,
+                }
+
         tool = str(action.get("tool", ""))
         args = action.get("args") or {}
         reason = str(action.get("reason", "未提供理由"))[:240]
@@ -287,9 +588,18 @@ def run_agent(
                     "source_ids": requested or list(source_registry),
                 }
                 yield "sources", selected
-                prompt = rag.build_prompt(question, selected)
-                for token in answerer(prompt):
-                    yield "token", token
+                deterministic = _catalog_answer(question, fact_registry) or _library_answer(
+                    question, fact_registry
+                )
+                if deterministic is not None:
+                    # 数据库目录是确定性元数据，不再让模型从 top-k 片段猜总数。
+                    yield "token", deterministic
+                else:
+                    prompt = rag.build_prompt(question, selected) + _facts_prompt(
+                        fact_registry
+                    )
+                    for token in answerer(prompt):
+                        yield "token", token
                 yield "done", {}
                 return
 
@@ -310,6 +620,8 @@ def run_agent(
                     key = f"S{len(source_registry) + 1}"
                     source_registry[key] = source
                 source_ids.append(key)
+            if result.facts:
+                fact_registry.append(dict(result.facts))
             observation = result.summary
             tool_failure_streak[tool] = 0
         except Exception as exc:
