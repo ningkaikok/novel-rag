@@ -175,6 +175,19 @@ def _mentions_novel(question: str, novel: str) -> bool:
 _ENDING_MARKERS = ("全书完", "（大结局）", "(大结局)", "大结局", "全文完", "尾声")
 
 
+_LIBRARY_QUESTION_RE = re.compile(
+    r"(?:一共有|共有|总共有|多少部|几部|多少本|几本|有哪些小说|哪些书|所有小说|全部小说|书架)"
+)
+
+
+def _is_library_question(question: str) -> bool:
+    """判断问题是否在问书架的完整目录，而不是小说正文内容。"""
+    text = question.strip()
+    return bool("小说" in text and _LIBRARY_QUESTION_RE.search(text)) or bool(
+        "书架" in text and re.search(r"(?:有|包含|多少|几|哪些|全部)", text)
+    )
+
+
 def _find_ending_anchor(conn, novel: str) -> int | None:
     """找出正文结局所在的片段编号；找不到标记时返回 None（调用方退回文件末尾）。
 
@@ -318,6 +331,25 @@ class NovelRAG:
         self.embedder = embedder or load_embedder()
         if not has_index():
             raise RuntimeError("PostgreSQL novel_chunks 表不存在，请先重建索引")
+
+    def library_answer(self, question: str) -> str | None:
+        """回答书架目录问题，避免把 top-k 召回范围误当成全集。
+
+        这是结构化元数据查询，不经过 embedding、BM25、RRF 或 LLM。完整目录问题
+        的正确性来自数据库的 ``DISTINCT novel``，而不是来自某一批碰巧召回的片段。
+        非目录问题返回 ``None``，继续走普通 RAG 流程。
+        """
+        if not _is_library_question(question):
+            return None
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT novel FROM novel_chunks ORDER BY novel"
+            ).fetchall()
+        novels = [str(row["novel"]) for row in rows]
+        if not novels:
+            return "当前书架中没有已建立索引的小说。"
+        titles = [_display_title(novel) for novel in novels]
+        return f"当前书架一共有 {len(titles)} 部小说：" + "、".join(titles) + "。"
 
     def retrieve(
         self,
