@@ -268,6 +268,17 @@ class _FakeRag:
     def build_prompt(self, question, sources):
         return f"问题：{question}"
 
+
+class _LibraryRag:
+    """目录问题不应触发普通向量/BM25 检索或模型生成。"""
+
+    def library_answer(self, question):
+        assert question == "现在一共有几部小说"
+        return "当前书架一共有 4 部小说：《凡人修仙传》、《诡秘之主》、《降龙》、《雾隐山庄》。"
+
+    def retrieve_hybrid_stream(self, *_args, **_kwargs):
+        raise AssertionError("目录问题不应进入片段检索")
+
 def test_ask_streams_trace_sources_and_tokens(client, monkeypatch):
     main.state["rag"] = _FakeRag()
     main.state["model"] = "fake-model"  # 不带 claude:/glm: 前缀，走本地 Ollama 适配器
@@ -294,6 +305,25 @@ def test_ask_streams_trace_sources_and_tokens(client, monkeypatch):
     assert 'data: "顾长"' in body
     assert 'data: "风。"' in body
     assert "event: done" in body
+
+
+def test_library_question_answers_from_complete_catalog(client, monkeypatch):
+    main.state["rag"] = _LibraryRag()
+    main.state["model"] = "fake-model"
+    monkeypatch.setattr(
+        main,
+        "generate_ollama_prompt_stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("目录事实不应调用模型猜测")
+        ),
+    )
+
+    resp = client.post("/api/ask", json={"question": "现在一共有几部小说"})
+
+    assert resp.status_code == 200
+    assert "结构化查询" in resp.text
+    assert "当前书架一共有 4 部小说" in resp.text
+    assert "event: sources\ndata: []" in resp.text
 
 
 def test_ask_without_index_returns_409(client):

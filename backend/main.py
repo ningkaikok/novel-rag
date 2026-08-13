@@ -492,28 +492,42 @@ async def ask(req: AskRequest, request: Request):
 
         sources = []
         context_sources = []
+        structured_answer: str | None = None
         if decision.route is AnswerMode.grounded:
             # 上面已经保证 grounded 路径下 rag 不为 None；assert 也让类型和不变量
             # 对阅读代码的人保持一致，而不是在后面散落一串 if rag。
             assert rag is not None
-            step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
-            while True:
-                # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
-                # 每个 await 都是一次让出控制权的机会。
-                item = await run_in_threadpool(_next_or_sentinel, step_iter)
-                if item is _SENTINEL:
-                    break
-                kind, value = item
-                if kind == "result":
-                    sources = value
-                    continue
-                # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
-                # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
-                payload_step = TraceStep(**value).model_dump()
-                trace_payload.append(payload_step)
-                yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+            structured_answer = getattr(rag, "library_answer", lambda _q: None)(
+                search_question
+            )
+            if structured_answer is not None:
+                # 目录问题使用完整数据库事实，不能让 top-k 召回范围决定答案。
+                structured_step = TraceStep(
+                    step="结构化查询",
+                    detail="问题需要书架完整目录，已跳过局部片段召回并直接读取数据库元数据",
+                    ms=0,
+                ).model_dump()
+                trace_payload.append(structured_step)
+                yield f"event: step\ndata: {json.dumps(structured_step, ensure_ascii=False)}\n\n"
+            else:
+                step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+                while True:
+                    # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
+                    # 每个 await 都是一次让出控制权的机会。
+                    item = await run_in_threadpool(_next_or_sentinel, step_iter)
+                    if item is _SENTINEL:
+                        break
+                    kind, value = item
+                    if kind == "result":
+                        sources = value
+                        continue
+                    # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
+                    # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
+                    payload_step = TraceStep(**value).model_dump()
+                    trace_payload.append(payload_step)
+                    yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
 
-            context_sources = rag.expand_neighbors(sources)
+                context_sources = rag.expand_neighbors(sources)
         # 引用编号必须与模型看到的 context_sources 一一对应。之前只把最初 top-k
         # 发给前端、邻居片段只给模型；加了 [n] 后那会导致模型引用 [4]，界面却只有
         # 3 张卡片。现在 SSE、历史记录和 prompt 共用同一份最终上下文来源。
@@ -533,14 +547,18 @@ async def ask(req: AskRequest, request: Request):
         # claude:xxx → 本地 Claude Code CLI（用户自己的订阅）
         # glm:xxx    → 智谱开放平台（用户自己的 ZHIPU_API_KEY）
         # 其余       → 本地 Ollama
-        prompt = (
-            rag.build_prompt(req.question, context_sources)
-            if decision.route is AnswerMode.grounded and rag is not None
-            else build_free_prompt(req.question)
-        )
-        # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
-        # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
-        token_iter = _generate_for_model(prompt, model)
+        if structured_answer is not None:
+            # 结构化目录事实是确定结果，不再让模型从局部片段中猜测。
+            token_iter = iter([structured_answer])
+        else:
+            prompt = (
+                rag.build_prompt(req.question, context_sources)
+                if decision.route is AnswerMode.grounded and rag is not None
+                else build_free_prompt(req.question)
+            )
+            # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
+            # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
+            token_iter = _generate_for_model(prompt, model)
 
         parts: list[str] = []
         interrupted = False

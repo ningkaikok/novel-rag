@@ -32,6 +32,29 @@ ROWS = [
 ]
 
 
+def test_library_answer_uses_distinct_books_not_retrieved_fragments():
+    """书架总数必须来自完整目录查询，而不是 top-k 命中的小说数量。"""
+    rows = [
+        {"novel": "《凡人修仙传》（校对版全本+番外）作者：忘语"},
+        {"novel": "降龙"},
+        {"novel": "雾隐山庄"},
+        {"novel": "《诡秘之主》（精校版全本）作者：爱潜水的乌贼"},
+    ]
+    conn = MagicMock()
+    conn.__enter__.return_value = conn
+    conn.execute.return_value.fetchall.return_value = rows
+    with patch.object(rag, "connect", lambda: conn):
+        answer = _rag().library_answer("现在一共有几部小说")
+
+    assert answer == "当前书架一共有 4 部小说：《凡人修仙传》、《降龙》、《雾隐山庄》、《诡秘之主》。"
+
+
+def test_library_answer_ignores_normal_content_questions():
+    with patch.object(rag, "connect") as connect:
+        assert _rag().library_answer("韩立后来去了哪里") is None
+        connect.assert_not_called()
+
+
 def _rag():
     with patch.object(rag, "has_index", return_value=True):
         return rag.NovelRAG(embedder=MagicMock())
