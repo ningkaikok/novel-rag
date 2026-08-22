@@ -22,7 +22,7 @@ jobs:
         working-directory: frontend
         run: npm ci
       # 前端 job 同时需要 Python 工具链：类型契约的源头在 FastAPI 的 Pydantic 模型里
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: 安装后端依赖（导出 OpenAPI 用）
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           # uv.lock 是唯一事实来源：CI 用 --frozen 确保没人手改依赖没更新锁
           enable-cache: true
