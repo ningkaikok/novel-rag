@@ -3,7 +3,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/ningkaikok/novel-rag/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ningkaikok/novel-rag/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ningkaikok/novel-rag?label=release&color=orange)](https://github.com/ningkaikok/novel-rag/releases/latest)
 [![License](https://img.shields.io/github/license/ningkaikok/novel-rag?label=License&color=blue)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](requirements.txt)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](pyproject.toml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](pyproject.toml)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 [![React](https://img.shields.io/badge/React-18-20232a?logo=react&logoColor=61DAFB)](frontend/package.json)
 
 > 一个把 RAG 做「透明」的中文小说问答系统：每次回答都能逐层展开向量、BM25、RRF 融合与重排的候选排名、分数变化和耗时，看清答案是怎么被找出来的 —— 以及在哪一步被弄丢的。
@@ -107,13 +109,15 @@ novel-rag/
    export DATABASE_URL=postgresql://user:password@127.0.0.1:5432/novel_rag
    ```
 
-3. 创建 Python 虚拟环境并安装依赖（**注意：需要 Python 3.11/3.12/3.13**，3.14 太新，`tokenizers` 等库还没有对应的预编译包）：
+3. 安装 [uv](https://docs.astral.sh/uv/) 并同步 Python 依赖（**需要 Python 3.11/3.12/3.13**，3.14 太新，`tokenizers` 等库还没有对应的预编译包）。`uv sync` 会按 `uv.lock` 锁定版本创建 `.venv`，保证和 CI 完全一致：
 
    ```bash
-   python3.12 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   # macOS: brew install uv；或 curl -LsSf https://astral.sh/uv/install.sh | sh
+   uv sync
+   source .venv/bin/activate
    ```
+
+   开发工具（ruff / pyright / pre-commit）在 dev 依赖组里，`uv sync` 一并装好。提交前建议启用 Git 钩子：`uv run pre-commit install`。
 
 4. 安装前端依赖（需要 Node.js 18+）：
 
@@ -139,7 +143,7 @@ novel-rag/
 **终端 1 — 后端 API（端口 8000）：**
 
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn backend.main:app --port 8000
 ```
 
@@ -204,7 +208,7 @@ ZHIPU_API_KEY=另一个key uvicorn backend.main:app --port 8000
 如果你是手动往 `data/novels/` 放的文件，或想在命令行同步：
 
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
 python src/ingest.py
 ```
 

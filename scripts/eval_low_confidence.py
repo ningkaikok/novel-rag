@@ -33,6 +33,7 @@ confidence.py 里的 SCORE_GAP_LOW / TERM_COVERAGE_MIN 目前是**经验占位�
   会误触发无谓的补救。
 - 分箱表：每个信号按取值分箱。阈值应画在「命中率开始明显下滑」的箱边界上。
 """
+
 import argparse
 import sys
 from collections import defaultdict
@@ -43,11 +44,12 @@ sys.path.insert(0, str(ROOT / "src"))
 # 直接复用 eval_retrieval 的评测集加载与命中判定，避免两套口径各自漂移。
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from eval_retrieval import FETCH_K, first_hit_rank, load_cases  # noqa: E402
+
+from confidence import SCORE_GAP_LOW, TERM_COVERAGE_MIN, compute_confidence  # noqa: E402
 from embedder import load_embedder  # noqa: E402
 from rag import NovelRAG  # noqa: E402
 from reranker import rerank_with_scores  # noqa: E402
-from confidence import compute_confidence, SCORE_GAP_LOW, TERM_COVERAGE_MIN  # noqa: E402
-from eval_retrieval import first_hit_rank, load_cases, FETCH_K  # noqa: E402
 
 
 def collect(rag: NovelRAG, cases: list[dict]) -> list[dict]:
@@ -83,7 +85,9 @@ def print_threshold_table(rows: list[dict]) -> None:
     normal = [r for r in rows if not r["is_low_confidence"]]
     print()
     print("=" * 72)
-    print(f"当前阈值判定（score_gap<{SCORE_GAP_LOW} 叠加跨书≤1，或 term_coverage<{TERM_COVERAGE_MIN}）")
+    print(
+        f"当前阈值判定（score_gap<{SCORE_GAP_LOW} 叠加跨书≤1，或 term_coverage<{TERM_COVERAGE_MIN}）"
+    )
     print("=" * 72)
     for label, group in (("低置信", low), ("正常", normal)):
         n, rate = _rate(group)
@@ -156,10 +160,7 @@ def main() -> None:
     print("=" * 72)
     print("逐条信号明细")
     print("=" * 72)
-    print(
-        f"{'ID':<5} {'gap':>7} {'覆盖':>6} {'跨书':>4} "
-        f"{'低置信':<6} {'命中':<4} 问题"
-    )
+    print(f"{'ID':<5} {'gap':>7} {'覆盖':>6} {'跨书':>4} {'低置信':<6} {'命中':<4} 问题")
     for r in rows:
         flag = "⚠" if r["is_low_confidence"] else ""
         mark = "✅" if r["hit"] else "❌"
@@ -183,7 +184,11 @@ def main() -> None:
     )
     print_bins(
         "cross_book_dispersion（候选跨越几本书）",
-        lambda r: f"{min(r['cross_book_dispersion'], 4)} 本" if r["cross_book_dispersion"] < 4 else "≥4 本",
+        lambda r: (
+            f"{min(r['cross_book_dispersion'], 4)} 本"
+            if r["cross_book_dispersion"] < 4
+            else "≥4 本"
+        ),
         rows,
         ["1 本", "2 本", "3 本", "≥4 本"],
     )

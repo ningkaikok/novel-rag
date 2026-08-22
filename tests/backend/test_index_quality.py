@@ -1,4 +1,5 @@
 """M3.3 索引质量门禁：用轻量 tokenizer/model 替身验证真实规则。"""
+
 import pytest
 
 from index_quality import (

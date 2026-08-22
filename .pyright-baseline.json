@@ -1,0 +1,218 @@
+[
+ {
+  "file": "backend/main.py",
+  "line": 204,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot assign to attribute \"expand_generate_fn\" for class \"NovelRAG\"\n  Expression of type \"(prompt: Unknown) -> Iterator"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 602,
+  "rule": "reportGeneralTypeIssues",
+  "message": "\"object\" is not iterable\n  \"__iter__\" method not defined"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 667,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"Unknown | object\" cannot be assigned to parameter \"object\" of type \"str\" in function \"append\"\n  Type \""
+ },
+ {
+  "file": "backend/main.py",
+  "line": 682,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"close\" for class \"Iterator[str]\"\n  Attribute \"close\" is unknown"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 767,
+  "rule": "reportGeneralTypeIssues",
+  "message": "\"object\" is not iterable\n  \"__iter__\" method not defined"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 790,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"close\" for class \"Iterator[tuple[str, object]]\"\n  Attribute \"close\" is unknown"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 793,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"close\" for class \"Iterator[tuple[str, object]]\"\n  Attribute \"close\" is unknown"
+ },
+ {
+  "file": "backend/main.py",
+  "line": 819,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"list[dict[Unknown, Unknown]]\" cannot be assigned to parameter \"turns\" of type \"list[StoredTurn]\" in fu"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 113,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"str\" cannot be assigned to parameter \"query\" of type \"QueryNoTemplate\" in function \"execute\"\n  Type \"s"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 130,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"str\" cannot be assigned to parameter \"query\" of type \"QueryNoTemplate\" in function \"execute\"\n  Type \"s"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 159,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"str\" cannot be assigned to parameter \"query\" of type \"QueryNoTemplate\" in function \"execute\"\n  Type \"s"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 181,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"object\" cannot be assigned to parameter \"iterable\" of type \"Iterable[_T@list]\" in function \"__init__\"\n"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 399,
+  "rule": "reportGeneralTypeIssues",
+  "message": "\"object\" is not iterable\n  \"__iter__\" method not defined"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 400,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"o"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 400,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"o"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 422,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"o"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 422,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"o"
+ },
+ {
+  "file": "src/agent_lab.py",
+  "line": 431,
+  "rule": "reportGeneralTypeIssues",
+  "message": "\"object\" is not iterable\n  \"__iter__\" method not defined"
+ },
+ {
+  "file": "src/generation_mixin.py",
+  "line": 153,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"retrieve\" for class \"GenerationMixin*\"\n  Attribute \"retrieve\" is unknown"
+ },
+ {
+  "file": "src/postgres.py",
+  "line": 62,
+  "rule": "reportAssignmentType",
+  "message": "Type \"ConnectionPool[CT@ConnectionPool]\" is not assignable to declared type \"ConnectionPool[Connection[TupleRow]] | None"
+ },
+ {
+  "file": "src/postgres.py",
+  "line": 86,
+  "rule": "reportReturnType",
+  "message": "Type \"Connection[TupleRow]\" is not assignable to return type \"AbstractContextManager[Connection[DictRow], bool | None]\"\n"
+ },
+ {
+  "file": "src/postgres.py",
+  "line": 86,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"(cursor: BaseCursor[Any, Any]) -> RowMaker[DictRow]\" cannot be assigned to parameter \"row_factory\" of "
+ },
+ {
+  "file": "src/rag.py",
+  "line": 276,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"dict[str, Unknown] | list[SourceChunk] | Any\" cannot be assigned to parameter \"object\" of type \"dict[U"
+ },
+ {
+  "file": "src/rag.py",
+  "line": 278,
+  "rule": "reportAssignmentType",
+  "message": "Type \"dict[str, Unknown] | list[SourceChunk] | Any\" is not assignable to declared type \"list[SourceChunk]\"\n  Type \"dict["
+ },
+ {
+  "file": "src/rag.py",
+  "line": 710,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"novel\" for class \"str\"\n  Attribute \"novel\" is unknown"
+ },
+ {
+  "file": "src/rag.py",
+  "line": 710,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"chunk_id\" for class \"str\"\n  Attribute \"chunk_id\" is unknown"
+ },
+ {
+  "file": "src/rag.py",
+  "line": 710,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"str | SourceChunk | Any\" cannot be assigned to parameter \"default\" of type \"SourceChunk\" in function \""
+ },
+ {
+  "file": "src/reranker.py",
+  "line": 111,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"text\" for class \"object*\"\n  Attribute \"text\" is unknown"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 46,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"embedder\" for class \"RetrievalMixin*\"\n  Attribute \"embedder\" is unknown"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 182,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"str\" cannot be assigned to parameter \"query\" of type \"QueryNoTemplate\" in function \"execute\"\n  Type \"s"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 459,
+  "rule": "reportAttributeAccessIssue",
+  "message": "Cannot access attribute \"embedder\" for class \"RetrievalMixin*\"\n  Attribute \"embedder\" is unknown"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 461,
+  "rule": "reportAssignmentType",
+  "message": "Type \"dict[tuple[str, str] | tuple[Literal['single'], int], list[SourceChunk]]\" is not assignable to declared type \"dict"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 488,
+  "rule": "reportCallIssue",
+  "message": "No overloads for \"sum\" match the provided arguments"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 489,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"Generator[int | None, None, None]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[_Suppo"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 544,
+  "rule": "reportCallIssue",
+  "message": "No overloads for \"sum\" match the provided arguments"
+ },
+ {
+  "file": "src/retrieval_mixins.py",
+  "line": 544,
+  "rule": "reportArgumentType",
+  "message": "Argument of type \"Generator[int | None, None, None]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[_Suppo"
+ }
+]

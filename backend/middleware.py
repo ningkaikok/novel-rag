@@ -11,6 +11,7 @@ SSE 流式接口是致命的——用户要等生成完全结束才能收到第�
 http.response.start 这一条消息上追加响应头，其余消息（包括每一个
 http.response.body chunk）原样透传，不缓冲、不等待。
 """
+
 import time
 import uuid
 
@@ -49,9 +50,7 @@ class RequestIDMiddleware:
             if message["type"] == "http.response.start":
                 status_holder["status"] = message["status"]
                 message.setdefault("headers", [])
-                message["headers"].append(
-                    (b"x-request-id", request_id.encode("latin-1"))
-                )
+                message["headers"].append((b"x-request-id", request_id.encode("latin-1")))
             await send(message)
 
         logger.info(f"{method} {path} 开始")

@@ -6,6 +6,7 @@
 3. token 预算截断的方向（从命中向两侧丢最远的片段）与 trace 记录；
 4. tokenizer 不可用时不假装闸门存在，trace 如实记录。
 """
+
 import types
 from unittest.mock import patch
 
@@ -78,14 +79,9 @@ class _FakeConn:
                         continue
                     for row in rows:
                         key = (novel, row["chunk_id"])
-                        if (
-                            low <= row["chunk_id"] <= high
-                            and key not in seen
-                        ):
+                        if low <= row["chunk_id"] <= high and key not in seen:
                             seen.add(key)
-                            collected.append(
-                                dict(row, novel=novel, chapter_title=title)
-                            )
+                            collected.append(dict(row, novel=novel, chapter_title=title))
             result.fetchall = lambda: collected
         return result
 
@@ -189,8 +185,7 @@ def test_chapter_mode_truncates_outward_from_hits_within_budget(monkeypatch):
         result, step = service.build_answer_context(sources)
 
     assert [c.chunk_id for c in result] == [4, 5, 6], (
-        "截断方向必须从命中向两侧对称生长：离命中最近的片段优先保留，"
-        "离得最远的先被丢掉"
+        "截断方向必须从命中向两侧对称生长：离命中最近的片段优先保留，离得最远的先被丢掉"
     )
     assert step["evidence_tokens"] == 30
     assert step["evidence_tokens"] <= 35, "硬性闸门：拼入 prompt 的证据不得超预算"

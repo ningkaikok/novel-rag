@@ -1,4 +1,5 @@
 """Agent Lab 的有限步循环测试：不调用真实模型和 PostgreSQL。"""
+
 import json
 
 import pytest
@@ -163,9 +164,7 @@ def test_agent_never_exceeds_step_limit_and_refuses_without_evidence(monkeypatch
     assert len(steps) == 3
     assert max(step["step"] for step in steps) == 3
     assert not any(kind == "sources" for kind, _value in events)
-    assert "无法给出有依据的回答" in next(
-        value for kind, value in events if kind == "token"
-    )
+    assert "无法给出有依据的回答" in next(value for kind, value in events if kind == "token")
 
 
 def test_invalid_planner_output_falls_back_to_search(monkeypatch):

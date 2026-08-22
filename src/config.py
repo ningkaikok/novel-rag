@@ -52,9 +52,7 @@ elif _legacy_enabled == "0" and "CONTEXTUAL_MODE" not in os.environ:
 # 《凡人修仙传》19501 个片段、《诡秘之主》11948 个——就算只处理 35% 也要好几小时，
 # 默认值刻意设在它们之下、《降龙》(1278) 之上，避免手一滑跑一整夜。auto 档也用它
 # 作为"大书/小书"的分界线。
-CONTEXTUAL_MAX_CHUNKS_PER_BOOK = int(
-    os.environ.get("CONTEXTUAL_MAX_CHUNKS_PER_BOOK", 2000)
-)
+CONTEXTUAL_MAX_CHUNKS_PER_BOOK = int(os.environ.get("CONTEXTUAL_MAX_CHUNKS_PER_BOOK", 2000))
 # 生成上下文用的模型。用便宜的小模型就够——它只是写一句话，不需要推理能力。
 CONTEXTUAL_MODEL = os.environ.get("CONTEXTUAL_MODEL", "glm:glm-4-flash")
 # 并发数。实测单次 4.4 秒，451 个片段串行 33 分钟、8 路并发约 4 分钟。
@@ -79,7 +77,7 @@ QUERY_EXPAND_MODEL = os.environ.get("QUERY_EXPAND_MODEL", QUERY_REWRITE_MODEL)
 # 而变体之间措辞越往后越发散、语义漂移风险越大，边际收益很快变负。
 QUERY_EXPAND_MAX_VARIANTS = int(os.environ.get("QUERY_EXPAND_MAX_VARIANTS", 3))
 
-CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))       # 每个片段的字符数上限
+CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))  # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
 
 # 本地 Ollama 服务
@@ -154,22 +152,16 @@ if CHAPTER_EXPANSION_MODE not in {"off", "neighbors", "chapter"}:
 # 数代替，否则闸门量纲就是错的。3000 tokens 约合 4000+ 中文字，覆盖绝大多数章节；
 # 单章超过这个预算本身就说明「整章」粒度对这个语料太粗，截断并记录到 trace 里供
 # 评测复盘。
-CHAPTER_EXPANSION_MAX_TOKENS = int(
-    os.environ.get("CHAPTER_EXPANSION_MAX_TOKENS", 3000)
-)
+CHAPTER_EXPANSION_MAX_TOKENS = int(os.environ.get("CHAPTER_EXPANSION_MAX_TOKENS", 3000))
 
 # --- 层级检索（片段 → 章节摘要 → 全书摘要，见 src/hierarchy.py）---
 # 默认开启且不调用 LLM：摘要采用可重复、无额外费用的抽取式策略。它们只负责
 # 帮系统定位“应该看哪些章节”，最终回答仍使用并引用 novel_chunks 里的原文。
 HIERARCHY_ENABLED = os.environ.get("HIERARCHY_ENABLED", "1") != "0"
 # 单个摘要控制在 embedding 模型能有效编码的范围内；不是生成模型的上下文上限。
-HIERARCHY_SUMMARY_MAX_CHARS = int(
-    os.environ.get("HIERARCHY_SUMMARY_MAX_CHARS", 800)
-)
+HIERARCHY_SUMMARY_MAX_CHARS = int(os.environ.get("HIERARCHY_SUMMARY_MAX_CHARS", 800))
 # 没有章节标题的 txt 按固定片段窗口构造“虚拟章节”，保证任何小说都能建立层级。
-HIERARCHY_UNTITLED_CHUNKS = int(
-    os.environ.get("HIERARCHY_UNTITLED_CHUNKS", 12)
-)
+HIERARCHY_UNTITLED_CHUNKS = int(os.environ.get("HIERARCHY_UNTITLED_CHUNKS", 12))
 # 全局问题最多选择多少个章节节点进入候选池。之后还会映射回原文并经过重排。
 HIERARCHY_TOP_K = int(os.environ.get("HIERARCHY_TOP_K", 6))
 
@@ -186,9 +178,7 @@ DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", 10))
 GRAPH_ENABLED = os.environ.get("GRAPH_ENABLED", "0") == "1"
 # 每个 (书, 关系类型) 最多采样多少个片段去抽人名。成本闸门：
 # 「师父」这类词能命中上千个片段，不设上限会让建图变得和全库抽取一样贵。
-GRAPH_MAX_CHUNKS_PER_RELATION = int(
-    os.environ.get("GRAPH_MAX_CHUNKS_PER_RELATION", 80)
-)
+GRAPH_MAX_CHUNKS_PER_RELATION = int(os.environ.get("GRAPH_MAX_CHUNKS_PER_RELATION", 80))
 # 抽人名用的模型（和 Contextual Retrieval 一样，便宜的小模型就够）
 GRAPH_MODEL = os.environ.get("GRAPH_MODEL", "glm:glm-4-flash")
 # 一个人名要在几个批次里都被认作人名，才算数。降噪用：

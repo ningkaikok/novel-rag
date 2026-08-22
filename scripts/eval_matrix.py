@@ -31,6 +31,7 @@
 - 只允许操作 novel_rag_eval_ 前缀的数据库，且默认跑完即删（--keep-db 可保留调试）
 - 语料固定用 tests/ci_corpus/（原创文本），绝不把版权小说带进实验库
 """
+
 import argparse
 import hashlib
 import json
@@ -221,7 +222,9 @@ def print_matrix(rows: list[dict]) -> None:
     print("-" * len(head))
     for row in rows:
         if row.get("error"):
-            print(f"{row['name']:<22} {row['fingerprint']:<14} ❌ 无效配置：{row['error'][:80]}")
+            print(
+                f"{row['name']:<22} {row['fingerprint']:<14} ❌ 无效配置：{row['error'][:80]}"
+            )
             continue
         line = (
             f"{row['name']:<22} {row['fingerprint']:<14} "
@@ -240,7 +243,7 @@ def main() -> None:
         "--config",
         action="append",
         metavar="JSON",
-        help="追加一个配置（如 '{\"name\":\"x\",\"env\":{\"CHUNK_SIZE\":\"300\"}}'）；"
+        help='追加一个配置（如 \'{"name":"x","env":{"CHUNK_SIZE":"300"}}\'）；'
         "可重复传多次。不传则使用默认的三档 chunk 对照",
     )
     parser.add_argument(
@@ -255,7 +258,9 @@ def main() -> None:
         help=f"评测集（默认 {TEST_SET}），应与语料配套",
     )
     parser.add_argument("--output", metavar="FILE", help="把完整结果写成 JSON 文件")
-    parser.add_argument("--keep-db", action="store_true", help="保留临时库供调试（默认跑完即删）")
+    parser.add_argument(
+        "--keep-db", action="store_true", help="保留临时库供调试（默认跑完即删）"
+    )
     args = parser.parse_args()
 
     if args.corpus_dir:

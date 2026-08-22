@@ -2,6 +2,7 @@
 
 不调真实 LLM——用假的生成函数验证调度逻辑：判据、缓存键、窗口、失败降级。
 """
+
 from dataclasses import dataclass
 
 from contextualizer import (

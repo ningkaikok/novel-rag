@@ -1,6 +1,6 @@
-import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Avatar, Collapse, Typography } from "antd";
-import type { AgentStep, RetrievalCandidate, Source, TraceStep } from "../api";
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Avatar, Collapse, Typography } from 'antd';
+import type { AgentStep, RetrievalCandidate, Source, TraceStep } from '../api';
 
 /** 毫秒转成人读的时长：1200 → "1.2s"，340 → "340ms" */
 function humanMs(ms: number): string {
@@ -8,7 +8,7 @@ function humanMs(ms: number): string {
 }
 
 export interface ChatMessage {
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
   sources?: Source[];
   trace?: TraceStep[];
@@ -26,10 +26,10 @@ const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
     <Collapse
       className="agent-run-panel"
       size="small"
-      defaultActiveKey={["agent"]}
+      defaultActiveKey={['agent']}
       items={[
         {
-          key: "agent",
+          key: 'agent',
           label: `🧪 Agent Lab · ${steps.length} 步`,
           children: (
             <ol className="agent-run-steps">
@@ -38,9 +38,7 @@ const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
                   <div className="agent-run-action">
                     <span className="agent-run-index">{step.step}</span>
                     <code>{step.tool}</code>
-                    {step.source_ids.length > 0 && (
-                      <span>{step.source_ids.join(" · ")}</span>
-                    )}
+                    {step.source_ids.length > 0 && <span>{step.source_ids.join(' · ')}</span>}
                   </div>
                   <div className="agent-run-reason">选择：{step.reason}</div>
                   <div className="agent-run-observation">观察：{step.observation}</div>
@@ -62,14 +60,8 @@ const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
 //   2. 收起时标题给一句有信息量的总结（"思考 1.4s · 5 步"），
 //      而不是干巴巴的"5 步"——收起状态才是大多数时候看到的状态
 //   3. 步骤逐条点亮，末尾留一个"进行中"的占位，让人知道还没完
-const Thinking = memo(function Thinking({
-  trace,
-  live,
-}: {
-  trace: TraceStep[];
-  live: boolean;
-}) {
-  const [activeKey, setActiveKey] = useState<string[]>(live ? ["t"] : []);
+const Thinking = memo(function Thinking({ trace, live }: { trace: TraceStep[]; live: boolean }) {
+  const [activeKey, setActiveKey] = useState<string[]>(live ? ['t'] : []);
   // 用户手动点过展开/收起之后，就不再自动替他做决定
   const touchedRef = useRef(false);
 
@@ -91,7 +83,7 @@ const Thinking = memo(function Thinking({
       }}
       items={[
         {
-          key: "t",
+          key: 't',
           label: (
             <span className="thinking-panel-label">
               🔍 思考过程
@@ -104,7 +96,7 @@ const Thinking = memo(function Thinking({
                 </span>
               ) : (
                 <span className="thinking-panel-count">
-                  {totalMs > 0 ? `${humanMs(totalMs)} · ` : ""}
+                  {totalMs > 0 ? `${humanMs(totalMs)} · ` : ''}
                   {trace.length} 步
                 </span>
               )}
@@ -148,23 +140,17 @@ const Thinking = memo(function Thinking({
 function shortName(novel: string): string {
   const m = novel.match(/《([^》]+)》/);
   if (m) return m[1];
-  return novel.length > 12 ? novel.slice(0, 12) + "…" : novel;
+  return novel.length > 12 ? novel.slice(0, 12) + '…' : novel;
 }
 
 /** 分数展示：BM25 等大分数量级用 1 位小数，向量相似度（-1~1）保留 4 位才有区分度。 */
-function formatScore(candidate: RetrievalCandidate): string {
-  if (candidate.score == null) return "—";
-  return Math.abs(candidate.score) >= 100
-    ? candidate.score.toFixed(1)
-    : candidate.score.toFixed(4);
+export function formatScore(candidate: RetrievalCandidate): string {
+  if (candidate.score == null) return '—';
+  return Math.abs(candidate.score) >= 100 ? candidate.score.toFixed(1) : candidate.score.toFixed(4);
 }
 
 /** 检索评测面板：同一个片段在各阶段的 rank 变化，比单看最终答案更能定位问题。 */
-const RetrievalEvaluation = memo(function RetrievalEvaluation({
-  trace,
-}: {
-  trace: TraceStep[];
-}) {
+const RetrievalEvaluation = memo(function RetrievalEvaluation({ trace }: { trace: TraceStep[] }) {
   const stages = trace.filter((step) => (step.candidates?.length ?? 0) > 0);
   if (!stages.length) return null;
   return (
@@ -173,7 +159,7 @@ const RetrievalEvaluation = memo(function RetrievalEvaluation({
       size="small"
       items={[
         {
-          key: "evaluation",
+          key: 'evaluation',
           label: `📊 检索评测 · ${stages.length} 个排名阶段`,
           children: (
             <div className="retrieval-eval-stages">
@@ -189,14 +175,14 @@ const RetrievalEvaluation = memo(function RetrievalEvaluation({
                         <tr>
                           <th>名次</th>
                           <th>原文位置</th>
-                          <th>{stage.candidates?.[0]?.score_label || "分数"}</th>
+                          <th>{stage.candidates?.[0]?.score_label || '分数'}</th>
                           <th>上一阶段</th>
                         </tr>
                       </thead>
                       <tbody>
                         {stage.candidates!.map((candidate) => (
                           <tr
-                            className={candidate.selected ? "candidate-selected" : ""}
+                            className={candidate.selected ? 'candidate-selected' : ''}
                             key={`${candidate.novel}:${candidate.chunk_id}`}
                           >
                             <td>#{candidate.rank}</td>
@@ -206,7 +192,7 @@ const RetrievalEvaluation = memo(function RetrievalEvaluation({
                             <td>{formatScore(candidate)}</td>
                             <td>
                               {candidate.previous_rank == null
-                                ? "—"
+                                ? '—'
                                 : candidate.previous_rank === candidate.rank
                                   ? `#${candidate.previous_rank}`
                                   : `#${candidate.previous_rank} → #${candidate.rank}`}
@@ -242,22 +228,20 @@ const Sources = memo(function Sources({
       <div className="sources-label">📖 原文出处</div>
       {sources.map((s, i) => (
         <div
-          className={`source-card${activeIndex === i ? " source-card-active" : ""}`}
+          className={`source-card${activeIndex === i ? ' source-card-active' : ''}`}
           id={`source-${groupId}-${i + 1}`}
           key={i}
         >
           <span className="source-index">{i + 1}</span>
           <span className="source-book">《{shortName(s.novel)}》</span>
-          {s.chapter_title && (
-            <span className="source-chapter">{s.chapter_title}</span>
-          )}
+          {s.chapter_title && <span className="source-chapter">{s.chapter_title}</span>}
           <Typography.Paragraph
             className="source-text"
             style={{ marginBottom: 0 }}
             ellipsis={{
               rows: 1,
-              expandable: "collapsible",
-              symbol: (expanded) => (expanded ? "收起" : "展开"),
+              expandable: 'collapsible',
+              symbol: (expanded) => (expanded ? '收起' : '展开'),
             }}
           >
             {s.text}
@@ -299,7 +283,7 @@ function CitedContent({
           key={`${match.index}-${sourceNumber}`}
         >
           [{sourceNumber}]
-        </button>
+        </button>,
       );
     } else {
       // 模型偶尔会生成越界编号。保留原文本但不做成可点击按钮，避免把 [9]
@@ -313,10 +297,10 @@ function CitedContent({
 }
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
-  const isUser = msg.role === "user";
+  const isUser = msg.role === 'user';
   // useId 生成每条气泡唯一的出处锚点前缀（替换掉冒号，避免和 DOM id/CSS
   // 选择器的转义规则冲突）；正文 [n] 点击时按它定位到第 n 张出处卡片。
-  const groupId = useId().replace(/:/g, "");
+  const groupId = useId().replace(/:/g, '');
   const [activeSource, setActiveSource] = useState<number | null>(null);
   const hasTrace = !isUser && !!msg.trace && msg.trace.length > 0;
   // 「等待正文」：流式中但正文还没到（模型推理/检索中）
@@ -329,19 +313,17 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
     requestAnimationFrame(() => {
       document
         .getElementById(`source-${groupId}-${index + 1}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
 
   return (
-    <div className={`row ${isUser ? "row-user" : "row-bot"}`}>
+    <div className={`row ${isUser ? 'row-user' : 'row-bot'}`}>
       <Avatar className="avatar" size={36}>
-        {isUser ? "🧑" : "📖"}
+        {isUser ? '🧑' : '📖'}
       </Avatar>
       <div className="bubble">
-        {!isUser && hasTrace && (
-          <Thinking trace={msg.trace!} live={waiting} />
-        )}
+        {!isUser && hasTrace && <Thinking trace={msg.trace!} live={waiting} />}
         {!isUser && hasTrace && <RetrievalEvaluation trace={msg.trace!} />}
         {!isUser && msg.agentSteps && msg.agentSteps.length > 0 && (
           <AgentRun steps={msg.agentSteps} />
@@ -371,18 +353,12 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
               />
             )}
             {msg.streaming && <span className="caret" />}
-            {msg.interrupted && (
-              <span className="interrupted-tag">已停止生成</span>
-            )}
+            {msg.interrupted && <span className="interrupted-tag">已停止生成</span>}
           </div>
         )}
 
         {msg.sources && msg.sources.length > 0 && (
-          <Sources
-            sources={msg.sources}
-            groupId={groupId}
-            activeIndex={activeSource}
-          />
+          <Sources sources={msg.sources} groupId={groupId} activeIndex={activeSource} />
         )}
       </div>
     </div>

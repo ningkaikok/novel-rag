@@ -3,6 +3,7 @@
 不跑任何模型：矩阵计算用 mock 的 (predicted, human) 对；
 标注集本身只做结构校验（标签合法、证据确实出自仓库原创语料）。
 """
+
 import importlib.util
 import json
 from pathlib import Path
@@ -26,9 +27,9 @@ shadow = _load_script()
 def test_confusion_matrix_counts_mock_rows():
     rows = [
         ("supported", "supported"),
-        ("supported", "partial"),       # 预测过宽
+        ("supported", "partial"),  # 预测过宽
         ("unsupported", "unsupported"),
-        ("uncertain", "supported"),     # Judge 拿不准但人工有把握
+        ("uncertain", "supported"),  # Judge 拿不准但人工有把握
         ("uncertain", "partial"),
         ("supported", "supported"),
     ]
@@ -56,12 +57,13 @@ def test_format_matrix_renders_all_columns():
 
 # ---------------------------------------------------------------- 多 Judge 对比辅助
 
+
 def test_binary_pr_one_vs_rest_counts_partial_as_negative():
     """supported 的二元 P/R：预测端不会产出 partial，人工 partial 记假阳性。"""
     rows = [
-        ("supported", "supported"),   # TP
-        ("supported", "partial"),     # FP（刻意不算召回）
-        ("uncertain", "supported"),   # FN
+        ("supported", "supported"),  # TP
+        ("supported", "partial"),  # FP（刻意不算召回）
+        ("uncertain", "supported"),  # FN
         ("unsupported", "unsupported"),
     ]
     precision, recall = shadow.binary_pr(rows, "supported")
@@ -90,7 +92,6 @@ class _FlakyJudge:
 
 
 def _retry_case():
-    import citation_eval  # 由脚本把 src/ 加进 sys.path
 
     return {"statement": "测试陈述。", "evidence": ["测试证据，包含测试陈述的内容。"]}
 
@@ -152,17 +153,21 @@ def test_all_evidence_comes_from_original_corpus_only():
     比较前把中英文引号和空白归一化：JSON 里写弯引号更易读，语料文件里
     用的是直引号，两者应视为同一字符。
     """
+
     def normalize(text: str) -> str:
-        for left, right in (("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'")):
+        for left, right in (
+            ("\u201c", '"'),
+            ("\u201d", '"'),
+            ("\u2018", "'"),
+            ("\u2019", "'"),
+        ):
             text = text.replace(left, right)
         return "".join(text.split())
 
     corpus = normalize(_ORIGINAL_TEXT)
     for case in CASES:
         for evidence in case["evidence"]:
-            assert normalize(evidence) in corpus, (
-                f"{case['id']} 的证据不是原创语料的逐字子串"
-            )
+            assert normalize(evidence) in corpus, f"{case['id']} 的证据不是原创语料的逐字子串"
 
 
 def test_shadow_set_is_loadable_json_with_expected_shape():

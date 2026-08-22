@@ -6,6 +6,7 @@
 3. 触发时补救恰好发生一次（变体检索不会再触发扩展，绝不循环）；
 4. trace 里 stage/reasons/variants/ms/still_no_evidence 字段齐全。
 """
+
 import rag
 from chunk_model import SourceChunk
 from query_expander import expand_query_variants
@@ -18,6 +19,7 @@ def _chunk(novel: str, chunk_id: int, text: str) -> SourceChunk:
 
 
 # --------------------------------------------------------------- expander 纯函数
+
 
 def test_prompt_contains_question_and_limits():
     prompts = []
@@ -47,9 +49,7 @@ def test_parse_strips_numbering_quotes_and_dedupes():
 
 def test_variant_identical_to_original_is_dropped():
     raw = "雾隐山庄的庄主得了什么病。\n庄主患了什么疾病"
-    variants = expand_query_variants(
-        "雾隐山庄的庄主得了什么病", lambda _p: iter([raw])
-    )
+    variants = expand_query_variants("雾隐山庄的庄主得了什么病", lambda _p: iter([raw]))
     # 第一个变体去掉标点后与原问题实质相同 → 丢弃；只剩第二个
     assert variants == ["庄主患了什么疾病"]
 
@@ -73,6 +73,7 @@ def test_generation_failure_degrades_to_empty_list_and_records_error():
 
 # --------------------------------------------------------------- rag 挂钩点
 
+
 def _stub_pipeline(monkeypatch, service, semantic, keyword, rerank_scored):
     """把 retrieve_hybrid_stream 依赖的召回/重排全部打桩（仿 test_retrieval_trace）。
 
@@ -90,20 +91,14 @@ def _stub_pipeline(monkeypatch, service, semantic, keyword, rerank_scored):
     monkeypatch.setattr(
         service, "keyword_retrieve", lambda _q, top_k, only_novels: list(keyword)
     )
-    monkeypatch.setattr(
-        service, "positional_retrieve", lambda _q, top_k, hint_novels: []
-    )
+    monkeypatch.setattr(service, "positional_retrieve", lambda _q, top_k, hint_novels: [])
     monkeypatch.setattr(rag, "HIERARCHY_ENABLED", False)
     monkeypatch.setattr(rag, "RERANK_ENABLED", True)
 
     def stub_rerank(_question, candidates, _k):
         return [
             (
-                next(
-                    c
-                    for c in candidates
-                    if (c.novel, c.chunk_id) == (s.novel, s.chunk_id)
-                ),
+                next(c for c in candidates if (c.novel, c.chunk_id) == (s.novel, s.chunk_id)),
                 score,
             )
             for s, score in rerank_scored
@@ -123,11 +118,16 @@ def _low_confidence_fixture():
         _chunk("雾隐山庄", 2, "仆人扫地"),
         _chunk("雾隐山庄", 3, "账房算账"),
     ]
-    return "韩立的师父是谁", semantic, [], [
-        (semantic[0], 5.0),
-        (semantic[1], 4.99),
-        (semantic[2], 4.9),
-    ]
+    return (
+        "韩立的师父是谁",
+        semantic,
+        [],
+        [
+            (semantic[0], 5.0),
+            (semantic[1], 4.99),
+            (semantic[2], 4.9),
+        ],
+    )
 
 
 def test_expand_disabled_keeps_main_path_untouched(monkeypatch):

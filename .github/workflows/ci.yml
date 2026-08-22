@@ -9,7 +9,7 @@ on:
 
 jobs:
   frontend:
-    name: 前端类型检查
+    name: 前端（lint + 格式 + 单测 + 类型）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,6 +21,15 @@ jobs:
       - name: 安装依赖
         working-directory: frontend
         run: npm ci
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+      - name: Prettier 格式检查
+        working-directory: frontend
+        run: npm run format:check
+      - name: Vitest 单元测试
+        working-directory: frontend
+        run: npm run test
       - name: TypeScript 类型检查
         working-directory: frontend
         run: npx tsc --noEmit
@@ -55,24 +64,30 @@ jobs:
           retention-days: 7
 
   backend:
-    name: 后端导入检查
+    name: 后端（lint + 类型增量 + 测试）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
-          cache: pip
-      - name: 安装依赖
-        run: pip install -r requirements.txt
+          # uv.lock 是唯一事实来源：CI 用 --frozen 确保没人手改依赖没更新锁
+          enable-cache: true
+      - name: 安装依赖（uv sync --frozen）
+        run: uv sync --frozen
+      - name: Ruff lint + 格式检查
+        run: |
+          uv run ruff check src backend scripts tests
+          uv run ruff format --check src backend scripts tests
+      - name: Pyright 增量门禁（存量在基线内，只拦新增）
+        run: uv run python scripts/pyright_check.py
       - name: 导入后端（捕获语法错误、坏 import、模块级异常）
         # backend.main 在导入时不会连数据库、也不会下载模型，
         # 这两件事都发生在 FastAPI lifespan 里，所以纯导入是安全且快速的冒烟检查。
-        run: python -c "import backend.main; print('backend import OK')"
+        run: uv run python -c "import backend.main; print('backend import OK')"
       - name: 运行 pytest（单元测试，不依赖真实数据库/模型）
         # tests/backend/ 下的用例全部用 mock/monkeypatch，不需要真实
         # PostgreSQL、Ollama 或任何云端 key。
-        run: python -m pytest
+        run: uv run pytest
 
   notify:
     name: 飞书通知
@@ -92,7 +107,7 @@ jobs:
           webhook-secret: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
           results: |
             {
-              "前端类型检查": "${{ needs.frontend.result }}",
+              "前端 lint/单测/类型": "${{ needs.frontend.result }}",
               "前端 e2e 测试": "${{ needs.e2e.result }}",
-              "后端导入检查": "${{ needs.backend.result }}"
+              "后端 lint/类型/测试": "${{ needs.backend.result }}"
             }

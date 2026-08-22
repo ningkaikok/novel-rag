@@ -12,24 +12,24 @@
 多路召回、融合与重排的流水线编排见 ``rag.retrieve_hybrid_stream``；
 数据类在 ``chunk_model``，书名识别纯函数在 ``novel_match``。
 """
+
 import json
 from collections.abc import Iterator
 
 import requests
 
+from chunk_model import SourceChunk
 from config import (
     OLLAMA_HOST,
     OLLAMA_MODEL,
     TOP_K,
 )
 from graph import detect_relation_question, format_graph_hint
+from novel_match import _display_title
 from postgres import (
     connect,
     query_relations,
 )
-from chunk_model import SourceChunk
-from novel_match import _display_title
-
 
 # Prompt 模板的显式版本号（M3.5-④）：模板文本的任何实质修改都必须递增它，
 # 并同步更新 run_config 快照里的 prompt_template_version——否则落库的回答无法
@@ -52,9 +52,7 @@ PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供�
 回答："""
 
 
-def generate_ollama_prompt_stream(
-    prompt: str, model: str = OLLAMA_MODEL
-) -> Iterator[str]:
+def generate_ollama_prompt_stream(prompt: str, model: str = OLLAMA_MODEL) -> Iterator[str]:
     """把已经构造好的 prompt 交给 Ollama，并逐 token 返回。
 
     独立成模块函数是为了让“自由问答”在书架尚未建立索引、无法创建 NovelRAG

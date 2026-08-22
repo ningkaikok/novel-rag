@@ -12,6 +12,7 @@
 ``_trace_candidates`` 则负责把内部候选压成轻量的排名记录，供前端“思考过程”
 展示和评测复盘使用，避免把大段原文塞进 SSE/JSONB。
 """
+
 from dataclasses import dataclass
 
 

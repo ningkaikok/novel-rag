@@ -6,11 +6,12 @@
 不直接判定对错——只负责跑测试、收集原始结果，正确性由人工对照 qa_test_set.json
 里的 ground_truth_note 来评判，写进 TEST_REPORT.md。
 """
+
 import argparse
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -58,8 +59,12 @@ def ask(question: str, top_k: int = 5) -> dict:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default=None, help="仅用于在结果里记录当前测的模型名，不会改变后端实际配置")
-    parser.add_argument("--out", default=None, help="结果输出路径，默认 tests/results_<model>.json")
+    parser.add_argument(
+        "--model", default=None, help="仅用于在结果里记录当前测的模型名，不会改变后端实际配置"
+    )
+    parser.add_argument(
+        "--out", default=None, help="结果输出路径，默认 tests/results_<model>.json"
+    )
     args = parser.parse_args()
 
     health = requests.get(f"{API}/api/health", timeout=10).json()
@@ -78,7 +83,7 @@ def main():
         r = ask(q["question"])
         elapsed = time.time() - t0
         print(f"  -> {elapsed:.1f}s, {len(r['answer'])} 字, {len(r['sources'])} 个来源片段")
-        expected_keywords = ((q.get("retrieval") or {}).get("expect_keywords") or [])
+        expected_keywords = (q.get("retrieval") or {}).get("expect_keywords") or []
         results.append(
             {
                 **q,
@@ -106,7 +111,7 @@ def main():
 
     payload = {
         "model": model_label,
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "results": results,
     }
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

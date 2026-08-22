@@ -10,6 +10,7 @@
 
 用法：merge_changelog.py 生成的片段.md CHANGELOG.md
 """
+
 import sys
 from pathlib import Path
 

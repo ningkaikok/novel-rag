@@ -4,6 +4,7 @@ compute_confidence 不碰数据库、不加载模型，直接喂 (SourceChunk, �
 即可验证全部信号逻辑——这也是它被刻意设计成纯函数的原因之一：离线校准
 脚本和在线挂钩点跑的是同一份代码，测试结论对两边同时有效。
 """
+
 import math
 
 from chunk_model import SourceChunk
@@ -40,9 +41,7 @@ def test_score_gap_uses_only_reranker_scores_in_order():
 def test_single_candidate_means_no_gap_signal():
     # 只有一条候选时无从比较，记 1.0 且不触发——「没法比」≠「有歧义」。
     # 文本刻意覆盖全部问题词，排除 term_coverage 触发路径的干扰。
-    signals = compute_confidence(
-        "韩立的师父是谁", [(_chunk("书", "韩立的师父是墨大夫"), 5.0)]
-    )
+    signals = compute_confidence("韩立的师父是谁", [(_chunk("书", "韩立的师父是墨大夫"), 5.0)])
     assert signals["score_gap"] == 1.0
     assert not signals["is_low_confidence"]
 
@@ -84,7 +83,10 @@ def test_low_confidence_triggers_on_low_term_coverage_alone():
     assert TERM_COVERAGE_MIN < 1.0
     signals = compute_confidence(
         "韩立的师父是谁",
-        [(_chunk("雾隐山庄", "完全无关的文本内容"), 8.0), (_chunk("雾隐山庄", "另一段无关"), 7.9)],
+        [
+            (_chunk("雾隐山庄", "完全无关的文本内容"), 8.0),
+            (_chunk("雾隐山庄", "另一段无关"), 7.9),
+        ],
     )
     assert "term_coverage" in signals["low_signals"]
     assert signals["is_low_confidence"] is True

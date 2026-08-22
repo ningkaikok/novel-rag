@@ -28,10 +28,11 @@
 - **只给信号，不替人做决定**：阈值全部是经验起点，最终取值必须由离线评测
   数据说了算（见脚本用法），不能拍脑袋上调完就直接影响线上行为。
 """
+
 import math
 
-from tokenizer import query_terms
 from chunk_model import SourceChunk
+from tokenizer import query_terms
 
 
 def normalized_score(raw: float) -> float:

@@ -10,6 +10,7 @@ Key 只从环境变量 ZHIPU_API_KEY 读取，**绝不硬编码到代码里**：
 1. 检索到的原文片段和问题会发送到智谱的服务器。
 2. 调用计入用户自己的智谱账号额度。
 """
+
 import json
 import os
 from collections.abc import Iterator

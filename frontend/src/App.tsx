@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 import {
   App as AntdApp,
   Button,
@@ -9,47 +9,41 @@ import {
   Tooltip,
   Upload,
   theme as antdTheme,
-} from "antd";
-import {
-  deleteBook,
-  listModels,
-  reindex,
-  setModel as apiSetModel,
-  type AnswerMode,
-} from "./api";
-import Sidebar from "./components/Sidebar";
-import Welcome from "./components/Welcome";
-import MessageBubble from "./components/MessageBubble";
-import { useBookshelf } from "./hooks/useBookshelf";
-import { useChatStream } from "./hooks/useChatStream";
+} from 'antd';
+import { deleteBook, listModels, reindex, setModel as apiSetModel, type AnswerMode } from './api';
+import Sidebar from './components/Sidebar';
+import Welcome from './components/Welcome';
+import MessageBubble from './components/MessageBubble';
+import { useBookshelf } from './hooks/useBookshelf';
+import { useChatStream } from './hooks/useChatStream';
 
-const CLAUDE_PREFIX = "claude:";
-const GLM_PREFIX = "glm:";
+const CLAUDE_PREFIX = 'claude:';
+const GLM_PREFIX = 'glm:';
 // 所有走云端（数据会离开本机）的模型前缀，用于隐私提示
 const CLOUD_PREFIXES = [CLAUDE_PREFIX, GLM_PREFIX];
 
 const ANSWER_MODE_OPTIONS = [
-  { value: "auto", label: "✨ 自动判断" },
-  { value: "grounded", label: "📖 仅依据原文" },
-  { value: "free", label: "💬 自由问答" },
+  { value: 'auto', label: '✨ 自动判断' },
+  { value: 'grounded', label: '📖 仅依据原文' },
+  { value: 'free', label: '💬 自由问答' },
 ] satisfies { value: AnswerMode; label: string }[];
 
 const ANSWER_MODE_HELP: Record<AnswerMode, string> = {
-  auto: "开放问题直接回答；涉及书中内容时自动检索原文",
-  grounded: "强制搜索书架，只依据召回的小说原文回答",
-  free: "不搜索书架，直接使用当前模型的通用能力回答",
+  auto: '开放问题直接回答；涉及书中内容时自动检索原文',
+  grounded: '强制搜索书架，只依据召回的小说原文回答',
+  free: '不搜索书架，直接使用当前模型的通用能力回答',
 };
 
 const CLAUDE_LABELS: Record<string, string> = {
-  haiku: "Claude · haiku（最快最省）",
-  sonnet: "Claude · sonnet（推荐）",
-  opus: "Claude · opus（最强最慢）",
+  haiku: 'Claude · haiku（最快最省）',
+  sonnet: 'Claude · sonnet（推荐）',
+  opus: 'Claude · opus（最强最慢）',
 };
 const GLM_LABELS: Record<string, string> = {
-  "glm-4-flash": "GLM-4-Flash（免费最快）",
-  "glm-4.5-air": "GLM-4.5-Air（轻量）",
-  "glm-4.5": "GLM-4.5（均衡）",
-  "glm-4.6": "GLM-4.6（最强）",
+  'glm-4-flash': 'GLM-4-Flash（免费最快）',
+  'glm-4.5-air': 'GLM-4.5-Air（轻量）',
+  'glm-4.5': 'GLM-4.5（均衡）',
+  'glm-4.6': 'GLM-4.6（最强）',
 };
 
 function isCloudModel(m: string) {
@@ -59,13 +53,11 @@ function isCloudModel(m: string) {
 function buildModelOptions(models: string[]) {
   const groups = [
     {
-      label: "💻 本地（Ollama，完全离线）",
-      options: models
-        .filter((m) => !isCloudModel(m))
-        .map((m) => ({ value: m, label: m })),
+      label: '💻 本地（Ollama，完全离线）',
+      options: models.filter((m) => !isCloudModel(m)).map((m) => ({ value: m, label: m })),
     },
     {
-      label: "☁️ 我的 Claude 订阅（云端）",
+      label: '☁️ 我的 Claude 订阅（云端）',
       options: models
         .filter((m) => m.startsWith(CLAUDE_PREFIX))
         .map((m) => {
@@ -74,7 +66,7 @@ function buildModelOptions(models: string[]) {
         }),
     },
     {
-      label: "☁️ 智谱 GLM（云端）",
+      label: '☁️ 智谱 GLM（云端）',
       options: models
         .filter((m) => m.startsWith(GLM_PREFIX))
         .map((m) => {
@@ -89,36 +81,31 @@ function buildModelOptions(models: string[]) {
 
 function usePrefersDark() {
   const [isDark, setIsDark] = useState(
-    () =>
-      typeof matchMedia !== "undefined" &&
-      matchMedia("(prefers-color-scheme: dark)").matches
+    () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches,
   );
   useEffect(() => {
-    const mq = matchMedia("(prefers-color-scheme: dark)");
+    const mq = matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
   }, []);
   return isDark;
 }
 
-const SANS =
-  '-apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif';
+const SANS = '-apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif';
 
 // 主题令牌：墨蓝主色 + 更大的圆角 + 更轻的边框，让 antd 组件（按钮/输入/下拉/滑块）
 // 与自定义样式保持同一套"书卷气"观感。浅色墨蓝偏深，深色下换成更亮的墨蓝保证对比度。
 function themeTokens(isDark: boolean) {
   return {
-    colorPrimary: isDark ? "#8ea3cc" : "#445069",
-    colorInfo: isDark ? "#8ea3cc" : "#445069",
-    colorLink: isDark ? "#9db1d6" : "#4a5878",
+    colorPrimary: isDark ? '#8ea3cc' : '#445069',
+    colorInfo: isDark ? '#8ea3cc' : '#445069',
+    colorLink: isDark ? '#9db1d6' : '#4a5878',
     borderRadius: 10,
     borderRadiusLG: 14,
     fontFamily: SANS,
     controlHeight: 34,
-    boxShadowSecondary: isDark
-      ? "0 6px 20px rgba(0,0,0,0.5)"
-      : "0 6px 20px rgba(56,50,40,0.10)",
+    boxShadowSecondary: isDark ? '0 6px 20px rgba(0,0,0,0.5)' : '0 6px 20px rgba(56,50,40,0.10)',
   };
 }
 
@@ -127,9 +114,7 @@ export default function App() {
   return (
     <ConfigProvider
       theme={{
-        algorithm: isDark
-          ? antdTheme.darkAlgorithm
-          : antdTheme.defaultAlgorithm,
+        algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: themeTokens(isDark),
       }}
     >
@@ -160,12 +145,12 @@ function Main() {
   // 侧栏滑块可以随时调，这里只是默认值。
   const [topK, setTopK] = useState(3);
   const [models, setModels] = useState<string[]>([]);
-  const [currentModel, setCurrentModel] = useState("");
-  const [answerMode, setAnswerMode] = useState<AnswerMode>("auto");
+  const [currentModel, setCurrentModel] = useState('');
+  const [answerMode, setAnswerMode] = useState<AnswerMode>('auto');
   // 工作模式和回答模式是两层概念：标准 RAG 内部才有 auto/grounded/free；
   // Agent Lab 走独立端点和轨迹，不能硬塞成第四种 AnswerMode，否则后端路由、
   // 会话历史和 UI 状态会混在一起，初学者也看不清“固定流水线 vs 工具循环”。
-  const [workspaceMode, setWorkspaceMode] = useState<"rag" | "agent">("rag");
+  const [workspaceMode, setWorkspaceMode] = useState<'rag' | 'agent'>('rag');
 
   // 聊天消息数组、SSE 流式请求、停止/打字机与滚动跟随的状态逻辑，
   // 见 hooks/useChatStream.ts。检索评测面板的展开/定位状态在 MessageBubble
@@ -211,16 +196,16 @@ function Main() {
   }
 
   const isCloud = isCloudModel(currentModel);
-  const cloudVendor = currentModel.startsWith(GLM_PREFIX) ? "智谱" : "Anthropic";
+  const cloudVendor = currentModel.startsWith(GLM_PREFIX) ? '智谱' : 'Anthropic';
   // 云端隐私提示文案：自由问答不发送小说原文，只有问题本身出网；
   // 其余模式（含 Agent Lab）都会把召回的片段一起发出去，提示要更醒目。
   const cloudPrivacyText =
-    workspaceMode !== "agent" && answerMode === "free"
+    workspaceMode !== 'agent' && answerMode === 'free'
       ? `你的问题会发送到${cloudVendor}；自由问答不会发送小说原文，并计入你自己的账号用量`
       : `检索到的原文片段和你的问题会发送到${cloudVendor}的服务器，并计入你自己的账号用量`;
 
   return (
-    <Layout className="layout" style={{ minHeight: "100vh" }}>
+    <Layout className="layout" style={{ minHeight: '100vh' }}>
       <Layout.Sider width={300} theme="light" className="sidebar">
         <Sidebar
           books={books}
@@ -230,7 +215,7 @@ function Main() {
           onDelete={(name) =>
             startShelfTask(() => deleteBook(name), `已移除《${name}》，正在清理索引`)
           }
-          onReindex={() => startShelfTask(() => reindex(), "正在检查书架变化")}
+          onReindex={() => startShelfTask(() => reindex(), '正在检查书架变化')}
           onCancelIndex={cancelCurrentIndex}
           onRetryIndex={retryCurrentIndex}
           onClear={() => setMessages([])}
@@ -255,14 +240,14 @@ function Main() {
             </div>
             {showJumpToLatest && messages.length > 0 && (
               <Button
-                className={`jump-to-latest${hasNewBelow ? " has-new" : ""}`}
+                className={`jump-to-latest${hasNewBelow ? ' has-new' : ''}`}
                 shape="round"
                 size="small"
                 // 有新内容时用主色实心按钮，更显眼；否则只是普通的"回到底部"
-                type={hasNewBelow ? "primary" : "default"}
+                type={hasNewBelow ? 'primary' : 'default'}
                 onClick={jumpToLatest}
               >
-                {hasNewBelow ? "↓ 有新回复" : "↓ 跳到最近回答"}
+                {hasNewBelow ? '↓ 有新回复' : '↓ 跳到最近回答'}
               </Button>
             )}
           </div>
@@ -292,7 +277,7 @@ function Main() {
               className="model-select-compact"
               size="small"
               value={models.includes(currentModel) ? currentModel : undefined}
-              placeholder={models.length ? "选择模型" : "无可用模型"}
+              placeholder={models.length ? '选择模型' : '无可用模型'}
               disabled={busy || models.length === 0}
               onChange={handleModelChange}
               options={buildModelOptions(models)}
@@ -301,9 +286,9 @@ function Main() {
 
             <Tooltip
               title={
-                workspaceMode === "agent"
-                  ? "最多五步调用只读工具，并展示选择、观察和证据"
-                  : "固定 RAG 流水线，适合日常问答和检索评测"
+                workspaceMode === 'agent'
+                  ? '最多五步调用只读工具，并展示选择、观察和证据'
+                  : '固定 RAG 流水线，适合日常问答和检索评测'
               }
             >
               <Select
@@ -312,10 +297,10 @@ function Main() {
                 size="small"
                 value={workspaceMode}
                 disabled={busy}
-                onChange={(value: "rag" | "agent") => setWorkspaceMode(value)}
+                onChange={(value: 'rag' | 'agent') => setWorkspaceMode(value)}
                 options={[
-                  { value: "rag", label: "📖 标准 RAG" },
-                  { value: "agent", label: "🧪 Agent Lab" },
+                  { value: 'rag', label: '📖 标准 RAG' },
+                  { value: 'agent', label: '🧪 Agent Lab' },
                 ]}
                 popupMatchSelectWidth={false}
               />
@@ -327,7 +312,7 @@ function Main() {
                 className="answer-mode-select"
                 size="small"
                 value={answerMode}
-                disabled={busy || workspaceMode === "agent"}
+                disabled={busy || workspaceMode === 'agent'}
                 onChange={(value: AnswerMode) => setAnswerMode(value)}
                 options={ANSWER_MODE_OPTIONS}
                 popupMatchSelectWidth={false}
@@ -349,13 +334,13 @@ function Main() {
             <Input
               size="large"
               placeholder={
-                workspaceMode === "agent"
-                  ? "让 Agent 选择搜索、读取邻居或章节，再依据原文回答……"
-                  : answerMode === "grounded"
-                  ? "询问人物、剧情或原句，只依据书架原文回答……"
-                  : answerMode === "free"
-                    ? "自由提问，不搜索小说书架……"
-                    : "问小说内容或开放问题，自动选择回答方式……"
+                workspaceMode === 'agent'
+                  ? '让 Agent 选择搜索、读取邻居或章节，再依据原文回答……'
+                  : answerMode === 'grounded'
+                    ? '询问人物、剧情或原句，只依据书架原文回答……'
+                    : answerMode === 'free'
+                      ? '自由提问，不搜索小说书架……'
+                      : '问小说内容或开放问题，自动选择回答方式……'
               }
               value={input}
               disabled={busy}
@@ -364,12 +349,7 @@ function Main() {
             />
             {busy ? (
               // 生成中把发送键换成停止键：切断网络层，后端随之停止索取 token
-              <Button
-                size="large"
-                danger
-                className="stop-button"
-                onClick={stopGenerating}
-              >
+              <Button size="large" danger className="stop-button" onClick={stopGenerating}>
                 ■ 停止
               </Button>
             ) : (

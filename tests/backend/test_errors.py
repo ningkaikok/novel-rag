@@ -2,6 +2,7 @@
 `{"error": {"code": ..., "message": ...}}` 这个形状，包括框架自己的
 请求校验错误和完全没预料到的异常。
 """
+
 import io
 
 from fastapi.testclient import TestClient

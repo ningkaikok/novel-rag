@@ -56,6 +56,7 @@
     # 改完代码后，跟基线对比，直接看每条用例是变好还是变差
     python scripts/eval_retrieval.py --compare baseline.json
 """
+
 import argparse
 import json
 import sys
@@ -136,9 +137,15 @@ def evaluate(rag: NovelRAG, cases: list[dict]) -> dict:
 
     # MRR：命中排名的倒数取平均；完全没命中的按 0 计入（不是跳过——
     # 跳过会让"召回率低但命中的都排第一"的系统拿到虚高的 MRR）
-    mrr = sum(1 / r["hit_rank"] for r in results if r["hit_rank"]) / len(results) if results else 0.0
+    mrr = (
+        sum(1 / r["hit_rank"] for r in results if r["hit_rank"]) / len(results)
+        if results
+        else 0.0
+    )
 
-    routing_acc = sum(1 for r in results if r["routed_right"]) / len(results) if results else 0.0
+    routing_acc = (
+        sum(1 for r in results if r["routed_right"]) / len(results) if results else 0.0
+    )
 
     return {
         "summary": {
@@ -146,7 +153,9 @@ def evaluate(rag: NovelRAG, cases: list[dict]) -> dict:
             "mrr": round(mrr, 3),
             "routing_accuracy": round(routing_acc, 3),
             "cases": len(results),
-            "avg_ms": round(sum(r["elapsed_ms"] for r in results) / len(results)) if results else 0,
+            "avg_ms": round(sum(r["elapsed_ms"] for r in results) / len(results))
+            if results
+            else 0,
         },
         "cases": results,
     }

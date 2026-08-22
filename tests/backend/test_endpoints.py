@@ -4,6 +4,7 @@
 掉会碰真实资源的函数（load_embedder、connect、_list_ollama_models 等）。
 主要验证这一批 response_model 改造之后，真实返回值仍然符合声明的形状。
 """
+
 import backend.main as main
 
 
@@ -249,18 +250,21 @@ class _FakeRag:
         """真实实现是个生成器：每完成一步 yield 一条 step，最后 yield result。"""
         yield "step", {"step": "理解问题", "detail": "识别到你在问《雾隐山庄》", "ms": 12}
         yield "step", {"step": "精排", "detail": "取最相关的 3 段", "ms": 2100}
-        yield "result", [
-            type(
-                "S",
-                (),
-                {
-                    "novel": "雾隐山庄",
-                    "chunk_id": 0,
-                    "chapter_title": "第一章 风雪来客",
-                    "text": "顾长风是庄主",
-                },
-            )()
-        ]
+        yield (
+            "result",
+            [
+                type(
+                    "S",
+                    (),
+                    {
+                        "novel": "雾隐山庄",
+                        "chunk_id": 0,
+                        "chapter_title": "第一章 风雪来客",
+                        "text": "顾长风是庄主",
+                    },
+                )()
+            ],
+        )
 
     def build_answer_context(self, sources):
         """M3.4 起的上下文组装统一入口；off 档等价旧 expand_neighbors 且无 trace 步骤。"""
@@ -275,10 +279,13 @@ class _LibraryRag:
 
     def library_answer(self, question):
         assert question == "现在一共有几部小说"
-        return "当前书架一共有 4 部小说：《凡人修仙传》、《诡秘之主》、《降龙》、《雾隐山庄》。"
+        return (
+            "当前书架一共有 4 部小说：《凡人修仙传》、《诡秘之主》、《降龙》、《雾隐山庄》。"
+        )
 
     def retrieve_hybrid_stream(self, *_args, **_kwargs):
         raise AssertionError("目录问题不应进入片段检索")
+
 
 def test_ask_streams_trace_sources_and_tokens(client, monkeypatch):
     main.state["rag"] = _FakeRag()
@@ -345,9 +352,7 @@ def test_free_mode_works_without_index(client, monkeypatch):
 
     monkeypatch.setattr(main, "generate_ollama_prompt_stream", fake_generate)
 
-    resp = client.post(
-        "/api/ask", json={"question": "什么是 RAG？", "mode": "free"}
-    )
+    resp = client.post("/api/ask", json={"question": "什么是 RAG？", "mode": "free"})
 
     assert resp.status_code == 200
     assert "不搜索小说" in resp.text
@@ -369,9 +374,7 @@ def test_auto_open_question_works_without_index(client, monkeypatch):
 
 
 def test_grounded_mode_still_requires_index(client):
-    resp = client.post(
-        "/api/ask", json={"question": "什么是 RAG？", "mode": "grounded"}
-    )
+    resp = client.post("/api/ask", json={"question": "什么是 RAG？", "mode": "grounded"})
     assert resp.status_code == 409
 
 
@@ -398,23 +401,24 @@ def test_agent_lab_streams_steps_sources_and_tokens(client, monkeypatch):
     )()
 
     def fake_run_agent(*_args, **_kwargs):
-        yield "agent_step", {
-            "step": 1,
-            "reason": "先搜索",
-            "tool": "search_novels",
-            "args": {"query": "顾长风"},
-            "observation": "找到 S1",
-            "source_ids": ["S1"],
-        }
+        yield (
+            "agent_step",
+            {
+                "step": 1,
+                "reason": "先搜索",
+                "tool": "search_novels",
+                "args": {"query": "顾长风"},
+                "observation": "找到 S1",
+                "source_ids": ["S1"],
+            },
+        )
         yield "sources", [source]
         yield "token", "顾长风[1]"
         yield "done", {}
 
     monkeypatch.setattr(main, "run_agent", fake_run_agent)
 
-    resp = client.post(
-        "/api/agent/ask", json={"question": "顾长风做了什么？", "max_steps": 3}
-    )
+    resp = client.post("/api/agent/ask", json={"question": "顾长风做了什么？", "max_steps": 3})
 
     assert resp.status_code == 200
     assert "event: agent_step" in resp.text
@@ -428,9 +432,7 @@ def test_agent_lab_streams_steps_sources_and_tokens(client, monkeypatch):
 def test_agent_lab_validates_three_to_five_steps(client):
     main.state["rag"] = object()
 
-    response = client.post(
-        "/api/agent/ask", json={"question": "测试", "max_steps": 2}
-    )
+    response = client.post("/api/agent/ask", json={"question": "测试", "max_steps": 2})
 
     assert response.status_code == 422
 
@@ -448,14 +450,17 @@ def test_agent_lab_saves_history_when_session_id_provided(client, monkeypatch):
     )()
 
     def fake_run_agent(*_args, **_kwargs):
-        yield "agent_step", {
-            "step": 1,
-            "reason": "先搜索",
-            "tool": "search_novels",
-            "args": {"query": "顾长风"},
-            "observation": "找到 S1",
-            "source_ids": ["S1"],
-        }
+        yield (
+            "agent_step",
+            {
+                "step": 1,
+                "reason": "先搜索",
+                "tool": "search_novels",
+                "args": {"query": "顾长风"},
+                "observation": "找到 S1",
+                "source_ids": ["S1"],
+            },
+        )
         yield "sources", [source]
         yield "token", "顾长风[1]"
         yield "done", {}
@@ -498,9 +503,9 @@ def test_agent_lab_skips_history_without_session_id(client, monkeypatch):
 
     monkeypatch.setattr(main, "run_agent", fake_run_agent)
     monkeypatch.setattr(
-        main, "save_turn", lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("不该调用 save_turn")
-        )
+        main,
+        "save_turn",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不该调用 save_turn")),
     )
 
     resp = client.post("/api/agent/ask", json={"question": "随便问问", "max_steps": 3})

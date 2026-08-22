@@ -8,6 +8,7 @@
 猜中所有自然语言，而是：明确开放的问题可以跳过检索，拿不准的小说人物问题宁可
 保守检索，并且用户始终能用模式选择器覆盖自动判断。
 """
+
 import json
 import sys
 from collections import Counter
@@ -20,9 +21,7 @@ from query_router import AnswerMode, choose_answer_route  # noqa: E402
 
 
 def main() -> int:
-    cases = json.loads(
-        (ROOT / "tests" / "routing_test_set.json").read_text(encoding="utf-8")
-    )
+    cases = json.loads((ROOT / "tests" / "routing_test_set.json").read_text(encoding="utf-8"))
     errors = []
     category_total: Counter[str] = Counter()
     category_correct: Counter[str] = Counter()
@@ -39,9 +38,7 @@ def main() -> int:
     correct = len(cases) - len(errors)
     print(f"路由准确率：{correct}/{len(cases)} = {correct / len(cases):.1%}")
     for category in sorted(category_total):
-        print(
-            f"  {category}: {category_correct[category]}/{category_total[category]}"
-        )
+        print(f"  {category}: {category_correct[category]}/{category_total[category]}")
 
     if errors:
         print("\n误判：")

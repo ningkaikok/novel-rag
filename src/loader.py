@@ -30,6 +30,7 @@ embedding 模型有长度上限（本项目用的 `bge-small-zh-v1.5` 是 512 to
 > 这是**固定尺寸切分**，不是语义切分。更高级的做法（按语义边界切、
 > Late Chunking 等）见 docs/rag-techniques.md。
 """
+
 import re
 from dataclasses import dataclass
 from pathlib import Path

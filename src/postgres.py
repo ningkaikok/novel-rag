@@ -18,11 +18,13 @@
 本模块同时服务 FastAPI 和命令行脚本，所以 ``connect()`` 返回统一的上下文管理器：
 Web 请求复用连接池，脚本则临时创建连接。业务代码不需要知道连接来自哪里。
 """
+
 import json
 from collections.abc import Callable, Iterable
+from contextlib import AbstractContextManager
 
 import psycopg
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 from psycopg_pool import ConnectionPool
 
 from config import DATABASE_URL, DB_POOL_MAX_SIZE, DB_POOL_MIN_SIZE
@@ -68,15 +70,19 @@ def close_pool() -> None:
         _pool = None
 
 
-def connect():
+def connect() -> AbstractContextManager[psycopg.Connection[DictRow]]:
     """返回一个「连接」的上下文管理器：`with connect() as conn:` 用法不变。
 
     已经调用过 init_pool() 时从池子里借用/归还一个连接（进程生命周期内
     复用，省去重复握手）；没有池子（独立脚本、测试、pytest）时退化为
     每次新建一个连接，行为和以前完全一样——13 处调用点都不用改。
+
+    返回类型显式声明为 dict 行工厂的连接：池子本身不携带行类型信息，
+    不加这层注解的话 pyright 会把所有 `row["列名"]` 推成 TupleRow 下标、
+    全仓库报出上百个假阳性（本次工程化踩过的坑）。
     """
     if _pool is not None:
-        return _pool.connection()
+        return _pool.connection()  # type: ignore[no-any-return]  # kwargs 已注入 dict_row
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
@@ -106,9 +112,7 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         """
     )
     # 兼容 M1 之前已经存在的表。其余列在最早的 PostgreSQL schema 中就存在。
-    conn.execute(
-        "ALTER TABLE novel_chunks ADD COLUMN IF NOT EXISTS chapter_title TEXT"
-    )
+    conn.execute("ALTER TABLE novel_chunks ADD COLUMN IF NOT EXISTS chapter_title TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS chunk_terms (
@@ -150,9 +154,7 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         "ALTER TABLE index_manifest ADD COLUMN IF NOT EXISTS quality_report JSONB "
         "NOT NULL DEFAULT '{}'::jsonb"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
         "ON character_relations (person_a, relation)"
@@ -260,8 +262,7 @@ def load_hierarchy_manifest() -> dict[str, dict]:
         if not table or not table["table_name"]:
             return {}
         rows = conn.execute(
-            "SELECT novel, source_hash, pipeline_hash, node_count "
-            "FROM hierarchy_manifest"
+            "SELECT novel, source_hash, pipeline_hash, node_count FROM hierarchy_manifest"
         ).fetchall()
     return {row["novel"]: dict(row) for row in rows}
 
@@ -318,18 +319,18 @@ def replace_novel_index(
                 rows,
             )
         check()
-        with conn.cursor() as cursor:
-            # BM25 的“一个片段 × 多个词”会产生大量行，COPY 比逐条 INSERT 快得多。
-            # COPY 仍属于外层同一个事务，并不会削弱原子性。
-            with cursor.copy(
-                "COPY chunk_terms (novel, chunk_id, term, tf) FROM STDIN"
-            ) as copy:
-                for index, (row, freqs) in enumerate(zip(rows, per_chunk_terms)):
-                    if index % 50 == 0:
-                        check()
-                    chunk_id = row[1]
-                    for term, tf in freqs.items():
-                        copy.write_row((novel, chunk_id, term, tf))
+        # BM25 的“一个片段 × 多个词”会产生大量行，COPY 比逐条 INSERT 快得多。
+        # COPY 仍属于外层同一个事务，并不会削弱原子性。
+        with (
+            conn.cursor() as cursor,
+            cursor.copy("COPY chunk_terms (novel, chunk_id, term, tf) FROM STDIN") as copy,
+        ):
+            for index, (row, freqs) in enumerate(zip(rows, per_chunk_terms, strict=True)):
+                if index % 50 == 0:
+                    check()
+                chunk_id = row[1]
+                for term, tf in freqs.items():
+                    copy.write_row((novel, chunk_id, term, tf))
         if relations:
             with conn.cursor() as cursor:
                 cursor.executemany(
@@ -373,13 +374,17 @@ def replace_novel_index(
                 quality_report = EXCLUDED.quality_report,
                 indexed_at = NOW()
             """,
-            (novel, source_hash, pipeline_hash, len(rows), json.dumps(quality_report or {}, ensure_ascii=False)),
+            (
+                novel,
+                source_hash,
+                pipeline_hash,
+                len(rows),
+                json.dumps(quality_report or {}, ensure_ascii=False),
+            ),
         )
 
 
-def delete_novel_index(
-    novel: str, cancel_check: Callable[[], None] | None = None
-) -> None:
+def delete_novel_index(novel: str, cancel_check: Callable[[], None] | None = None) -> None:
     """在一个短事务里删除一本已不存在的书及其清单记录。"""
     check = cancel_check or (lambda: None)
     with connect() as conn:
@@ -465,11 +470,8 @@ def index_chunk_count() -> int:
     if not has_index():
         return 0
     with connect() as conn:
-        return int(
-            conn.execute("SELECT count(*) AS count FROM novel_chunks").fetchone()[
-                "count"
-            ]
-        )
+        row = conn.execute("SELECT count(*) AS count FROM novel_chunks").fetchone()
+        return int(row["count"]) if row else 0
 
 
 def hierarchy_node_count() -> int:
@@ -481,7 +483,8 @@ def hierarchy_node_count() -> int:
         if not table or not table["table_name"]:
             return 0
         row = conn.execute("SELECT count(*) AS count FROM hierarchy_summaries").fetchone()
-    return int(row["count"])
+        return int(row["count"]) if row else 0
+    return 0
 
 
 def has_index() -> bool:
@@ -505,8 +508,7 @@ def ensure_novel_metadata_schema() -> None:
         ).fetchone()
         if table and table["table_name"]:
             conn.execute(
-                "ALTER TABLE novel_chunks "
-                "ADD COLUMN IF NOT EXISTS chapter_title TEXT"
+                "ALTER TABLE novel_chunks ADD COLUMN IF NOT EXISTS chapter_title TEXT"
             )
 
 
@@ -658,13 +660,12 @@ def save_contexts(items: list[tuple[str, str]]) -> None:
     rows = [(h, c) for h, c in items if c]
     if not rows:
         return
-    with connect() as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(
-                "INSERT INTO chunk_contexts (text_hash, context) VALUES (%s, %s) "
-                "ON CONFLICT (text_hash) DO UPDATE SET context = EXCLUDED.context",
-                rows,
-            )
+    with connect() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            "INSERT INTO chunk_contexts (text_hash, context) VALUES (%s, %s) "
+            "ON CONFLICT (text_hash) DO UPDATE SET context = EXCLUDED.context",
+            rows,
+        )
 
 
 def ensure_chat_schema() -> None:
@@ -698,13 +699,9 @@ def ensure_chat_schema() -> None:
             )
             """
         )
-        conn.execute(
-            "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS agent_steps JSONB"
-        )
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS agent_steps JSONB")
         # M3.5-④：在线配置快照列（幂等补列，模式与上面 agent_steps 一致）。
-        conn.execute(
-            "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS run_config JSONB"
-        )
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS run_config JSONB")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_turns_session_idx "
             "ON chat_turns (session_id, turn_index)"
@@ -754,7 +751,9 @@ def save_turn(
                 content,
                 json.dumps(sources, ensure_ascii=False) if sources is not None else None,
                 json.dumps(trace, ensure_ascii=False) if trace is not None else None,
-                json.dumps(agent_steps, ensure_ascii=False) if agent_steps is not None else None,
+                json.dumps(agent_steps, ensure_ascii=False)
+                if agent_steps is not None
+                else None,
                 status,
                 json.dumps(run_config, ensure_ascii=False) if run_config is not None else None,
             ),

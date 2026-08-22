@@ -2,6 +2,7 @@
 
 全部用假生成函数 mock，绝不调用真实 LLM。
 """
+
 from citation_eval import judge_support, rule_support
 
 
@@ -11,9 +12,7 @@ def _gen(text):
 
 
 def test_parses_plain_json_output():
-    fn = _gen(
-        '{"label": "supported", "reason": "证据明确说明埋深四点二米"}'
-    )
+    fn = _gen('{"label": "supported", "reason": "证据明确说明埋深四点二米"}')
     result = judge_support("承压水埋深四点二米。", ["……埋深只有四点二米……"], fn)
     assert result == {
         "label": "supported",
@@ -67,6 +66,7 @@ def test_non_json_output_degrades_to_uncertain():
 
 
 # ---------------------------------------------------------------- 规则基线
+
 
 def test_rule_support_high_overlap_is_supported():
     result = rule_support(

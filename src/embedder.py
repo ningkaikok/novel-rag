@@ -8,6 +8,7 @@
 
 因此这里先以 local_files_only 尝试加载，只有本地确实没有时才走联网下载。
 """
+
 from sentence_transformers import SentenceTransformer
 
 from config import EMBEDDING_MODEL

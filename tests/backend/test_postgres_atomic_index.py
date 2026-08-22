@@ -56,9 +56,7 @@ def test_replace_book_uses_one_transaction_and_does_not_advance_manifest_on_fail
     rows = [("书", 0, None, "正文", "[0.1,0.2]", 1, "")]
 
     with pytest.raises(RuntimeError, match="COPY interrupted"):
-        postgres.replace_novel_index(
-            "书", rows, [{"正文": 1}], "source", "pipeline"
-        )
+        postgres.replace_novel_index("书", rows, [{"正文": 1}], "source", "pipeline")
 
     assert connection.exit_exception is RuntimeError
     assert any("DELETE FROM novel_chunks" in sql for sql in connection.sql)

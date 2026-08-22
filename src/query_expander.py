@@ -23,6 +23,7 @@ query_rewriter 解决的是**多轮指代**：把「他后来怎么样了」补�
 失败降级为空列表（调用方看到没有变体就不补救）、解析时对模型输出的
 各种花式格式（编号、引号、前缀客套话）做清洗。
 """
+
 import re
 
 # 和 query_rewriter 共用同一套「实质相同」判定：去掉标点和虚词后比较。
@@ -67,7 +68,9 @@ def expand_query_variants(
     （Contextual Retrieval 那边踩过的坑）。
     """
     try:
-        raw = "".join(generate_fn(_PROMPT.format(max_variants=max_variants, question=question))).strip()
+        raw = "".join(
+            generate_fn(_PROMPT.format(max_variants=max_variants, question=question))
+        ).strip()
     except Exception as exc:
         if errors is not None:
             errors.append(f"{type(exc).__name__}: {exc}")
