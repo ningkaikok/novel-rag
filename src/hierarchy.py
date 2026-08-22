@@ -100,6 +100,9 @@ def _chapter_groups(chunks: list) -> list[tuple[str, list]]:
         if title:
             normalized.append((title, group))
             continue
+        # 有些小说全文没有章节标题，上面的分组逻辑会把整本书并成一组，
+        # 得到一个覆盖全书、摘要严重失真的“章节节点”。这里退而求其次：
+        # 按固定片段数切出“虚拟章节”，标题里带上片段范围方便人工排查。
         window = max(1, HIERARCHY_UNTITLED_CHUNKS)
         for start in range(0, len(group), window):
             part = group[start : start + window]

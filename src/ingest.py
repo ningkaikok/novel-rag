@@ -324,17 +324,24 @@ def _build_contexts(chunks: list) -> dict[str, str]:
 
 
 def _noop_cancel() -> None:
+    """cancel_check 的缺省值：单机命令行运行时没有取消机制，调用即返回。"""
     return None
 
 
 def _emit(
     callback: ProgressCallback | None, stage: str, percent: int, message: str
 ) -> None:
+    """通过回调上报进度；没有回调时静默跳过，百分比钳制到 0-100 防御脏数据。"""
     if callback:
         callback(stage, max(0, min(100, int(percent))), message)
 
 
 def _embedding_dimension(model: SentenceTransformer) -> int:
+    """读取 embedding 模型的向量维度。
+
+    pgvector 的向量列在建表时就固定了维度，维度不一致的写入会直接报错，
+    所以建表和向量校验都必须以这个值为准，读不到宁可报错也不猜默认值。
+    """
     dimension = model.get_sentence_embedding_dimension()
     if not dimension:
         raise RuntimeError("无法读取 embedding 模型维度")
@@ -545,6 +552,8 @@ def build_index(
             contextualized += len(contexts)
             check()
 
+        # Contextual Retrieval 的核心约定落地处：索引「生成的说明 + 原文」，
+        # 说明按片段内容哈希关联；没生成到说明的片段保持原样。
         indexed_texts = [
             f"{contexts[text_hash(c.text)]}\n{c.text}"
             if text_hash(c.text) in contexts
@@ -764,6 +773,8 @@ if __name__ == "__main__":
     last_progress = {"stage": "", "percent": -5}
 
     def print_progress(stage: str, percent: int, message: str) -> None:
+        # 进度节流：阶段切换、进度前进满 5%、或到达 100% 时才打印一行，
+        # 否则几万次的分批回调会刷出几千行日志。
         if (
             stage != last_progress["stage"]
             or percent >= last_progress["percent"] + 5

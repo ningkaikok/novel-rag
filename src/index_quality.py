@@ -40,6 +40,10 @@ class QualityReport:
     chunks: dict[str, Any]
     embedding: dict[str, Any]
     lineage: dict[str, Any]
+    # 分级原则：errors 是「数据已经不可信，入库必然污染检索」的硬性错误
+    # （空片段、输入会被静默截断、tokenizer 缺失导致长度检查失效），必须阻断；
+    # warnings 只是质量信号（章节识别率低、疑似乱码、精确重复），可能来自
+    # 合理的 overlap 或源文件本身，报告给人判断，不替人做决定。
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 

@@ -141,6 +141,9 @@ def extract_characters_from_chunks(
     Contextual Retrieval 那边踩过"静默降级查不出原因"的坑。
     """
     names: collections.Counter = collections.Counter()
+    # 成本靠双重截断封顶：每个片段只取前 400 字（人名和关系句通常出现在
+    # 片段开头），每批再整体截到 4500 字。单批 LLM 输入长度因此有确定上界，
+    # 不会因为个别超长片段把一次调用的 token 数顶爆。
     for i in range(0, len(chunks), batch_size):
         batch = "\n---\n".join(c.text[:400] for c in chunks[i : i + batch_size])
         try:

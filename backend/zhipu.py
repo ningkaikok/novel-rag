@@ -43,7 +43,12 @@ def model_options() -> list[str]:
 
 
 def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
-    """model_name 形如 'glm:glm-4.6'，去掉前缀后作为真实模型名。逐段 yield 文本增量。"""
+    """model_name 形如 'glm:glm-4.6'，去掉前缀后作为真实模型名。逐段 yield 文本增量。
+
+    错误分类：连接/读超时由 requests 抛 RequestException；HTTP 层错误（鉴权
+    失败、额度不足、模型不存在等）统一转成 RuntimeError，消息里带上状态码和
+    服务端说明的前 300 字符——足够定位问题，又不会把整个响应体刷进界面。
+    """
     key = _api_key()
     if key is None:
         raise RuntimeError("未设置环境变量 ZHIPU_API_KEY，无法调用智谱 GLM")
@@ -68,16 +73,23 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
             raise RuntimeError(
                 f"智谱 GLM 调用失败（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
+        # SSE 解析：每条事件形如 "data: {...}"，事件之间以空行分隔。
+        # iter_lines 会按行切好，空行和 "data:" 以外的行（如注释/心跳）直接跳过。
         for raw in resp.iter_lines(decode_unicode=True):
             if not raw or not raw.startswith("data:"):
                 continue
             data = raw[len("data:") :].strip()
+            # "[DONE]" 是 OpenAI 兼容流式协议的结束哨兵，各家实现一致
             if data == "[DONE]":
                 break
             try:
                 event = json.loads(data)
             except json.JSONDecodeError:
+                # 单条坏数据只丢弃这一段，不让整个回答前功尽弃——流式场景下
+                # 中途断流的代价比"宁可错杀整条流"小得多
                 continue
+            # choices 理论上恒为 1 个元素；防御式遍历而非取 [0]，避免服务端
+            # 返回空数组时 IndexError 把已经生成了一半的回答打断
             for choice in event.get("choices", []):
                 delta = choice.get("delta") or {}
                 # 只取最终答案；GLM 的推理过程在 reasoning_content 里，跳过

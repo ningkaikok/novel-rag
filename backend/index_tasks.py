@@ -31,6 +31,8 @@ from ingest import IndexCancelled
 
 logger = get_logger("index_tasks")
 
+# 状态集合是各处判断的单一事实来源：并发闸门（同一时间只允许一个任务）看
+# ACTIVE_STATUSES；进度回调是否还接受写入、重试入口是否放行，都看终态集合。
 ACTIVE_STATUSES = {"queued", "running", "cancelling"}
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
@@ -93,7 +95,12 @@ class IndexTaskManager:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        # ⚠️ 已知限制：任务状态只存在本进程内存里，服务重启后任务卡片会消失
+        # （路线图 M3.3.5 计划把状态落库）。这不影响数据正确性——进行中的数据库
+        # 事务会随进程退出回滚，见模块 docstring。
         self._tasks: dict[str, _Task] = {}
+        # 单槽位设计：UI 只关心"最近一次任务"，轮询 /api/index-tasks/current 即可，
+        # 不需要维护任务队列（本项目管理器最多同时跑一个）。
         self._latest_id: str | None = None
         self._threads: dict[str, threading.Thread] = {}
 
@@ -159,6 +166,9 @@ class IndexTaskManager:
         def update(stage: str, progress: int, message: str) -> None:
             with self._lock:
                 current = self._tasks[task_id]
+                # 终态之后不再接受写入，防止线程收尾阶段的迟到回调覆盖掉
+                # cancelled/failed 等结果；progress 只增不减，避免阶段切换时
+                # 回调乱序导致进度条倒退。
                 if current.status not in TERMINAL_STATUSES:
                     current.stage = stage
                     current.progress = max(current.progress, min(100, int(progress)))
@@ -204,6 +214,10 @@ class IndexTaskManager:
             if task is None:
                 raise TaskNotFound(task_id)
             if task.status in ACTIVE_STATUSES:
+                # 这里只做两件事：置位 Event（跨线程信号，见模块 docstring 的
+                # 协作式取消说明）+ 在锁内把状态改成 cancelling。真正的收尾
+                # （回滚、状态落定为 cancelled）由后台线程到达检查点后自己完成，
+                # 本方法不等待、不代劳——HTTP 响应可以立刻返回给前端。
                 task.cancel_event.set()
                 task.status = "cancelling"
                 task.message = "正在安全停止：当前数据库事务会回滚"

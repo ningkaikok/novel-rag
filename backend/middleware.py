@@ -25,6 +25,8 @@ class RequestIDMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        # 只拦截 HTTP；lifespan、websocket 等 scope 没有"请求"概念，原样放行，
+        # 避免 set/reset contextvar 用在错误的协议生命周期上。
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -40,6 +42,9 @@ class RequestIDMiddleware:
         start = time.monotonic()
         status_holder: dict = {}
 
+        # 用 dict 包一层 send：只在响应头消息上追加 x-request-id，body chunk
+        # 原样透传（这是不缓冲 SSE 的关键，见模块 docstring）。status 不能直接
+        # 从 send 拿到返回值，所以塞进 holder，供 finally 里的访问日志使用。
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 status_holder["status"] = message["status"]
@@ -53,6 +58,8 @@ class RequestIDMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            # 放在 finally：请求抛异常时也能记下耗时和状态，不会丢访问日志。
+            # status_holder 里没有值说明响应头都没发出去就炸了，记 "?" 而不是猜。
             duration_ms = (time.monotonic() - start) * 1000
             status = status_holder.get("status", "?")
             logger.info(f"{method} {path} 结束 status={status} 耗时={duration_ms:.0f}ms")

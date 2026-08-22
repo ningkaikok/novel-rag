@@ -19,6 +19,8 @@ export interface ChatMessage {
 }
 
 const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
+  // 单独 memo 的原因和 Sources 一样：steps 数组在一次回答内引用不变，
+  // 打字机每帧刷新气泡时这个工具循环面板不会跟着重渲染。
   if (!steps.length) return null;
   return (
     <Collapse
@@ -149,6 +151,7 @@ function shortName(novel: string): string {
   return novel.length > 12 ? novel.slice(0, 12) + "…" : novel;
 }
 
+/** 分数展示：BM25 等大分数量级用 1 位小数，向量相似度（-1~1）保留 4 位才有区分度。 */
 function formatScore(candidate: RetrievalCandidate): string {
   if (candidate.score == null) return "—";
   return Math.abs(candidate.score) >= 100
@@ -265,6 +268,11 @@ const Sources = memo(function Sources({
   );
 });
 
+// 把回答正文里的 [1] [2] 引用替换成可点击按钮，其余文本原样保留。
+//
+// 用「游标 + 正则 exec 循环」做线性扫描：每个匹配点切一刀，前一段是纯文本、
+// 匹配本身变成按钮。流式期间每吐一个字都会重新执行整个解析——但纯字符串
+// 切分成本极低，远小于省略号组件的 DOM 测量，不值得为此做增量解析。
 function CitedContent({
   text,
   sources,
@@ -306,6 +314,8 @@ function CitedContent({
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
+  // useId 生成每条气泡唯一的出处锚点前缀（替换掉冒号，避免和 DOM id/CSS
+  // 选择器的转义规则冲突）；正文 [n] 点击时按它定位到第 n 张出处卡片。
   const groupId = useId().replace(/:/g, "");
   const [activeSource, setActiveSource] = useState<number | null>(null);
   const hasTrace = !isUser && !!msg.trace && msg.trace.length > 0;
@@ -313,6 +323,8 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   const waiting = !!msg.streaming && !msg.content;
 
   function jumpToSource(index: number) {
+    // 先高亮再等一帧滚动：rAF 保证高亮 class 已经渲染进 DOM 后才定位，
+    // 否则可能滚到旧布局的位置上。
     setActiveSource(index);
     requestAnimationFrame(() => {
       document

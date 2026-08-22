@@ -241,6 +241,8 @@ function Main() {
   }, []);
 
   const indexActive =
+    // 任务还在排队/执行/停止中就算「活跃」：驱动轮询，也用于禁用书架增删按钮
+    // （后端同一时间只允许一个索引任务，避免上传和删除互相踩）。
     indexTask !== null &&
     ["queued", "running", "cancelling"].includes(indexTask.status);
 
@@ -454,6 +456,13 @@ function Main() {
     }
   }
 
+  // 流式期间更新最后一条消息的唯一入口，是整个打字机性能方案的地基：
+  //
+  // 1. **不可变更新**：不原地改 msg 对象，而是浅拷贝数组、只替换最后一项。
+  //    这样除最后一条外，其余消息的引用都不变——MessageBubble 整体 memo 后，
+  //    React 对旧气泡的 props 浅比较直接命中，历史消息完全不重渲染。
+  // 2. **为什么只动最后一项**：SSE 的 token/step/sources 只会作用于
+  //    刚追加的那条 assistant 消息；前面的轮次已经定型，永远不需要再变。
   function patchLast(fn: (m: ChatMessage) => ChatMessage) {
     setMessages((prev) => {
       const copy = [...prev];
@@ -594,6 +603,8 @@ function Main() {
     }
   }
 
+  // 上传/删除/手动同步共用这个入口：三者都立刻返回一个 IndexTask，
+  // 存进 state 后由上面的轮询 effect 接管进度刷新，这里只负责提示「已开始」。
   async function startShelfTask(action: () => Promise<IndexTask>, started: string) {
     try {
       const task = await action();
@@ -630,6 +641,8 @@ function Main() {
 
   const isCloud = isCloudModel(currentModel);
   const cloudVendor = currentModel.startsWith(GLM_PREFIX) ? "智谱" : "Anthropic";
+  // 云端隐私提示文案：自由问答不发送小说原文，只有问题本身出网；
+  // 其余模式（含 Agent Lab）都会把召回的片段一起发出去，提示要更醒目。
   const cloudPrivacyText =
     workspaceMode !== "agent" && answerMode === "free"
       ? `你的问题会发送到${cloudVendor}；自由问答不会发送小说原文，并计入你自己的账号用量`
@@ -690,6 +703,9 @@ function Main() {
               showUploadList={false}
               disabled={busy || indexActive}
               beforeUpload={(file, fileList) => {
+                // antd 会对选中的每个文件各调一次 beforeUpload。这里只想
+                // 整批上传一次：判断「当前是不是最后一个文件」，是才把整批
+                // 交给 handleUpload；返回 false 同时阻止 antd 自己发请求。
                 if (file === fileList[fileList.length - 1]) {
                   handleUpload(fileList as File[]);
                 }
