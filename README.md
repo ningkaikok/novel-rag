@@ -36,7 +36,7 @@
 - **Agent Lab**：独立的 3～5 步只读工具循环，逐步展示选择、工具结果与证据，不依赖 Agent 框架。
 - **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型、你自己的 Claude 订阅或智谱 GLM（云端模型会发送问题和召回片段，见下文）。
 - **后端**：FastAPI（`backend/main.py`），把检索/生成逻辑包成 HTTP 接口，回答用 SSE 逐字流式返回。
-- **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。用 antd 组件 + `ConfigProvider` 主题令牌保留藏青主色与暖底书卷气，支持浅色/深色主题、上传/删除书籍、示例问题、流式回答，以及可点击的原文出处引用。
+- **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。用 antd 组件 + `ConfigProvider` 主题令牌保留藏青主色与暖底书卷气，支持浅色/深色主题、上传/删除书籍、示例问题、流式回答，以及可点击的原文出处引用。前后端类型契约由 OpenAPI 生成（`schemas.py` → `openapi.json` → `api-generated.ts`，CI 有 drift 检查），改 Pydantic 模型后跑 `uv run python scripts/export_openapi.py && cd frontend && npm run gen:api`。
 - **对话体验**：生成中可以点「停止」——不只是前端不再显示新字，后端会真的停止向模型索取内容（用云端模型时不多花钱）；刷新页面或重开浏览器后，之前的问答、原文出处、思考过程会自动恢复，中途被停止的那轮也会如实标出来；往上翻看历史时，下面来了新回答会提示「有新回复」，不会悄悄错过。
 
 ## 目录结构

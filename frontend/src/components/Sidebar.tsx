@@ -118,12 +118,14 @@ export default function Sidebar({
             <Alert type="error" showIcon message="失败原因" description={indexTask.error} />
           )}
           {/* 增量索引的结果摘要：只有终态任务才带 result。
-              "保留"是文件没变化、索引直接复用的书——这个数字大说明增量同步在生效。 */}
+              "保留"是文件没变化、索引直接复用的书——这个数字大说明增量同步在生效。
+              added 等列表在契约里是可选字段，读的时候按可空兜底。 */}
           {indexTask.result && (
             <p className="index-task-summary">
-              新增 {indexTask.result.added.length} · 更新 {indexTask.result.modified.length}
-              {' · '}删除 {indexTask.result.deleted.length} · 保留{' '}
-              {indexTask.result.unchanged.length}
+              新增 {indexTask.result.added?.length ?? 0} · 更新{' '}
+              {indexTask.result.modified?.length ?? 0}
+              {' · '}删除 {indexTask.result.deleted?.length ?? 0} · 保留{' '}
+              {indexTask.result.unchanged?.length ?? 0}
             </p>
           )}
           {/* 操作按钮由状态机决定：还在跑（queued/running/cancelling）显示「安全停止」；

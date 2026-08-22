@@ -7,6 +7,10 @@
 
 ### 新增
 
+- **前后端类型契约**：`scripts/export_openapi.py` 导出 OpenAPI schema，
+  openapi-typescript 生成 `frontend/src/api-generated.ts`，`api.ts` 的 REST 类型
+  全部改为生成类型的别名导出（SSE 事件协议不在 OpenAPI 内，保留手写并注明原因）；
+  CI 增加 drift 检查——改了 Pydantic 模型没重新生成会直接标红。
 - **M3.5 第二阶段：忠实度 Judge 校准**：
   - 标注集 18 → 53 条（新增否定关系/跨句证据/多跳推理/程度篡改/代词链五类，
     partial 类加密），每条带标注理由

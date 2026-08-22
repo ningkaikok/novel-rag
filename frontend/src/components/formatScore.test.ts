@@ -3,7 +3,8 @@ import { formatScore } from './MessageBubble';
 import type { RetrievalCandidate } from '../api';
 
 function candidate(score: number | null | undefined): RetrievalCandidate {
-  return { novel: 'demo', chunk_id: 1, rank: 1, score };
+  // 契约里 selected 是必填（后端默认 false，序列化时始终存在），测试不关心它
+  return { novel: 'demo', chunk_id: 1, rank: 1, score, selected: false };
 }
 
 describe('formatScore —— 检索分数展示', () => {

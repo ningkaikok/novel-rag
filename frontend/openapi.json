@@ -1,0 +1,1434 @@
+{
+ "components": {
+  "schemas": {
+   "AgentAskRequest": {
+    "properties": {
+     "max_steps": {
+      "default": 5,
+      "maximum": 5.0,
+      "minimum": 3.0,
+      "title": "Max Steps",
+      "type": "integer"
+     },
+     "question": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Question",
+      "type": "string"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "question"
+    ],
+    "title": "AgentAskRequest",
+    "type": "object"
+   },
+   "AgentStep": {
+    "properties": {
+     "args": {
+      "additionalProperties": true,
+      "title": "Args",
+      "type": "object"
+     },
+     "observation": {
+      "title": "Observation",
+      "type": "string"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "run_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Run Id"
+     },
+     "source_ids": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Source Ids",
+      "type": "array"
+     },
+     "step": {
+      "title": "Step",
+      "type": "integer"
+     },
+     "tool": {
+      "title": "Tool",
+      "type": "string"
+     }
+    },
+    "required": [
+     "step",
+     "reason",
+     "tool",
+     "observation"
+    ],
+    "title": "AgentStep",
+    "type": "object"
+   },
+   "AnswerMode": {
+    "description": "用户选择的问答模式；值也是前后端 API 契约的一部分。",
+    "enum": [
+     "auto",
+     "grounded",
+     "free"
+    ],
+    "title": "AnswerMode",
+    "type": "string"
+   },
+   "AskRequest": {
+    "properties": {
+     "mode": {
+      "$ref": "#/components/schemas/AnswerMode",
+      "default": "auto"
+     },
+     "question": {
+      "title": "Question",
+      "type": "string"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "top_k": {
+      "default": 3,
+      "title": "Top K",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "question"
+    ],
+    "title": "AskRequest",
+    "type": "object"
+   },
+   "Body_upload_books_api_books_post": {
+    "properties": {
+     "files": {
+      "items": {
+       "format": "binary",
+       "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+     }
+    },
+    "required": [
+     "files"
+    ],
+    "title": "Body_upload_books_api_books_post",
+    "type": "object"
+   },
+   "BookList": {
+    "properties": {
+     "books": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Books",
+      "type": "array"
+     }
+    },
+    "required": [
+     "books"
+    ],
+    "title": "BookList",
+    "type": "object"
+   },
+   "CurrentModel": {
+    "properties": {
+     "current": {
+      "title": "Current",
+      "type": "string"
+     }
+    },
+    "required": [
+     "current"
+    ],
+    "title": "CurrentModel",
+    "type": "object"
+   },
+   "DeleteResult": {
+    "properties": {
+     "deleted": {
+      "title": "Deleted",
+      "type": "string"
+     },
+     "task": {
+      "$ref": "#/components/schemas/IndexTaskStatus"
+     }
+    },
+    "required": [
+     "deleted",
+     "task"
+    ],
+    "title": "DeleteResult",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "HealthStatus": {
+    "properties": {
+     "ok": {
+      "title": "Ok",
+      "type": "boolean"
+     },
+     "ready": {
+      "title": "Ready",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "ok",
+     "ready"
+    ],
+    "title": "HealthStatus",
+    "type": "object"
+   },
+   "IndexResult": {
+    "properties": {
+     "added": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Added",
+      "type": "array"
+     },
+     "chunk_count": {
+      "title": "Chunk Count",
+      "type": "integer"
+     },
+     "contextualized": {
+      "default": 0,
+      "title": "Contextualized",
+      "type": "integer"
+     },
+     "deleted": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Deleted",
+      "type": "array"
+     },
+     "hierarchy_nodes": {
+      "default": 0,
+      "title": "Hierarchy Nodes",
+      "type": "integer"
+     },
+     "modified": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Modified",
+      "type": "array"
+     },
+     "novels": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Novels",
+      "type": "array"
+     },
+     "relations": {
+      "default": 0,
+      "title": "Relations",
+      "type": "integer"
+     },
+     "unchanged": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Unchanged",
+      "type": "array"
+     }
+    },
+    "required": [
+     "novels",
+     "chunk_count"
+    ],
+    "title": "IndexResult",
+    "type": "object"
+   },
+   "IndexTaskStatus": {
+    "properties": {
+     "created_at": {
+      "title": "Created At",
+      "type": "string"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "finished_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finished At"
+     },
+     "force": {
+      "default": false,
+      "title": "Force",
+      "type": "boolean"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     },
+     "progress": {
+      "title": "Progress",
+      "type": "integer"
+     },
+     "result": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/IndexResult"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "retry_of": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Retry Of"
+     },
+     "stage": {
+      "title": "Stage",
+      "type": "string"
+     },
+     "started_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Started At"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "stage",
+     "progress",
+     "message",
+     "created_at"
+    ],
+    "title": "IndexTaskStatus",
+    "type": "object"
+   },
+   "ModelList": {
+    "properties": {
+     "current": {
+      "title": "Current",
+      "type": "string"
+     },
+     "models": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Models",
+      "type": "array"
+     }
+    },
+    "required": [
+     "models",
+     "current"
+    ],
+    "title": "ModelList",
+    "type": "object"
+   },
+   "RetrievalCandidate": {
+    "properties": {
+     "chapter_title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chapter Title"
+     },
+     "chunk_id": {
+      "title": "Chunk Id",
+      "type": "integer"
+     },
+     "novel": {
+      "title": "Novel",
+      "type": "string"
+     },
+     "previous_rank": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Previous Rank"
+     },
+     "rank": {
+      "title": "Rank",
+      "type": "integer"
+     },
+     "score": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Score"
+     },
+     "score_label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Score Label"
+     },
+     "selected": {
+      "default": false,
+      "title": "Selected",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "novel",
+     "chunk_id",
+     "rank"
+    ],
+    "title": "RetrievalCandidate",
+    "type": "object"
+   },
+   "SearchMatch": {
+    "properties": {
+     "chapter_title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chapter Title"
+     },
+     "chunk_id": {
+      "title": "Chunk Id",
+      "type": "integer"
+     },
+     "match_count": {
+      "title": "Match Count",
+      "type": "integer"
+     },
+     "novel": {
+      "title": "Novel",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "novel",
+     "chunk_id",
+     "text",
+     "match_count"
+    ],
+    "title": "SearchMatch",
+    "type": "object"
+   },
+   "SearchResult": {
+    "properties": {
+     "query": {
+      "title": "Query",
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/SearchMatch"
+      },
+      "title": "Results",
+      "type": "array"
+     },
+     "total": {
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "query",
+     "total",
+     "results"
+    ],
+    "title": "SearchResult",
+    "type": "object"
+   },
+   "SessionHistory": {
+    "properties": {
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "turns": {
+      "items": {
+       "$ref": "#/components/schemas/StoredTurn"
+      },
+      "title": "Turns",
+      "type": "array"
+     }
+    },
+    "required": [
+     "session_id",
+     "turns"
+    ],
+    "title": "SessionHistory",
+    "type": "object"
+   },
+   "SetModelRequest": {
+    "properties": {
+     "model": {
+      "title": "Model",
+      "type": "string"
+     }
+    },
+    "required": [
+     "model"
+    ],
+    "title": "SetModelRequest",
+    "type": "object"
+   },
+   "SourceItem": {
+    "properties": {
+     "chapter_title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chapter Title"
+     },
+     "chunk_id": {
+      "title": "Chunk Id",
+      "type": "integer"
+     },
+     "novel": {
+      "title": "Novel",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "novel",
+     "chunk_id",
+     "text"
+    ],
+    "title": "SourceItem",
+    "type": "object"
+   },
+   "StoredTurn": {
+    "properties": {
+     "agent_steps": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/AgentStep"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Steps"
+     },
+     "content": {
+      "title": "Content",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     },
+     "run_config": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Run Config"
+     },
+     "sources": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/SourceItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sources"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "trace": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/TraceStep"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Trace"
+     },
+     "turn_index": {
+      "title": "Turn Index",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "turn_index",
+     "role",
+     "content",
+     "status"
+    ],
+    "title": "StoredTurn",
+    "type": "object"
+   },
+   "TraceStep": {
+    "properties": {
+     "candidates": {
+      "items": {
+       "$ref": "#/components/schemas/RetrievalCandidate"
+      },
+      "title": "Candidates",
+      "type": "array"
+     },
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     },
+     "evidence_tokens": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Tokens"
+     },
+     "expansion_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expansion Mode"
+     },
+     "ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ms"
+     },
+     "reasons": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+     },
+     "stage": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage"
+     },
+     "stage_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage Key"
+     },
+     "step": {
+      "title": "Step",
+      "type": "string"
+     },
+     "still_no_evidence": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Still No Evidence"
+     },
+     "truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncated"
+     },
+     "truncation_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncation Reason"
+     },
+     "variants": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Variants",
+      "type": "array"
+     }
+    },
+    "required": [
+     "step",
+     "detail"
+    ],
+    "title": "TraceStep",
+    "type": "object"
+   },
+   "UploadResult": {
+    "properties": {
+     "saved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Saved",
+      "type": "array"
+     },
+     "task": {
+      "$ref": "#/components/schemas/IndexTaskStatus"
+     }
+    },
+    "required": [
+     "saved",
+     "task"
+    ],
+    "title": "UploadResult",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "书虫 · Novel RAG API",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/agent/ask": {
+   "post": {
+    "description": "运行独立 Agent Lab；最多五步，只能调用白名单只读工具。",
+    "operationId": "agent_ask_api_agent_ask_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AgentAskRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Agent Ask"
+   }
+  },
+  "/api/ask": {
+   "post": {
+    "description": "流式回答。支持用户中断：前端 abort 后，这里会停止向上游模型要 token。\n\n刻意写成 async def（而不是同步 def）：只有在协程里才能 await 出让控制权，\n从而定期检查 `request.is_disconnected()`。写成同步函数时 FastAPI 会丢进线程池，\n客户端断开后那个线程仍会把生成跑到底——白烧本地 GPU，或继续消耗用户的\nClaude/GLM 付费额度。这不是优化，是避免\"用户点了停止还在扣他的钱\"。",
+    "operationId": "ask_api_ask_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Ask"
+   }
+  },
+  "/api/books": {
+   "get": {
+    "operationId": "list_books_api_books_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BookList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Books"
+   },
+   "post": {
+    "operationId": "upload_books_api_books_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_books_api_books_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Upload Books"
+   }
+  },
+  "/api/books/{name}": {
+   "delete": {
+    "operationId": "delete_book_api_books__name__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Book"
+   }
+  },
+  "/api/health": {
+   "get": {
+    "operationId": "health_api_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HealthStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Health"
+   }
+  },
+  "/api/index-tasks/current": {
+   "get": {
+    "operationId": "current_index_task_api_index_tasks_current_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/IndexTaskStatus"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "title": "Response Current Index Task Api Index Tasks Current Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Current Index Task"
+   }
+  },
+  "/api/index-tasks/{task_id}": {
+   "get": {
+    "operationId": "get_index_task_api_index_tasks__task_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "task_id",
+      "required": true,
+      "schema": {
+       "title": "Task Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/IndexTaskStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Index Task"
+   }
+  },
+  "/api/index-tasks/{task_id}/cancel": {
+   "post": {
+    "operationId": "cancel_index_task_api_index_tasks__task_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "task_id",
+      "required": true,
+      "schema": {
+       "title": "Task Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/IndexTaskStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Cancel Index Task"
+   }
+  },
+  "/api/index-tasks/{task_id}/retry": {
+   "post": {
+    "operationId": "retry_index_task_api_index_tasks__task_id__retry_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "task_id",
+      "required": true,
+      "schema": {
+       "title": "Task Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/IndexTaskStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Retry Index Task"
+   }
+  },
+  "/api/model": {
+   "post": {
+    "operationId": "set_model_api_model_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SetModelRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CurrentModel"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Set Model"
+   }
+  },
+  "/api/models": {
+   "get": {
+    "operationId": "list_models_api_models_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Models"
+   }
+  },
+  "/api/reindex": {
+   "post": {
+    "description": "启动后台同步。默认只处理变化文件；force=true 强制重新处理所有现存书。",
+    "operationId": "reindex_api_reindex_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "force",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Force",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/IndexTaskStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Reindex"
+   }
+  },
+  "/api/search": {
+   "get": {
+    "description": "在本地小说原文中做精确全文搜索，不经过大模型。",
+    "operationId": "search_api_search_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "q",
+      "required": true,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Q",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "book",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Book"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SearchResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Search"
+   }
+  },
+  "/api/sessions/{session_id}": {
+   "get": {
+    "description": "读回某个会话的全部对话，用于刷新页面后恢复界面。",
+    "operationId": "get_session_api_sessions__session_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionHistory"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Session"
+   }
+  }
+ }
+}

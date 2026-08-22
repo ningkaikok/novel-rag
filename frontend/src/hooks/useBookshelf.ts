@@ -66,8 +66,11 @@ export function useBookshelf() {
     notifiedIndexTerminalRef.current = notificationKey;
     if (indexTask.status === 'completed') {
       const result = indexTask.result;
+      // 契约里 added/modified/deleted 是可选字段，读的时候按可空兜底
       const changed = result
-        ? result.added.length + result.modified.length + result.deleted.length
+        ? (result.added?.length ?? 0) +
+          (result.modified?.length ?? 0) +
+          (result.deleted?.length ?? 0)
         : 0;
       message.success(changed ? `书架索引已更新（处理 ${changed} 本）` : '索引已经是最新');
     } else if (indexTask.status === 'cancelled') {

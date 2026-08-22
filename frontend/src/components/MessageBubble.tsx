@@ -38,7 +38,10 @@ const AgentRun = memo(function AgentRun({ steps }: { steps: AgentStep[] }) {
                   <div className="agent-run-action">
                     <span className="agent-run-index">{step.step}</span>
                     <code>{step.tool}</code>
-                    {step.source_ids.length > 0 && <span>{step.source_ids.join(' · ')}</span>}
+                    {/* 契约里 source_ids 是可选字段：旧记录的工具调用可能没带 */}
+                    {step.source_ids && step.source_ids.length > 0 && (
+                      <span>{step.source_ids.join(' · ')}</span>
+                    )}
                   </div>
                   <div className="agent-run-reason">选择：{step.reason}</div>
                   <div className="agent-run-observation">观察：{step.observation}</div>
