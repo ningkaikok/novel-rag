@@ -180,6 +180,9 @@ npm run dev
 > 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
 > `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
 >
+> **MCP（实验性）**：`uv run python scripts/mcp_server.py` 提供只读 MCP 服务器
+> （stdio），可在 Claude Code 等客户端注册后直接查询书架。详见脚本头部说明。
+>
 > 不用 Docker 的手动路径：`cd frontend && npm run build` 生成静态文件后，
 > FastAPI 会自动检测 `frontend/dist` 并托管（存在即挂载，开发模式不受影响）。
 

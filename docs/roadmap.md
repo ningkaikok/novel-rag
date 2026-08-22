@@ -277,7 +277,7 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 - [ ] M6.6：在工具需要跨客户端复用时增加 MCP 适配，不绕过内部权限和审计边界。
   允许的提前项：M3.3.5 完成后可做一个只读、stdio 传输的最小 MCP PoC 作为低成本探针，
   用真实客户端（Claude Code 等）暴露 ToolResult Schema 的设计问题并反哺 M6.1；
-  PoC 不接权限体系、不做发现机制，正式 MCP 仍按 Registry→Gateway→Adapter 的顺序来
+  PoC 不接权限体系、不做发现机制，正式 MCP 仍按 Registry→Gateway→Adapter 的顺序来。✅ PoC 已落地（2026-08-23）：`scripts/mcp_server.py` 四个只读工具经 stdio 通过真实客户端验证（结构化输出 + 80 字摘录红线），发现的 SDK v2 结构化输出需具体返回类型注解等约束已记录在案
 - [ ] M6.7：结合 M5 完成租户隔离、配额、数据保留/删除、备份、结构化日志、监控告警
   和灰度发布；高风险写工具默认需要人工审批
 
