@@ -23,6 +23,14 @@ logger = get_logger("errors")
 
 
 class ErrorCode(StrEnum):
+    """机器可读的错误码，是前后端之间的稳定契约。
+
+    用 StrEnum：成员本身就是字符串，JSON 序列化不需要额外转换；前端拿 code
+    做分支判断（如 index_task_running → 轮询任务卡片），拿 message 做展示。
+    新增错误码对老前端是无损的（多一个没见过的值，退化为只显示 message），
+    但**修改或删除已有 code 是破坏性变更**。
+    """
+
     no_valid_files = "no_valid_files"
     book_not_found = "book_not_found"
     index_not_ready = "index_not_ready"

@@ -129,6 +129,9 @@ export async function listBooks(): Promise<string[]> {
   return (await res.json()).books;
 }
 
+// 下面这组书架操作（上传/删除/同步）都只负责「发起」：后端把它们放进后台线程，
+// 立即返回一个 IndexTask，真正的进度靠 App 里的轮询不断拉取。
+
 export async function uploadBooks(files: FileList | File[]): Promise<IndexTask> {
   const form = new FormData();
   for (const f of Array.from(files)) form.append("files", f);
@@ -240,6 +243,9 @@ export async function askStream(
       throw new Error(await extractErrorMessage(res, "请求失败"));
     }
 
+    // 网络层出错（包括用户 abort 触发的 AbortError）统一交给 onError，
+    // 由上层区分「主动停止」和「真的失败」——本文件不做这个判断，
+    // 因为只有 UI 层知道用户点没点过停止按钮。
     await consumeEventStream(res, handlers);
     handlers.onDone?.();
   } catch (err) {
@@ -288,6 +294,8 @@ async function consumeEventStream(res: Response, handlers: AskHandlers) {
 
   while (true) {
     const { done, value } = await reader.read();
+    // 流正常结束（后端生成完毕关闭连接）走这里；用户 abort 则 read() 会抛
+    // AbortError——两种情况最终都回到 askStream 的 onDone/onError 分支收尾。
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
@@ -321,13 +329,19 @@ export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
   return (await res.json()).turns ?? [];
 }
 
+// 解析单个 SSE 事件块（不含结尾空行）。事件协议是隐式约定的：
+// step → (sources) → token* → 连接关闭，没有显式的 done 事件——
+// 「生成结束」由连接关闭表达，所以 onDone 在 consumeEventStream 返回后才触发。
 function handleEvent(raw: string, handlers: AskHandlers) {
   let event = "message";
   let data = "";
   for (const line of raw.split("\n")) {
     if (line.startsWith("event:")) event = line.slice(6).trim();
+    // SSE 规范允许一个事件的 data 拆成多行 data: 逐行拼接；
+    // 本后端虽然总是单行发送，这里仍按规范处理以保持健壮。
     else if (line.startsWith("data:")) data += line.slice(5).trim();
   }
+  // 没有负载的事件（如只用来保活的注释行）直接跳过
   if (!data) return;
   // step 是检索期间逐条推的（新），trace 是一次性整包（历史会话恢复走这条）
   if (event === "step") handlers.onStep?.(JSON.parse(data));
@@ -335,4 +349,5 @@ function handleEvent(raw: string, handlers: AskHandlers) {
   else if (event === "trace") handlers.onTrace?.(JSON.parse(data));
   else if (event === "sources") handlers.onSources?.(JSON.parse(data));
   else if (event === "token") handlers.onToken?.(JSON.parse(data));
+  // 未识别的事件类型静默忽略：后端将来加新事件时旧前端不会崩
 }

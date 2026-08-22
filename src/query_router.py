@@ -62,6 +62,10 @@ _GROUNDED_SIGNALS = (
     "片段",
 )
 
+# 高置信度的通用知识信号词，面向本项目的目标用户（开发者）收录了技术栈和
+# 日常问答两类词汇。匹配前问题已被 casefold，所以英文词统一小写书写即可。
+# 这份词表刻意宁缺毋滥：漏判一个通用问题只是白做一次检索，代价很小；
+# 误判一个小说问题进自由模式，模型就会凭记忆幻觉作答，代价大得多。
 _GENERAL_SIGNALS = (
     "rag",
     "langgraph",
@@ -81,6 +85,9 @@ _GENERAL_SIGNALS = (
     "几号",
 )
 
+# 三类高置信度开放问题的匹配器。问候必须 fullmatch 整句，避免把
+# "你好，介绍一下韩立"这种以问候开头的小说问题误放走；创作类请求总是
+# 以"写/翻译/推荐…"起头，所以只看句首。
 _GREETING_RE = re.compile(
     r"^(你好|您好|嗨|哈喽|hello|hi|早上好|下午好|晚上好|谢谢|再见)[！!。,.，？?\s]*$",
     re.IGNORECASE,
@@ -103,6 +110,9 @@ def choose_answer_route(question: str, mode: AnswerMode = AnswerMode.auto) -> Ro
     text = question.strip()
     lowered = text.casefold()
 
+    # 自动规则按优先级从高到低排列：显式指令 > 小说信号 > 闲聊/帮助 >
+    # 通用知识 > 创作任务 > 默认原文。前面的规则命中即返回，后面的不再看；
+    # 把小说信号排在通用词之前，是为了保证"这本书讲什么"不被词表误抢。
     if any(signal in text for signal in _EXPLICIT_FREE):
         return RouteDecision(AnswerMode.free, "问题明确要求不搜索小说")
 

@@ -47,10 +47,15 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
         "",
         "--disable-slash-commands",
     ]
+    # stdout/stderr 分开接管：stdout 走 JSON 事件流，stderr 只在 CLI 失败退出时
+    # 读一次、拼进异常消息，平时不消费（避免和事件流混在一起解析）。
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
     try:
+        # 逐行读子进程 stdout：stream-json 模式下每行是一个独立 JSON 事件，
+        # 行即消息边界，不需要自己攒缓冲区。非 stream_event / 非 text_delta 的
+        # 事件（初始化、system、结果汇总等）全部跳过，只透出正文增量。
         for line in proc.stdout:
             line = line.strip()
             if not line:
