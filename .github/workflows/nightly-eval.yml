@@ -87,7 +87,7 @@ jobs:
 
       - name: 上传失败报告（失败时留痕）
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: retrieval-eval-report
           path: /tmp/ci_eval_report.json
