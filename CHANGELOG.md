@@ -7,6 +7,11 @@
 
 ### 新增
 
+- **MCP 只读 PoC（M6.6 提前项）**：`scripts/mcp_server.py` 经 stdio 暴露四个只读
+  工具（list_books/search_novels/read_neighbors/get_chapter），结构化输出含
+  schema_version 与 80 字摘录红线；真实客户端端到端验证通过，发现的问题
+  （SDK v2 结构化输出需具体类型注解等）已记录用于反哺 M6.1 ToolSpec 设计。
+
 - **系统架构文档**：`docs/system-architecture.md` 用 mermaid 图呈现当前全栈
   分层、问答链路时序、索引流水线、数据模型与工程化设施，附设计决策速查表。
 - **工程化第二阶段：依赖审计 + Dependabot + 覆盖率**：
