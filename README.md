@@ -66,6 +66,7 @@ novel-rag/
 | [**增量索引与后台任务**](docs/incremental-indexing.md) | 文件哈希、单书事务、进度、取消和失败重试 | 想理解长任务如何保持数据一致性 |
 | [**M3 层级检索**](docs/hierarchical-retrieval.md) | 片段→章节→全书、摘要导航、原文回溯和跨书公平召回 | 想处理主题与人物成长问题 |
 | [**检索可视化评测**](docs/retrieval-observability.md) | 向量/BM25/RRF/重排排名怎样逐层变化，如何定位丢失点 | 想调试检索质量 |
+| [**检索是否真的在起作用**](docs/grounding-verification.md) | 用对照实验区分「模型凭记忆答对」和「真的用了检索片段」 | 想验证检索有效性 |
 | [**Agent Lab**](docs/agent-lab.md) | 五个只读工具、有限步循环、安全边界和 SSE 轨迹 | 想从普通 Python 学 Agent |
 | [**架构决策：是否需要 LangGraph**](docs/architecture-decisions.md) | 当前请求链路为什么保持显式编排、GraphRAG 和 LangGraph 的区别、什么情况下再引入 | 想学习技术选型 |
 | [**Agent 平台化架构**](docs/agent-platform-architecture.md) | Control/Data Plane、Tool/Model Gateway、安全、状态、Trace、MCP 与生产演进 | 想从 Agent Lab 走向生产设计 |

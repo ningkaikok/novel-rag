@@ -1,5 +1,11 @@
 # 小说 RAG 问答测试报告
 
+> **⚠️ 历史快照**：本报告记录的是 2026-07-21（M2/M3/M3.3 之前）的系统状态。
+> 当时的配置与现在不同：`top_k=5`（现默认 `TOP_K=3`）、没有层级检索、检索评测面板、
+> 索引质量门禁和 Agent Lab。文中"检索改进建议"里的一部分（层级导航、重排调优）
+> 已经落地，结论请以 [docs/rag-overview.md](docs/rag-overview.md) 的最新实测汇总为准。
+> 本报告保留作为编码故障排查过程的原始记录。
+
 测试时间：2026-07-21
 测试脚本：[tests/run_qa_tests.py](tests/run_qa_tests.py)
 测试问题集：[tests/qa_test_set.json](tests/qa_test_set.json)
