@@ -701,6 +701,10 @@ def ensure_chat_schema() -> None:
         conn.execute(
             "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS agent_steps JSONB"
         )
+        # M3.5-④：在线配置快照列（幂等补列，模式与上面 agent_steps 一致）。
+        conn.execute(
+            "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS run_config JSONB"
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_turns_session_idx "
             "ON chat_turns (session_id, turn_index)"
@@ -716,25 +720,32 @@ def save_turn(
     trace: list | None = None,
     agent_steps: list | None = None,
     status: str = "complete",
+    run_config: dict | None = None,
 ) -> None:
     """写入或覆盖一轮对话（幂等）。
 
     用 ON CONFLICT DO UPDATE 而非 INSERT：中断保存可能被重复调用，
     同一 (session_id, turn_index) 直接覆盖，不会主键冲突。
+
+    ``run_config``：本轮问答的在线配置快照（M3.5-④，见 backend/main.py 的
+    _build_run_config）。**隐私红线**：快照里不得出现 API Key、完整版权原文、
+    或用户问题原文之外的隐私——调用方负责保证内容，这里只做透明落库。
     """
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO chat_turns
-                (session_id, turn_index, role, content, sources, trace, agent_steps, status)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
+                (session_id, turn_index, role, content, sources, trace,
+                 agent_steps, status, run_config)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             ON CONFLICT (session_id, turn_index) DO UPDATE SET
                 role        = EXCLUDED.role,
                 content     = EXCLUDED.content,
                 sources     = EXCLUDED.sources,
                 trace       = EXCLUDED.trace,
                 agent_steps = EXCLUDED.agent_steps,
-                status      = EXCLUDED.status
+                status      = EXCLUDED.status,
+                run_config  = EXCLUDED.run_config
             """,
             (
                 session_id,
@@ -745,6 +756,7 @@ def save_turn(
                 json.dumps(trace, ensure_ascii=False) if trace is not None else None,
                 json.dumps(agent_steps, ensure_ascii=False) if agent_steps is not None else None,
                 status,
+                json.dumps(run_config, ensure_ascii=False) if run_config is not None else None,
             ),
         )
 
@@ -754,7 +766,8 @@ def load_turns(session_id: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT turn_index, role, content, sources, trace, agent_steps, status
+            SELECT turn_index, role, content, sources, trace, agent_steps,
+                   status, run_config
             FROM chat_turns
             WHERE session_id = %s
             ORDER BY turn_index

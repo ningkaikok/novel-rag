@@ -31,6 +31,10 @@ from chunk_model import SourceChunk
 from novel_match import _display_title
 
 
+# Prompt 模板的显式版本号（M3.5-④）：模板文本的任何实质修改都必须递增它，
+# 并同步更新 run_config 快照里的 prompt_template_version——否则落库的回答无法
+# 回溯"当时是用哪版提示词生成的"，评测对比也会把不同版本的输出混在一起。
+PROMPT_TEMPLATE_VERSION = "v1"
 PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的编号原文片段回答问题。
 如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
 
