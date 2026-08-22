@@ -1,0 +1,48 @@
+[
+  {
+    "name": "m3_dense_chunk500",
+    "env": {
+      "EMBEDDING_MODEL": "BAAI/bge-m3"
+    },
+    "fingerprint": "53d6db5c8cf7",
+    "database": "novel_rag_eval_53d6db5c8cf7",
+    "index_seconds": 8.7,
+    "chunk_count": 6,
+    "storage_bytes": 278528,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 180
+    },
+    "case_count": 10
+  },
+  {
+    "name": "m3_dense_chunk800",
+    "env": {
+      "EMBEDDING_MODEL": "BAAI/bge-m3",
+      "CHUNK_SIZE": "800",
+      "CHUNK_OVERLAP": "120"
+    },
+    "fingerprint": "78d13b02e3d6",
+    "database": "novel_rag_eval_78d13b02e3d6",
+    "index_seconds": 6.0,
+    "chunk_count": 4,
+    "storage_bytes": 212992,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 99
+    },
+    "case_count": 10
+  }
+]

@@ -18,7 +18,8 @@
         ├─ RRF 融合成候选池
         └─ 交叉编码器重排，精选出 top_k
         ↓
-    ④ rag.expand_neighbors()    补上相邻片段，避免语义被切断
+    ④ rag.build_answer_context()  上下文组装：默认补相邻片段（off/neighbors 档），
+                                  chapter 实验档改为整章扩展 + token 预算闸门
         ↓
     ⑤ 按模型前缀路由到生成后端
         claude: → 本地 Claude CLI ／ glm: → 智谱 ／ 其余 → 本地 Ollama
@@ -110,6 +111,8 @@ from config import (  # noqa: E402
     NOVELS_DIR,
     OLLAMA_HOST,
     OLLAMA_MODEL,
+    QUERY_EXPAND_ENABLED,
+    QUERY_EXPAND_MODEL,
     QUERY_REWRITE_ENABLED,
     QUERY_REWRITE_MODEL,
 )
@@ -187,9 +190,19 @@ async def lifespan(app: FastAPI):
 
 def _try_load_rag() -> NovelRAG | None:
     try:
-        return NovelRAG(embedder=state["embedder"])
+        service = NovelRAG(embedder=state["embedder"])
     except Exception:
         return None  # PostgreSQL 索引还没建立
+    # 自适应查询扩展（M3.4）：rag.py 不依赖云端 SDK，生成函数由 Web 层按
+    # QUERY_EXPAND_MODEL 前缀路由注入（和上面 _rewrite_for_search 的路由
+    # 是同一个模式）。开关默认关闭，关闭时这里什么都不挂、零开销。
+    if QUERY_EXPAND_ENABLED:
+        service.expand_generate_fn = (
+            lambda prompt: zhipu.generate_stream(prompt, QUERY_EXPAND_MODEL)
+            if QUERY_EXPAND_MODEL.startswith(zhipu.MODEL_PREFIX)
+            else claude_cli.generate_stream(prompt, QUERY_EXPAND_MODEL)
+        )
+    return service
 
 
 app = FastAPI(title="书虫 · Novel RAG API", lifespan=lifespan)
@@ -560,7 +573,16 @@ async def ask(req: AskRequest, request: Request):
                     trace_payload.append(payload_step)
                     yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
 
-                context_sources = rag.expand_neighbors(sources)
+                context_sources, expand_step = rag.build_answer_context(sources)
+                if expand_step is not None:
+                    # chapter 实验档才会走到这里：把模式、证据 token 数、是否截断
+                    # 并入「思考过程」，评测复盘时能解释"模型到底看到了什么"。
+                    expand_payload = TraceStep(**expand_step).model_dump()
+                    trace_payload.append(expand_payload)
+                    yield (
+                        "event: step\n"
+                        f"data: {json.dumps(expand_payload, ensure_ascii=False)}\n\n"
+                    )
         # 引用编号必须与模型看到的 context_sources 一一对应。之前只把最初 top-k
         # 发给前端、邻居片段只给模型；加了 [n] 后那会导致模型引用 [4]，界面却只有
         # 3 张卡片。现在 SSE、历史记录和 prompt 共用同一份最终上下文来源。

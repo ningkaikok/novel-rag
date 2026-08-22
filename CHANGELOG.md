@@ -7,6 +7,20 @@
 
 ### 新增
 
+- **M3.4 检索实验与失败策略（第一阶段）**：
+  - `scripts/eval_matrix.py` 评测矩阵：每个配置在独立临时数据库从零建索引，
+    记录配置指纹、Recall@K、MRR、索引耗时、查询延迟与存储成本，正式索引全程只读
+  - Contextual Retrieval 三档模式 `CONTEXTUAL_MODE=off/auto/on`（默认 auto）：
+    小体量书默认后台构建、大部头跳过，auto 档还检查生成后端可用性
+  - 低置信度信号（`src/confidence.py`）：重排归一化分差、问题词覆盖率、跨书分散度，
+    配套离线校准脚本 `scripts/eval_low_confidence.py`
+  - 自适应查询扩展（`QUERY_EXPAND_ENABLED`，默认关闭）：信号不足时生成最多 3 个
+    改写变体补救检索一次，触发原因/变体/耗时写入检索 trace
+  - 整章扩展对照项（`CHAPTER_EXPANSION_MODE=chapter`）：命中片段所在整章按原文顺序
+    进入 prompt，受真实 tokenizer 的 token 预算闸门约束，截断方向与范围写入 trace
+  - 第一轮实验报告：[docs/experiments/m34-retrieval-matrix.md](docs/experiments/m34-retrieval-matrix.md)——
+    chunk300 使 recall@1 从 0.8 降到 0.6；chunk800 被 M3.3 门禁正确拦截；
+    BGE-M3 dense 在小语料无质量收益且成本更高（延迟 ×2.6、存储 ×1.4）
 - **夜间检索评测门禁（M3.3.5 收官）**：CI 每晚用仓库自带的原创小语料在临时数据库
   重建索引，跑检索评测并对照基线，核心指标（recall@1/3/5、MRR、路由准确率）回退
   超过容差即标红；`eval_retrieval.py` 新增 `--test-set/--strict/--tolerance` 参数，

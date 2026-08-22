@@ -125,6 +125,21 @@ class TraceStep(BaseModel):
     ms: int | None = None
     stage_key: str | None = None
     candidates: list[RetrievalCandidate] = Field(default_factory=list)
+    # --- M3.4 查询扩展步骤专用的结构化字段（其余步骤保持默认值）---
+    # stage="expand" 标记这是低置信度补救步骤；reasons 记录触发了哪些信号；
+    # variants 是生成的改写变体原文；still_no_evidence 表示补救后信号仍然低。
+    stage: str | None = None
+    reasons: list[str] = Field(default_factory=list)
+    variants: list[str] = Field(default_factory=list)
+    still_no_evidence: bool | None = None
+    # --- M3.4 整章扩展步骤专用的结构化字段（其余步骤保持默认值）---
+    # expansion_mode="chapter" 标记这是整章扩展实验档；evidence_tokens 是拼入
+    # prompt 的证据总 token（真实 embedding tokenizer 口径，闸门不可用时为 null）；
+    # truncated / truncation_reason 说明是否触发预算截断以及原因。
+    expansion_mode: str | None = None
+    evidence_tokens: int | None = None
+    truncated: bool | None = None
+    truncation_reason: str | None = None
 
 
 class SourceItem(BaseModel):

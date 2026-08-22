@@ -30,11 +30,28 @@ RERANK_ENABLED = os.environ.get("RERANK_ENABLED", "1") != "0"
 RERANK_CANDIDATE_MULTIPLIER = int(os.environ.get("RERANK_CANDIDATE_MULTIPLIER", 3))
 
 # --- Contextual Retrieval（给缺上下文的片段补一句说明，见 src/contextualizer.py）---
-# **默认关闭**：它要调 LLM，实测单条约 4.4 秒。开之前请先看清楚下面两个闸门。
-CONTEXTUAL_ENABLED = os.environ.get("CONTEXTUAL_ENABLED", "0") == "1"
+# 三档模式（M3.4 起）：
+#   "off"  —— 完全不生成；
+#   "auto" —— 默认值。小体量书（≤ 下面的片段数上限）默认后台构建；大部头自动
+#            跳过；检测不到任何可用的生成后端（没有 ZHIPU_API_KEY、也没有
+#            claude CLI）时整体静默跳过，不制造一整页失败日志；
+#   "on"   —— 强制对所有变化的书生成（大部头也会被下面的上限闸门拦住）。
+# 实测单条约 4.4 秒，auto 档的成本只发生在"书真的发生变化需要重建"时，
+# 且小体量书的绝对开销可控。
+CONTEXTUAL_MODE = os.environ.get("CONTEXTUAL_MODE", "auto").strip().lower()
+if CONTEXTUAL_MODE not in {"off", "auto", "on"}:
+    raise ValueError(f"CONTEXTUAL_MODE 必须是 off/auto/on，收到：{CONTEXTUAL_MODE!r}")
+# 旧开关 CONTEXTUAL_ENABLED 仍然有效：显式设 1 视为 on；设 0 且没有另外给
+# CONTEXTUAL_MODE 时视为 off——保证老用户的升级是零意外。
+_legacy_enabled = os.environ.get("CONTEXTUAL_ENABLED")
+if _legacy_enabled == "1":
+    CONTEXTUAL_MODE = "on"
+elif _legacy_enabled == "0" and "CONTEXTUAL_MODE" not in os.environ:
+    CONTEXTUAL_MODE = "off"
 # 成本闸门：超过这个片段数的书直接跳过，不做上下文增强。
 # 《凡人修仙传》19501 个片段、《诡秘之主》11948 个——就算只处理 35% 也要好几小时，
-# 默认值刻意设在它们之下、《降龙》(1278) 之上，避免手一滑跑一整夜。
+# 默认值刻意设在它们之下、《降龙》(1278) 之上，避免手一滑跑一整夜。auto 档也用它
+# 作为"大书/小书"的分界线。
 CONTEXTUAL_MAX_CHUNKS_PER_BOOK = int(
     os.environ.get("CONTEXTUAL_MAX_CHUNKS_PER_BOOK", 2000)
 )
@@ -50,6 +67,17 @@ QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "1") != "0"
 # 改写用的模型。这只是个句子改写任务，用便宜快速的小模型即可——
 # 不要用当前对话选的模型：用户可能选了推理型的大模型，改写会白等好几秒。
 QUERY_REWRITE_MODEL = os.environ.get("QUERY_REWRITE_MODEL", "glm:glm-4-flash")
+
+# --- 自适应查询扩展（低置信度补救，见 src/query_expander.py / src/confidence.py）---
+# 默认关闭：每个变体都要完整跑一遍混合检索+重排，再加一次 LLM 调用，成本是
+# 主链路的好几倍；且改写可能引入语义漂移。只对「重排后信号显示置信度很低」
+# 的问题补救一次（绝不循环），触发条件与阈值见 confidence.py 的说明。
+QUERY_EXPAND_ENABLED = os.environ.get("QUERY_EXPAND_ENABLED", "0") == "1"
+# 生成变体用的模型。和查询改写一样只是句子级任务，用便宜快速的小模型即可。
+QUERY_EXPAND_MODEL = os.environ.get("QUERY_EXPAND_MODEL", QUERY_REWRITE_MODEL)
+# 单次补救最多生成几个变体。路线图限定 2~3 个：再多检索开销线性上涨，
+# 而变体之间措辞越往后越发散、语义漂移风险越大，边际收益很快变负。
+QUERY_EXPAND_MAX_VARIANTS = int(os.environ.get("QUERY_EXPAND_MAX_VARIANTS", 3))
 
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))       # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
@@ -103,6 +131,32 @@ BM25_K1 = float(os.environ.get("BM25_K1", 1.2))
 BM25_B = float(os.environ.get("BM25_B", 0.75))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
+
+# --- 整章扩展对照实验（M3.4，见 docs/roadmap.md「检索实验与失败策略」）---
+# 「命中片段 → 进入 prompt 的证据」这一步的组装方式，三档：
+#   "off"       —— 默认值。行为与 "neighbors" 完全一致（按 CONTEXT_NEIGHBORS
+#                  补前后相邻片段）。单独留这个档位是为了让评测矩阵能证明
+#                  「实验开关本身不改变任何行为」，作为对照实验的对照组。
+#   "neighbors" —— 显式声明使用现有邻居机制，等价现状（expand_neighbors）。
+#   "chapter"   —— 实验组：把命中片段所在章节的全部片段按原文顺序拼进 prompt，
+#                  替代「片段 + 邻居」。整章能补全被切分边界截断的证据，但也会
+#                  带入大量无关内容稀释信噪比——所以它是**可配置的实验项而不是
+#                  新默认**，必须先在固定评测集（scripts/eval_matrix.py 用环境
+#                  变量切换配置）上证明收益，才考虑扩大范围。
+CHAPTER_EXPANSION_MODE = os.environ.get("CHAPTER_EXPANSION_MODE", "off").strip().lower()
+if CHAPTER_EXPANSION_MODE not in {"off", "neighbors", "chapter"}:
+    raise ValueError(
+        f"CHAPTER_EXPANSION_MODE 必须是 off/neighbors/chapter，收到：{CHAPTER_EXPANSION_MODE!r}"
+    )
+# chapter 档的**硬性 token 预算闸门**：统计拼入 prompt 的证据总 token，超预算时
+# 从命中片段向两侧截断到预算内。计数用 embedding 模型的真实 tokenizer（和 M3.3
+# 索引质量门禁同一口径，见 index_quality._token_count）——不用字符数或 BM25 分词
+# 数代替，否则闸门量纲就是错的。3000 tokens 约合 4000+ 中文字，覆盖绝大多数章节；
+# 单章超过这个预算本身就说明「整章」粒度对这个语料太粗，截断并记录到 trace 里供
+# 评测复盘。
+CHAPTER_EXPANSION_MAX_TOKENS = int(
+    os.environ.get("CHAPTER_EXPANSION_MAX_TOKENS", 3000)
+)
 
 # --- 层级检索（片段 → 章节摘要 → 全书摘要，见 src/hierarchy.py）---
 # 默认开启且不调用 LLM：摘要采用可重复、无额外费用的抽取式策略。它们只负责
