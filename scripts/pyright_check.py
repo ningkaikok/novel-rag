@@ -88,9 +88,10 @@ def main() -> None:
         return
 
     print(f"发现 {len(new_errors)} 条基线外的新类型错误：", file=sys.stderr)
+    # 指纹刻意不含行号（见 fingerprint），打印时也就没有行号可显示
     for item in new_errors[:30]:
         print(
-            f"  {item['file']}:{item['line']} [{item['rule']}] {item['message'][:90]}",
+            f"  {item['file']} [{item['rule']}] {item['message'][:90]}",
             file=sys.stderr,
         )
     sys.exit(1)

@@ -288,7 +288,9 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `CHAPTER_EXPANSION_MAX_TOKENS` | `3000` | 整章扩展的真实 token 预算闸门，超预算从离命中最远处截断并写 trace |
 | `GRAPH_ENABLED` | `0` | 设成 `1` 建人物关系图，让"某某有哪些伴侣/师父"这类问题能查图而不是靠碰运气 |
 | `GRAPH_MAX_CHUNKS_PER_RELATION` | `80` | 成本闸门：每个「书×关系」最多采样多少片段去抽人名 |
-| `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名用的模型（便宜的小模型就够） |
+| `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名/关系用的模型（便宜的小模型就够） |
+| `GRAPH_REQUIRE_EXPLICIT` | `1` | M4 质量门槛：只把「明确关系陈述」的边放进问答线索；共现边留在库里供审核界面人工把关 |
+| `GRAPH_MIN_CONFIDENCE` | `0.7` | 边进入在线结果的最低置信度（与上一项配合） |
 | `MAX_UPLOAD_BYTES` | `20971520` | 单个上传文件的大小上限（字节），按 1MB 分块流式读取，超限返回 413 |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |

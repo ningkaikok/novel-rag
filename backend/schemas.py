@@ -184,6 +184,46 @@ class CurrentModel(BaseModel):
     current: str
 
 
+# ----------------------------------------------------------------- 关系边审核（M4）
+# 审核界面的数据契约。边的主键是 (novel, person_a, person_b, relation) 四元组，
+# 前端提交审核时原样带回，后端按四元组定位唯一一条边。
+class GraphEdgeItem(BaseModel):
+    novel: str
+    person_a: str
+    person_b: str
+    relation: str
+    weight: int
+    # 关系方向，如 "沈砚秋→小顺"；共现边方向未知，为 null
+    direction: str | None = None
+    confidence: float | None = None
+    # explicit = 明确关系陈述；co_occurrence = 仅同段共现
+    evidence_type: str | None = None
+    source_chunk_ids: list[int] = Field(default_factory=list)
+    review_status: str
+    # 第一个来源片段原文的前 80 字，帮审核员快速判断；片段已不存在时为 null
+    evidence_excerpt: str | None = None
+
+
+class GraphEdgeList(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    edges: list[GraphEdgeItem]
+
+
+class GraphReviewRequest(BaseModel):
+    novel: str
+    person_a: str
+    person_b: str
+    relation: str
+    # 只允许通过/拒绝两种动作；把边恢复成 pending 暂不开放（误操作可再改一次）
+    status: str
+
+
+class GraphReviewResult(BaseModel):
+    review_status: str
+
+
 # ----------------------------------------------------------------- 健康检查
 class HealthStatus(BaseModel):
     ok: bool

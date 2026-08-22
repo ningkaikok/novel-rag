@@ -191,6 +191,172 @@
     "title": "DeleteResult",
     "type": "object"
    },
+   "GraphEdgeItem": {
+    "properties": {
+     "confidence": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Confidence"
+     },
+     "direction": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Direction"
+     },
+     "evidence_excerpt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Excerpt"
+     },
+     "evidence_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Type"
+     },
+     "novel": {
+      "title": "Novel",
+      "type": "string"
+     },
+     "person_a": {
+      "title": "Person A",
+      "type": "string"
+     },
+     "person_b": {
+      "title": "Person B",
+      "type": "string"
+     },
+     "relation": {
+      "title": "Relation",
+      "type": "string"
+     },
+     "review_status": {
+      "title": "Review Status",
+      "type": "string"
+     },
+     "source_chunk_ids": {
+      "items": {
+       "type": "integer"
+      },
+      "title": "Source Chunk Ids",
+      "type": "array"
+     },
+     "weight": {
+      "title": "Weight",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "novel",
+     "person_a",
+     "person_b",
+     "relation",
+     "weight",
+     "review_status"
+    ],
+    "title": "GraphEdgeItem",
+    "type": "object"
+   },
+   "GraphEdgeList": {
+    "properties": {
+     "edges": {
+      "items": {
+       "$ref": "#/components/schemas/GraphEdgeItem"
+      },
+      "title": "Edges",
+      "type": "array"
+     },
+     "limit": {
+      "title": "Limit",
+      "type": "integer"
+     },
+     "offset": {
+      "title": "Offset",
+      "type": "integer"
+     },
+     "total": {
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "total",
+     "limit",
+     "offset",
+     "edges"
+    ],
+    "title": "GraphEdgeList",
+    "type": "object"
+   },
+   "GraphReviewRequest": {
+    "properties": {
+     "novel": {
+      "title": "Novel",
+      "type": "string"
+     },
+     "person_a": {
+      "title": "Person A",
+      "type": "string"
+     },
+     "person_b": {
+      "title": "Person B",
+      "type": "string"
+     },
+     "relation": {
+      "title": "Relation",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "novel",
+     "person_a",
+     "person_b",
+     "relation",
+     "status"
+    ],
+    "title": "GraphReviewRequest",
+    "type": "object"
+   },
+   "GraphReviewResult": {
+    "properties": {
+     "review_status": {
+      "title": "Review Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "review_status"
+    ],
+    "title": "GraphReviewResult",
+    "type": "object"
+   },
    "HTTPValidationError": {
     "properties": {
      "detail": {
@@ -1055,6 +1221,109 @@
      }
     },
     "summary": "Delete Book"
+   }
+  },
+  "/api/graph/edges": {
+   "get": {
+    "description": "分页列出人物关系边，供审核面板消费。默认只看 pending（待审核队列）。\n\nstatus 可选 pending/approved/rejected；传 all 列出全部状态。",
+    "operationId": "list_graph_edges_api_graph_edges_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "default": "pending",
+       "title": "Status",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GraphEdgeList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Graph Edges"
+   }
+  },
+  "/api/graph/review": {
+   "post": {
+    "description": "写入一条关系边的人工审核结论。\n\nrejected 的边在所有查询里立即不可见（可见性过滤见 postgres.query_relations）；\napproved 的 co_occurrence 边即使开着「只要明确陈述」的门槛也不会自动进入\n在线结果——门槛过滤的是 evidence_type，审核通过解决的是\"这条共现边我看过，\n是真的\"。两者语义不同，刻意不混用。",
+    "operationId": "review_graph_edge_api_graph_review_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GraphReviewRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GraphReviewResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Review Graph Edge"
    }
   },
   "/api/health": {

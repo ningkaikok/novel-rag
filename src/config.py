@@ -184,3 +184,11 @@ GRAPH_MODEL = os.environ.get("GRAPH_MODEL", "glm:glm-4-flash")
 # 一个人名要在几个批次里都被认作人名，才算数。降噪用：
 # 单次出现的往往是模型偶然把泛称当成了名字。
 GRAPH_MIN_NAME_HITS = int(os.environ.get("GRAPH_MIN_NAME_HITS", 2))
+# M4 质量门槛：开启后，在线查询（问答时的图线索）只返回「明确关系陈述」
+# （evidence_type='explicit'）且置信度达到 GRAPH_MIN_CONFIDENCE 的边。
+# 共现推断的边仍保留在库里，供审核界面逐条通过/拒绝——门槛只挡"对外展示"，
+# 不销毁数据，这样审核员还能看到全部候选并人工把关。
+GRAPH_REQUIRE_EXPLICIT = os.environ.get("GRAPH_REQUIRE_EXPLICIT", "1") != "0"
+# 边进入在线查询结果的最低置信度（0~1）。与上面的开关配合使用；
+# 关掉 REQUIRE_EXPLICIT 后此阈值不再参与过滤。
+GRAPH_MIN_CONFIDENCE = float(os.environ.get("GRAPH_MIN_CONFIDENCE", 0.7))
