@@ -163,15 +163,26 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
 最后验证“检索到的证据是否真的支持答案”。先离线标注和影子评测，再决定是否影响用户
 回答，避免中文小说中的隐喻、指代和人物动机被不稳定的 NLI/LLM Judge 误判。
 
-- [ ] 将引用质量拆成引用正确性（编号有效）、引用完整性（事实陈述是否有引用）和引用
+- [x] 将引用质量拆成引用正确性（编号有效）、引用完整性（事实陈述是否有引用）和引用
   忠实度（原文是否支持陈述），保留现有编号/关键词检查作为基线
-- [ ] 建立人工标注的小型陈述—证据集，对比规则、NLI 或 LLM Judge；第一阶段只记录
+  （`src/citation_eval.py`：正确性沿用 `valid_number_ratio`；完整性新增
+  `completeness` 分组，按句末标点分句并用可配置豁免词表跳过寒暄/元描述句；
+  忠实度提供 `judge_support` 影子接口，依赖注入生成函数，只在评测脚本调用）
+- [x] 建立人工标注的小型陈述—证据集，对比规则、NLI 或 LLM Judge；第一阶段只记录
   影子结果和误判，不阻止回答，达到明确阈值后再逐步启用“不确定”提示或拒答
-- [ ] 明确 `request_id`、`run_id`、`trace_id` 的职责：HTTP 请求继续使用现有
+  （`tests/citation_shadow_set.json` 18 条，证据全部取自仓库原创语料；
+  `scripts/eval_faithfulness_shadow.py` 输出混淆矩阵与误判清单，
+  `--model` 可选接入 LLM Judge，默认零成本只跑规则基线）
+- [x] 明确 `request_id`、`run_id`、`trace_id` 的职责：HTTP 请求继续使用现有
   `request_id`；出现重试、Agent 多步或后台执行后，再用 `run_id` 串联一次逻辑运行，
-  `trace_id` 留给跨服务观测
-- [ ] 在现有 trace 中补齐在线配置版本，包括 reranker、生成模型、Prompt/路由策略和
+  `trace_id` 留给跨服务观测（职责边界写入 `backend/context.py` 模块文档；
+  索引任务的 task id 与 Agent Lab 会话已部分承担 run_id 职责，Agent Lab 步骤
+  补上轻量 `run_id` 字段）
+- [x] 在现有 trace 中补齐在线配置版本，包括 reranker、生成模型、Prompt/路由策略和
   最终状态；日志不保存 API Key、完整版权原文或不必要的用户隐私
+  （`chat_turns.run_config` JSONB 幂等补列，快照含 reranker 开关与模型名、生成
+  模型、回答模式与路由原因、`PROMPT_TEMPLATE_VERSION` 和最终状态
+  complete/interrupted/error；隐私红线有测试断言）
 
 验收：引用三类指标可以分别计算；影子评测能展示自动判断与人工标签的差异；一次回答可
 关联到使用的数据源/索引配置和在线模型配置；在没有可靠阈值前不会因自动支持度误判而

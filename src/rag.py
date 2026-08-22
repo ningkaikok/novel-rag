@@ -78,6 +78,7 @@ from novel_match import (
 from retrieval_mixins import RetrievalMixin
 from generation_mixin import (
     PROMPT_TEMPLATE,
+    PROMPT_TEMPLATE_VERSION,
     GenerationMixin,
     generate_ollama_prompt_stream,
 )

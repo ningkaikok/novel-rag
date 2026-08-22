@@ -116,6 +116,9 @@ class AgentStep(BaseModel):
     args: dict = Field(default_factory=dict)
     observation: str
     source_ids: list[str] = Field(default_factory=list)
+    # M3.5-③：同一次 Agent 运行的所有步骤共享一个 run_id（轻量串联字段，
+    # 由 /api/agent/ask 在入口生成后注入；历史记录里的旧步骤没有，保持 None）。
+    run_id: str | None = None
 
 
 class TraceStep(BaseModel):
@@ -159,6 +162,9 @@ class StoredTurn(BaseModel):
     trace: list[TraceStep] | None = None
     # 只有 Agent Lab 那条链路的对话会有这个字段；普通问答模式恒为 None。
     agent_steps: list[AgentStep] | None = None
+    # M3.5-④：本轮问答使用的在线配置快照（模型、路由、prompt 版本等）。
+    # 只在带 run_config 落库的 assistant 轮次上有值；旧记录和 user 轮次恒为 None。
+    run_config: dict | None = None
     status: str
 
 

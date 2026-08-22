@@ -115,10 +115,16 @@ from config import (  # noqa: E402
     QUERY_EXPAND_MODEL,
     QUERY_REWRITE_ENABLED,
     QUERY_REWRITE_MODEL,
+    RERANK_ENABLED,
+    RERANKER_MODEL,
 )
 from query_rewriter import rewrite_query  # noqa: E402
 from agent_lab import run_agent  # noqa: E402
-from rag import NovelRAG, generate_ollama_prompt_stream  # noqa: E402
+from rag import (  # noqa: E402
+    PROMPT_TEMPLATE_VERSION,
+    NovelRAG,
+    generate_ollama_prompt_stream,
+)
 from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
 from postgres import (  # noqa: E402
     close_pool,
@@ -466,6 +472,33 @@ def _generate_for_model(prompt: str, model: str):
     return generate_ollama_prompt_stream(prompt, model=model)
 
 
+def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict:
+    """构造本轮问答的在线配置快照（路线图 M3.5-④）。
+
+    落库到 chat_turns.run_config，让一次回答能关联到它使用的在线模型配置。
+    **隐私红线**（写在这里是因为调用方都从这里拿快照）：
+    - 不得出现任何 API Key / 密钥（模型名只是名字，不含凭据）；
+    - 不得包含小说原文片段或检索内容——原文证据已经在 sources 列单独落库，
+      快照只记录"用了什么配置"，不复制"看到了什么内容"；
+    - 除路由原因这类短描述外，不得携带用户输入的其他隐私。
+    """
+    return {
+        # prompt 模板版本：模板文本改动必须递增 generation_mixin.PROMPT_TEMPLATE_VERSION
+        "prompt_template_version": PROMPT_TEMPLATE_VERSION,
+        # 回答模式与路由决策原因（auto/grounded/free + 为什么走了这条路）
+        "answer_mode": route_mode,
+        "route_reason": route_reason,
+        # 生成模型（当前回答用的那个）
+        "generate_model": model,
+        # 重排配置：模型名 + 开关
+        "rerank_enabled": RERANK_ENABLED,
+        "reranker_model": RERANKER_MODEL if RERANK_ENABLED else None,
+        # 查询改写/扩展是否可能参与本轮检索
+        "query_rewrite_enabled": QUERY_REWRITE_ENABLED,
+        "query_expand_enabled": QUERY_EXPAND_ENABLED,
+    }
+
+
 @app.post("/api/ask")
 async def ask(req: AskRequest, request: Request):
     """流式回答。支持用户中断：前端 abort 后，这里会停止向上游模型要 token。
@@ -491,6 +524,11 @@ async def ask(req: AskRequest, request: Request):
     )
 
     model = state["model"]
+    # M3.5-④：在线配置快照在生成前定格——它描述"这轮回答用了什么配置"，
+    # 不随生成成败变化；最终状态（complete/interrupted/error）落库时才补上。
+    run_config = _build_run_config(
+        route_mode=decision.route.value, route_reason=decision.reason, model=model
+    )
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
     session_id = req.session_id
@@ -617,6 +655,7 @@ async def ask(req: AskRequest, request: Request):
 
         parts: list[str] = []
         interrupted = False
+        error: str | None = None
         try:
             while True:
                 # 三个生成后端都是同步生成器，直接在协程里 for 会阻塞事件循环、
@@ -635,10 +674,18 @@ async def ask(req: AskRequest, request: Request):
                 if await request.is_disconnected():
                     interrupted = True
                     break
+        except Exception as exc:
+            # M3.5-④：生成中途抛错时如实记录 error 状态（此前 finally 里一律
+            # 存 complete，中断和异常无法区分）。不吞掉异常，继续向上传播。
+            error = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
             if interrupted:
                 token_iter.close()
             if session_id and assistant_index is not None:
+                final_status = "interrupted" if interrupted else (
+                    "error" if error else "complete"
+                )
                 try:
                     save_turn(
                         session_id,
@@ -647,7 +694,14 @@ async def ask(req: AskRequest, request: Request):
                         "".join(parts),
                         sources=payload,
                         trace=trace_payload,
-                        status="interrupted" if interrupted else "complete",
+                        status=final_status,
+                        # 最终状态同时并入快照，让 run_config 自包含可追溯；
+                        # error_message 只记异常类型+摘要，不含用户输入原文
+                        run_config={
+                            **run_config,
+                            "final_status": final_status,
+                            **({"error": error[:200]} if error else {}),
+                        },
                     )
                 except Exception as exc:
                     logger.warning(f"保存回答失败（忽略）：{exc}")
@@ -679,6 +733,11 @@ async def agent_ask(req: AgentAskRequest, request: Request):
         answerer=lambda prompt: _generate_for_model(prompt, model),
         max_steps=req.max_steps,
     )
+    # M3.5-③：本次 Agent 运行的 run_id。request_id 只覆盖单次 HTTP 请求，而
+    # Agent 的一次运行可能横跨多个请求（未来的重试/恢复场景），所以单独发一个
+    # 轻量 id 注入每个 agent_step——同一次运行的所有步骤共享同一个值，
+    # 落库后可以按它还原完整事件顺序。不重构现有事件结构，只加一个可选字段。
+    run_id = uuid.uuid4().hex[:12]
 
     # 和 /api/ask 同一套模式：有 session_id 才落库，没有就纯内存、行为不变。
     # 这个端点上线时漏了这一步——Agent Lab 里的每一次对话都不会落库，
@@ -709,7 +768,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                     break
                 kind, value = item
                 if kind == "agent_step":
-                    payload = AgentStep(**value).model_dump()
+                    payload = AgentStep(run_id=run_id, **value).model_dump()
                     agent_steps_payload.append(payload)
                     yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif kind == "sources":
