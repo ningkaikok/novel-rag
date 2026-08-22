@@ -232,7 +232,9 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 
 ## M5：部署与多用户边界（后续阶段）
 
-- [ ] Docker Compose 一键启动应用、PostgreSQL 和 pgvector
+- [x] Docker Compose 一键启动应用、PostgreSQL 和 pgvector（多阶段 Dockerfile：
+  Node 构建前端 → uv 装锁定运行时依赖；FastAPI 检测到 `frontend/dist` 自动托管
+  静态文件，单端口对外；模型缓存与小说文本独立挂载，`/api/health` 做容器健康检查）
 - [ ] 上传大小、文件类型和资源配额限制
 - [ ] 用户、书架、索引和会话隔离
 - [ ] 多版本语料共存后，在检索前强制执行租户、书籍、章节、来源版本和时间范围过滤

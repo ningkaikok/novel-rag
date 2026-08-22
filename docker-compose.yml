@@ -1,0 +1,51 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: novel
+      POSTGRES_PASSWORD: novel
+      POSTGRES_DB: novel_rag
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novel -d novel_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://novel:novel@db:5432/novel_rag
+      # 宿主机上的 Ollama：Docker Desktop 原生支持 host.docker.internal；
+      # Linux 由下面的 extra_hosts 提供（host-gateway）
+      OLLAMA_HOST: http://host.docker.internal:11434
+      HF_HOME: /cache/hf
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # 模型缓存跨容器重建持久化（embedding 95MB + 重排 1.1GB）
+      - hf-cache:/cache/hf
+      # 小说文本放宿主机 data/novels/，上传的文件也落在这里
+      - ./data/novels:/app/data/novels
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # slim 镜像没有 curl，用标准库发请求；ready=True 表示索引已可用
+      test: ["CMD", "python", "-c", "import urllib.request as u; r=u.urlopen('http://127.0.0.1:8000/api/health', timeout=3); assert r.status==200"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  pgdata:
+  hf-cache:
+
+# 首次使用：
+#   docker compose up --build -d
+#   把 .txt 小说放进 data/novels/ 后执行一次索引：
+#     docker compose exec api uv run python src/ingest.py

@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"  # vite8 / playwright1.62 要求 ≥20.19，与本地 nvm 22 对齐
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: 安装前端依赖
@@ -40,9 +40,12 @@ jobs:
       - name: Prettier 格式检查
         working-directory: frontend
         run: npm run format:check
-      - name: Vitest 单元测试
+      - name: 依赖漏洞审计（npm audit，high 以上才挡）
         working-directory: frontend
-        run: npm run test
+        run: npm audit --audit-level=high
+      - name: Vitest 单元测试 + 覆盖率
+        working-directory: frontend
+        run: npm run test:coverage
       - name: TypeScript 类型检查
         working-directory: frontend
         run: npx tsc --noEmit
@@ -54,7 +57,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"  # vite8 / playwright1.62 要求 ≥20.19，与本地 nvm 22 对齐
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: 安装依赖
@@ -97,12 +100,16 @@ jobs:
         # backend.main 在导入时不会连数据库、也不会下载模型，
         # 这两件事都发生在 FastAPI lifespan 里，所以纯导入是安全且快速的冒烟检查。
         run: uv run python -c "import backend.main; print('backend import OK')"
-      - name: 运行 pytest（单元测试，不依赖真实数据库/模型）
+      - name: 依赖漏洞审计（pip-audit）
+        # 扫描 .venv 里实际安装的包；有已知 CVE 直接标红
+        run: uv run pip-audit
+      - name: 运行 pytest + 覆盖率（单元测试，不依赖真实数据库/模型）
         # tests/backend/ 下的用例全部用 mock/monkeypatch，不需要真实
         # PostgreSQL、Ollama 或任何云端 key。
         # 用 python -m 而不是裸 pytest：后者不把仓库根加进 sys.path，
         # 顶层导入 backend/config 依赖 cwd（与本地行为一致）
-        run: uv run python -m pytest
+        # 覆盖率只做观测基线，不设硬门槛。
+        run: uv run python -m pytest --cov --cov-report=term-missing
 
   notify:
     name: 飞书通知

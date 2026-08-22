@@ -76,10 +76,13 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
             )
         # SSE 解析：每条事件形如 "data: {...}"，事件之间以空行分隔。
         # iter_lines 会按行切好，空行和 "data:" 以外的行（如注释/心跳）直接跳过。
+        # 新版 requests 的类型存根把 iter_lines 标成 bytes|str 联合
+        # （decode_unicode 的重载没体现），显式归一成 str 让类型与运行时一致。
         for raw in resp.iter_lines(decode_unicode=True):
-            if not raw or not raw.startswith("data:"):
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            if not line or not line.startswith("data:"):
                 continue
-            data = raw[len("data:") :].strip()
+            data = line[len("data:") :].strip()
             # "[DONE]" 是 OpenAI 兼容流式协议的结束哨兵，各家实现一致
             if data == "[DONE]":
                 break

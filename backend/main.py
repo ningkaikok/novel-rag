@@ -61,6 +61,7 @@ from fastapi import FastAPI, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 # 让后端能 import src 下的业务逻辑（完全复用，不改动）
 ROOT = Path(__file__).resolve().parent.parent
@@ -104,6 +105,7 @@ from backend.schemas import (  # noqa: E402
     SessionHistory,
     SetModelRequest,
     SourceItem,
+    StoredTurn,
     TraceStep,
     UploadResult,
 )
@@ -813,9 +815,12 @@ async def agent_ask(req: AgentAskRequest, request: Request):
 def get_session(session_id: str):
     """读回某个会话的全部对话，用于刷新页面后恢复界面。"""
     try:
-        turns = load_turns(session_id)
+        rows = load_turns(session_id)
     except Exception as exc:
         raise APIError(500, ErrorCode.session_read_failed, f"读取会话失败：{exc}") from exc
+    # 数据库行是原始 dict，显式过一遍 Pydantic 校验：字段缺失/类型漂移在这里
+    # 报 500 并带清晰原因，而不是等 response_model 序列化时才炸。
+    turns = [StoredTurn.model_validate(row) for row in rows]
     return SessionHistory(session_id=session_id, turns=turns)
 
 
@@ -850,3 +855,13 @@ def set_model(req: SetModelRequest):
 @app.get("/api/health", response_model=HealthStatus)
 def health():
     return HealthStatus(ok=True, ready=state.get("rag") is not None)
+
+
+# ------------------------------------------------------------- 前端静态托管（生产）
+# frontend/dist 存在时由 FastAPI 直接托管前端产物，单端口对外（Docker 镜像即此形态，
+# 见 README「生产部署」）。挂载必须放在所有 API 路由之后：Starlette 按注册顺序匹配，
+# "/" 兜底不影响 /api/*。html=True 让未命中的路径回落 index.html，SPA 刷新不 404。
+# 开发模式下 dist 不存在（Vite dev server 自己服务前端），这个分支整体不生效。
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
