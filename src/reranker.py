@@ -43,9 +43,15 @@
 答案，重排也救不回来——**重排解决的是"排序不准"，不是"召回不到"**。
 所以评测时 Recall@20 不变、MRR 上升，才是重排生效的典型信号。
 """
+
+from typing import TypeVar
+
 from sentence_transformers import CrossEncoder
 
 from config import RERANKER_MODEL
+
+# 泛型：候选类型由调用方决定（通常是 SourceChunk），返回保持同一元素类型
+T = TypeVar("T")
 
 _model: CrossEncoder | None = None
 
@@ -68,27 +74,24 @@ def load_reranker(model_name: str = RERANKER_MODEL) -> CrossEncoder:
 
 def rerank(
     question: str,
-    candidates: list,
+    candidates: list[T],
     top_k: int,
     model: CrossEncoder | None = None,
-) -> list:
+) -> list[T]:
     """用交叉编码器给候选片段重新打分排序，返回最相关的 top_k 个。
 
     candidates 是 SourceChunk 列表（只要有 .text 属性即可，不依赖具体类型，
     方便测试时传假对象）。返回的是原对象，顺序按相关性重排。
     """
-    return [
-        chunk
-        for chunk, _ in rerank_with_scores(question, candidates, top_k, model)
-    ]
+    return [chunk for chunk, _ in rerank_with_scores(question, candidates, top_k, model)]
 
 
 def rerank_with_scores(
     question: str,
-    candidates: list,
+    candidates: list[T],
     top_k: int,
     model: CrossEncoder | None = None,
-) -> list[tuple[object, float]]:
+) -> list[tuple[T, float]]:
     """与 ``rerank`` 相同，但保留分数，供可视化评测比较重排前后名次。"""
     if not candidates:
         return []
@@ -108,5 +111,7 @@ def rerank_with_scores(
     pairs = [(question, getattr(c, "indexed_text", c.text)) for c in candidates]
     scores = model.predict(pairs)
 
-    ranked = sorted(zip(candidates, scores), key=lambda pair: pair[1], reverse=True)
+    ranked = sorted(
+        zip(candidates, scores, strict=True), key=lambda pair: pair[1], reverse=True
+    )
     return [(chunk, float(score)) for chunk, score in ranked[:top_k]]

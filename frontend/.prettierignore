@@ -1,0 +1,7 @@
+dist/
+node_modules/
+playwright-report/
+test-results/
+package-lock.json
+.DS_Store
+coverage/

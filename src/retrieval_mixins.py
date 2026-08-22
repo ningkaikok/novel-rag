@@ -14,8 +14,10 @@
 多路召回怎么融合、重排、串成流水线，见 ``rag.retrieve_hybrid_stream``；
 书名/意图识别的纯函数在 ``novel_match``，数据类在 ``chunk_model``。
 """
+
 import time
 
+from chunk_model import SourceChunk
 from config import (
     BM25_B,
     BM25_K1,
@@ -24,14 +26,13 @@ from config import (
     CONTEXT_NEIGHBORS,
     TOP_K,
 )
+from index_quality import _token_count
+from novel_match import _find_ending_anchor, _mentions_novel
 from postgres import (
     connect,
     vector_literal,
 )
 from tokenizer import query_terms
-from index_quality import _token_count
-from chunk_model import SourceChunk
-from novel_match import _find_ending_anchor, _mentions_novel
 
 
 class RetrievalMixin:
@@ -240,9 +241,7 @@ class RetrievalMixin:
             order = "DESC" if at_tail else "ASC"
             results: list[SourceChunk] = []
             for novel in targets:
-                anchor = (
-                    _find_ending_anchor(conn, novel) if at_tail else None
-                )
+                anchor = _find_ending_anchor(conn, novel) if at_tail else None
                 if anchor is not None:
                     # 有"大结局/全书完"标记：以它为终点向前取，避免把后面的
                     # 番外、后记当成结局（很多"全本+番外"的 txt 末尾都不是正文结局）。
@@ -287,9 +286,7 @@ class RetrievalMixin:
         with connect() as conn:
             novels = [
                 row["novel"]
-                for row in conn.execute(
-                    "SELECT DISTINCT novel FROM novel_chunks"
-                ).fetchall()
+                for row in conn.execute("SELECT DISTINCT novel FROM novel_chunks").fetchall()
             ]
         return [n for n in novels if _mentions_novel(question, n)]
 
@@ -316,9 +313,7 @@ class RetrievalMixin:
                 )
             )
 
-        conditions = " OR ".join(
-            "(novel = %s AND chunk_id BETWEEN %s AND %s)" for _ in ranges
-        )
+        conditions = " OR ".join("(novel = %s AND chunk_id BETWEEN %s AND %s)" for _ in ranges)
         params = [value for item in ranges for value in item]
         with connect() as conn:
             rows = conn.execute(
@@ -375,9 +370,7 @@ class RetrievalMixin:
             return self.expand_neighbors(sources), None
         return self._expand_chapters(sources)
 
-    def _expand_chapters(
-        self, sources: list[SourceChunk]
-    ) -> tuple[list[SourceChunk], dict]:
+    def _expand_chapters(self, sources: list[SourceChunk]) -> tuple[list[SourceChunk], dict]:
         """整章扩展实验档：命中所在章节的全部片段按原文顺序进入 prompt。
 
         为什么是实验项而不是默认行为
@@ -435,9 +428,7 @@ class RetrievalMixin:
         # ---- 第二步：整章取回。一次查询一章，ORDER BY chunk_id 保证原文顺序。
         chapters: dict[tuple[str, str], list[SourceChunk]] = {}
         with connect() as conn:
-            for kind, group_key, _hits in (
-                u for u in units if u[0] == "chapter"
-            ):
+            for _kind, group_key, _hits in (u for u in units if u[0] == "chapter"):
                 novel, title = group_key
                 rows = conn.execute(
                     "SELECT novel, chunk_id, chapter_title, text, context "
@@ -457,7 +448,8 @@ class RetrievalMixin:
                     for row in rows
                 ] or [
                     # 章节查不到内容（数据不一致的兜底）：退化为命中片段本身
-                    s for s in sources
+                    s
+                    for s in sources
                     if (s.novel, s.chapter_title) == group_key
                 ]
                 chapters[group_key] = members
@@ -514,19 +506,13 @@ class RetrievalMixin:
             # 靠前的相关章节优先拿到余量）。hlo/hhi 是初始命中边界，用来在
             # 两侧 token 开销打平时优先扩展「伸得更短」的那一侧，保证纳入的
             # 片段始终紧贴命中区间、截断方向从离命中最远处开始丢。
-            for kind, group_key_or_single, hits in (
-                u for u in units if u[0] == "chapter"
-            ):
+            for _kind, group_key_or_single, hits in (u for u in units if u[0] == "chapter"):
                 members = chapters[group_key_or_single]
-                positions = {
-                    i for i, m in enumerate(members) if m.chunk_id in hits
-                }
+                positions = {i for i, m in enumerate(members) if m.chunk_id in hits}
                 lo, hi = min(positions), max(positions)
                 hlo, hhi = lo, hi
                 for index in range(lo, hi + 1):
-                    selected.add(
-                        (members[index].novel, members[index].chunk_id)
-                    )
+                    selected.add((members[index].novel, members[index].chunk_id))
                 while remaining > 0 and (lo > 0 or hi < len(members) - 1):
                     candidates = []
                     if lo > 0:
@@ -550,16 +536,12 @@ class RetrievalMixin:
                 if lo > 0 or hi < len(members) - 1:
                     truncated = True
             if truncated and not reasons:
-                reasons.append(
-                    f"超出 token 预算 {budget}，已从命中片段向两侧截断"
-                )
+                reasons.append(f"超出 token 预算 {budget}，已从命中片段向两侧截断")
 
             for single in (u[1] for u in units if u[0] == "single"):
                 selected.add((single.novel, single.chunk_id))
 
-            evidence_tokens = sum(
-                counts[key] for key in selected if key in counts
-            )
+            evidence_tokens = sum(counts[key] for key in selected if key in counts)
 
         # ---- 第四步：组装结果与 trace ------------------------------------
         result: list[SourceChunk] = []

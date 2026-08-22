@@ -4,17 +4,20 @@
 
 ## 开发环境
 
-完整的环境搭建（Ollama、PostgreSQL + pgvector、Python venv、前端依赖）见
+完整的环境搭建（Ollama、PostgreSQL + pgvector、uv/Python 依赖、前端依赖）见
 [README.md](README.md) 的「环境准备」。跑起来大致是：
 
 ```bash
 # 后端（端口 8000）
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn backend.main:app --port 8000
 
 # 前端（端口 5173，另开一个终端）
 cd frontend && npm run dev
 ```
+
+提交前建议启用 pre-commit 钩子（ruff / pyright 增量 / eslint / prettier）：
+`uv run pre-commit install`；也可以随时手动全量跑 `uv run pre-commit run --all-files`。
 
 ## 分支与合并流程
 

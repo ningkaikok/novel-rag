@@ -3,12 +3,15 @@
 全部 mock：save_turn / load_turns / generate_ollama_prompt_stream 都被替换，
 不连真实数据库，也不调用任何模型。
 """
+
+import contextlib
 import json
 import re
 
+from fastapi.testclient import TestClient
+
 import backend.main as main
 import postgres
-from fastapi.testclient import TestClient
 
 
 class _FakeRag:
@@ -16,19 +19,22 @@ class _FakeRag:
 
     def retrieve_hybrid_stream(self, question, top_k):
         yield "step", {"step": "理解问题", "detail": "识别到你在问《雾隐山庄》", "ms": 5}
-        yield "result", [
-            type(
-                "S",
-                (),
-                {
-                    "novel": "雾隐山庄",
-                    "chunk_id": 0,
-                    "chapter_title": "第一章 夜雨访客",
-                    # 刻意选一句"原文证据"，用于隐私断言：快照里绝不能出现它
-                    "text": "顾长风所患的是奇毒蚀骨散，毒性极深",
-                },
-            )()
-        ]
+        yield (
+            "result",
+            [
+                type(
+                    "S",
+                    (),
+                    {
+                        "novel": "雾隐山庄",
+                        "chunk_id": 0,
+                        "chapter_title": "第一章 夜雨访客",
+                        # 刻意选一句"原文证据"，用于隐私断言：快照里绝不能出现它
+                        "text": "顾长风所患的是奇毒蚀骨散，毒性极深",
+                    },
+                )()
+            ],
+        )
 
     def build_answer_context(self, sources):
         return sources, None
@@ -76,9 +82,7 @@ def test_run_config_snapshot_respects_privacy_red_lines(client, monkeypatch):
     captured: list = []
     _setup(monkeypatch, captured)
 
-    client.post(
-        "/api/ask", json={"question": "顾长风得了什么病", "session_id": "s-privacy"}
-    )
+    client.post("/api/ask", json={"question": "顾长风得了什么病", "session_id": "s-privacy"})
 
     _, kwargs = captured[1]
     serialized = json.dumps(kwargs["run_config"], ensure_ascii=False)
@@ -128,10 +132,8 @@ def test_error_status_recorded_in_snapshot(client, monkeypatch):
     monkeypatch.setattr(main, "save_turn", lambda *a, **k: captured.append((a, k)))
 
     # 异常穿过 StreamingResponse 会冒泡到测试客户端；finally 里的落库已经发生
-    try:
+    with contextlib.suppress(Exception):
         client.post("/api/ask", json={"question": "问", "session_id": "s-err"})
-    except Exception:
-        pass
 
     assert captured, "异常路径也必须落库"
     _, kwargs = captured[1]
@@ -143,6 +145,7 @@ def test_error_status_recorded_in_snapshot(client, monkeypatch):
 
 
 # ---------------------------------------------------------------- schema 迁移
+
 
 class _SchemaConn:
     def __init__(self):
@@ -166,12 +169,13 @@ def test_ensure_chat_schema_adds_run_config_column_idempotently(monkeypatch):
     postgres.ensure_chat_schema()
 
     alter_sql = [sql for sql in conn.sql if "ALTER TABLE chat_turns" in sql]
-    assert any(
-        "ADD COLUMN IF NOT EXISTS run_config JSONB" in sql for sql in alter_sql
-    ), "幂等迁移必须包含 run_config 补列"
+    assert any("ADD COLUMN IF NOT EXISTS run_config JSONB" in sql for sql in alter_sql), (
+        "幂等迁移必须包含 run_config 补列"
+    )
 
 
 # ---------------------------------------------------------------- 历史透出
+
 
 def test_session_history_exposes_run_config(client, monkeypatch):
     turns = [
@@ -199,14 +203,28 @@ def test_agent_steps_carry_shared_run_id(client, monkeypatch):
     main.state["model"] = "fake-model"
 
     def fake_run_agent(*_args, **_kwargs):
-        yield "agent_step", {
-            "step": 1, "reason": "先搜索", "tool": "search_novels",
-            "args": {}, "observation": "找到 S1", "source_ids": ["S1"],
-        }
-        yield "agent_step", {
-            "step": 2, "reason": "再读邻居", "tool": "read_neighbors",
-            "args": {}, "observation": "读到 S2", "source_ids": ["S2"],
-        }
+        yield (
+            "agent_step",
+            {
+                "step": 1,
+                "reason": "先搜索",
+                "tool": "search_novels",
+                "args": {},
+                "observation": "找到 S1",
+                "source_ids": ["S1"],
+            },
+        )
+        yield (
+            "agent_step",
+            {
+                "step": 2,
+                "reason": "再读邻居",
+                "tool": "read_neighbors",
+                "args": {},
+                "observation": "读到 S2",
+                "source_ids": ["S2"],
+            },
+        )
         yield "sources", []
         yield "token", "答案"
         yield "done", {}
@@ -216,9 +234,13 @@ def test_agent_steps_carry_shared_run_id(client, monkeypatch):
     monkeypatch.setattr(main, "next_turn_index", lambda _sid: 0)
     monkeypatch.setattr(main, "save_turn", lambda *a, **k: saved.append((a, k)))
 
-    body = TestClient(main.app).post(
-        "/api/agent/ask", json={"question": "问", "max_steps": 3, "session_id": "s-agent"}
-    ).text
+    body = (
+        TestClient(main.app)
+        .post(
+            "/api/agent/ask", json={"question": "问", "max_steps": 3, "session_id": "s-agent"}
+        )
+        .text
+    )
 
     run_ids = set(re.findall(r'"run_id": ?"(?P<rid>[0-9a-f]+)"', body))
     assert len(run_ids) == 1, "同一运行的所有步骤必须共享同一个 run_id"

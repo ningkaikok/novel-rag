@@ -6,6 +6,7 @@ embedding 模型、连接 PostgreSQL。每个测试按需要手动往 backend.ma
 这个全局 dict 里塞假数据，测试之间用 fixture 的 yield/finally 清理，
 不会互相污染。
 """
+
 import pytest
 from fastapi.testclient import TestClient
 

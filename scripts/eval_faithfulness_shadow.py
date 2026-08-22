@@ -18,6 +18,7 @@
 三档；LLM Judge 输出 supported/unsupported/uncertain——uncertain 不是错误，
 它会被单独列进矩阵，供后续决定"不确定提示/拒答"策略时参考。
 """
+
 import argparse
 import json
 import sys
@@ -199,9 +200,7 @@ def main() -> int:
         if mismatches:
             print(f"\n误判清单（{len(mismatches)} 条）：")
             for item in mismatches:
-                evidence_preview = (
-                    (item["evidence"][0][:60] + "…") if item["evidence"] else ""
-                )
+                evidence_preview = (item["evidence"][0][:60] + "…") if item["evidence"] else ""
                 print(f"\n  [{item['id']}] 类别={item['category']}")
                 print(f"    陈述:{item['statement']}")
                 print(f"    证据:{evidence_preview}")
@@ -240,9 +239,7 @@ def main() -> int:
             human = case["human_label"]
             rows.append((label, human))
             if label != human:
-                mismatches.append(
-                    {**case, "predicted": label, "reason": reason}
-                )
+                mismatches.append({**case, "predicted": label, "reason": reason})
             progress = "!" if failed else ""
             print(f"    [{index}/{len(cases)}] {case['id']} -> {label}{progress}")
         show_method(spec, rows, mismatches)
@@ -260,7 +257,9 @@ def main() -> int:
         correct = sum(1 for predicted, human in rows if predicted == human)
         sup_p, sup_r = binary_pr(rows, "supported")
         uns_p, uns_r = binary_pr(rows, "unsupported")
-        uncertain_ratio = sum(1 for predicted, _ in rows if predicted == "uncertain") / len(rows)
+        uncertain_ratio = sum(1 for predicted, _ in rows if predicted == "uncertain") / len(
+            rows
+        )
 
         def fmt(value: float | None) -> str:
             return f"{value:.0%}" if value is not None else "—"

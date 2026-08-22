@@ -4,6 +4,7 @@
 用一个假的 Popen 对象模拟四种场景：正常结束、被中断（GeneratorExit）、
 terminate 无效需要 kill 兜底、CLI 自己失败退出。
 """
+
 import io
 import json
 import subprocess
@@ -50,7 +51,10 @@ def _sse_line(text: str) -> str:
     return json.dumps(
         {
             "type": "stream_event",
-            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}},
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": text},
+            },
         }
     )
 

@@ -35,53 +35,78 @@
 Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，因此评测脚本
 可以直接调用检索逻辑。完整选型理由见 ``docs/architecture-decisions.md``。
 """
+
 import time
 
 from sentence_transformers import SentenceTransformer
 
-from embedder import load_embedder
+from chunk_model import SourceChunk, _trace_candidates
+from confidence import compute_confidence
 from config import (
     FULL_TEXT_MAX_CHARS,
     HIERARCHY_ENABLED,
     HIERARCHY_TOP_K,
     QUERY_EXPAND_ENABLED,
     QUERY_EXPAND_MAX_VARIANTS,
+    RECALL_K,
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
-    RECALL_K,
     TOP_K,
 )
+from embedder import load_embedder
+from generation_mixin import (  # noqa: F401  # PROMPT_TEMPLATE* / generate_ollama_prompt_stream 为有意重导出（backend/main.py 引用）
+    PROMPT_TEMPLATE,
+    PROMPT_TEMPLATE_VERSION,
+    GenerationMixin,
+    generate_ollama_prompt_stream,
+)
 from hierarchy import is_global_question
+
+# 这些名字是拆分前的 rag.py 公开/半公开表面：agent_lab 直接 import
+# `_mentions_novel`，老脚本可能引用其余辅助函数。用冗余别名标记为**有意重导出**，
+# 否则 ruff 的 F401 自动修复会把它们当成未使用导入删掉（本次踩过的坑）。
+from novel_match import (  # noqa: F401
+    _display_title as _display_title,
+)
+from novel_match import (
+    _dominant_novels as _dominant_novels,
+)
+from novel_match import (
+    _edit_distance as _edit_distance,
+)
+from novel_match import (
+    _find_ending_anchor as _find_ending_anchor,
+)
+from novel_match import (
+    _fuzzy_contains as _fuzzy_contains,
+)
+from novel_match import (
+    _is_library_question as _is_library_question,
+)
+from novel_match import (
+    _mentions_novel as _mentions_novel,
+)
+from novel_match import (
+    _named_via_typo as _named_via_typo,
+)
+from novel_match import (
+    _novel_titles as _novel_titles,
+)
+from novel_match import (
+    _strip_novel_titles as _strip_novel_titles,
+)
+from novel_match import (
+    _structural_kind as _structural_kind,
+)
 from postgres import (
     connect,
     has_index,
     search_hierarchy,
     vector_literal,
 )
-from reranker import rerank_with_scores
-from confidence import compute_confidence
 from query_expander import expand_query_variants
-from chunk_model import SourceChunk, _trace_candidates
-from novel_match import (
-    _display_title,
-    _dominant_novels,
-    _edit_distance,
-    _find_ending_anchor,
-    _fuzzy_contains,
-    _is_library_question,
-    _mentions_novel,
-    _named_via_typo,
-    _novel_titles,
-    _strip_novel_titles,
-    _structural_kind,
-)
+from reranker import rerank_with_scores
 from retrieval_mixins import RetrievalMixin
-from generation_mixin import (
-    PROMPT_TEMPLATE,
-    PROMPT_TEMPLATE_VERSION,
-    GenerationMixin,
-    generate_ollama_prompt_stream,
-)
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
@@ -138,7 +163,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 "SELECT SUM(LENGTH(text)) AS chars FROM novel_chunks WHERE novel = %s",
                 (novel,),
             ).fetchone()
-            total = int(row["chars"] or 0)
+            total = int(row["chars"]) if row and row["chars"] is not None else 0
             if not total or total > FULL_TEXT_MAX_CHARS:
                 return None
             rows = conn.execute(
@@ -307,11 +332,14 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             title = _display_title(named_novels[0])
             chars = sum(len(c.text) for c in full_text)
             yield "step", {"step": "理解问题", "detail": f"识别到你在问{title}", "ms": took()}
-            yield "step", {
-                "step": "跳过检索",
-                "detail": f"{title}全文仅 {chars} 字，直接把整本给模型，不做检索（零信息损失）",
-                "ms": took(),
-            }
+            yield (
+                "step",
+                {
+                    "step": "跳过检索",
+                    "detail": f"{title}全文仅 {chars} 字，直接把整本给模型，不做检索（零信息损失）",
+                    "ms": took(),
+                },
+            )
             yield "result", full_text
             return
 
@@ -346,44 +374,51 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 )
                 chapter_count = sum(hit.get("level") == "chapter" for hit in hierarchy_hits)
                 novels = list(dict.fromkeys(hit["novel"] for hit in hierarchy_hits))
-                yield "step", {
-                    "step": "层级检索",
-                    "stage_key": "hierarchy",
-                    "detail": (
-                        f"先用全书/章节摘要定位到 {chapter_count} 个章节，"
-                        f"再回到 {'、'.join(_display_title(n) for n in novels)} 的原文取证"
-                    ),
-                    "ms": took(),
-                    "candidates": _trace_candidates(
-                        hierarchy_sources,
-                        score_label="章节摘要相似度",
-                        score_of=lambda source, _key: 1 - source.distance,
-                    ),
-                }
+                yield (
+                    "step",
+                    {
+                        "step": "层级检索",
+                        "stage_key": "hierarchy",
+                        "detail": (
+                            f"先用全书/章节摘要定位到 {chapter_count} 个章节，"
+                            f"再回到 {'、'.join(_display_title(n) for n in novels)} 的原文取证"
+                        ),
+                        "ms": took(),
+                        "candidates": _trace_candidates(
+                            hierarchy_sources,
+                            score_label="章节摘要相似度",
+                            score_of=lambda source, _key: 1 - source.distance,
+                        ),
+                    },
+                )
             except Exception as exc:
                 # 层级表尚未迁移或暂时不可用时，退回原有片段检索，不让升级过程阻断问答。
-                yield "step", {
-                    "step": "层级检索",
-                    "stage_key": "hierarchy",
-                    "detail": f"层级摘要暂不可用，退回片段检索（{exc}）",
-                    "ms": took(),
-                }
+                yield (
+                    "step",
+                    {
+                        "step": "层级检索",
+                        "stage_key": "hierarchy",
+                        "detail": f"层级摘要暂不可用，退回片段检索（{exc}）",
+                        "ms": took(),
+                    },
+                )
 
         # 阶段三：多路召回
-        semantic_sources = self.retrieve(
-            question, top_k=candidate_k, only_novels=named_novels
+        semantic_sources = self.retrieve(question, top_k=candidate_k, only_novels=named_novels)
+        yield (
+            "step",
+            {
+                "step": "向量召回",
+                "stage_key": "vector",
+                "detail": f"按语义相似度召回 {len(semantic_sources)} 个片段",
+                "ms": took(),
+                "candidates": _trace_candidates(
+                    semantic_sources,
+                    score_label="余弦相似度",
+                    score_of=lambda source, _key: 1 - source.distance,
+                ),
+            },
         )
-        yield "step", {
-            "step": "向量召回",
-            "stage_key": "vector",
-            "detail": f"按语义相似度召回 {len(semantic_sources)} 个片段",
-            "ms": took(),
-            "candidates": _trace_candidates(
-                semantic_sources,
-                score_label="余弦相似度",
-                score_of=lambda source, _key: 1 - source.distance,
-            ),
-        }
         # 关键词检索（分词后逐词匹配）如果不限定书的范围，像"伴侣"这种两本书
         # 都会用到的常见词，会把不相关小说的片段也拉进来。这里先用语义召回的
         # 结果猜一次书（没点名书名时），再拿这个猜测去收窄关键词检索——语义
@@ -397,17 +432,20 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             top_k=candidate_k,
             only_novels=keyword_scope,
         )
-        yield "step", {
-            "step": "BM25 召回",
-            "stage_key": "bm25",
-            "detail": f"按关键词相关性召回 {len(keyword_sources)} 个片段",
-            "ms": took(),
-            "candidates": _trace_candidates(
-                keyword_sources,
-                score_label="BM25",
-                score_of=lambda source, _key: -source.distance,
-            ),
-        }
+        yield (
+            "step",
+            {
+                "step": "BM25 召回",
+                "stage_key": "bm25",
+                "detail": f"按关键词相关性召回 {len(keyword_sources)} 个片段",
+                "ms": took(),
+                "candidates": _trace_candidates(
+                    keyword_sources,
+                    score_label="BM25",
+                    score_of=lambda source, _key: -source.distance,
+                ),
+            },
+        )
         hint_novels = named_novels or _dominant_novels(
             hierarchy_sources + semantic_sources + keyword_sources
         )
@@ -415,33 +453,47 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             question, top_k=candidate_k, hint_novels=hint_novels
         )
         if positional_sources:
-            yield "step", {
-                "step": "结构性召回",
-                "stage_key": "position",
-                "detail": f"按原文位置召回 {len(positional_sources)} 个片段",
-                "ms": took(),
-                "candidates": _trace_candidates(
-                    positional_sources,
-                    score_label="原文位置",
-                    score_of=lambda _source, _key: None,
-                ),
-            }
-        recall_detail = f"语义召回 {len(semantic_sources)} 条 · 关键词召回 {len(keyword_sources)} 条"
+            yield (
+                "step",
+                {
+                    "step": "结构性召回",
+                    "stage_key": "position",
+                    "detail": f"按原文位置召回 {len(positional_sources)} 个片段",
+                    "ms": took(),
+                    "candidates": _trace_candidates(
+                        positional_sources,
+                        score_label="原文位置",
+                        score_of=lambda _source, _key: None,
+                    ),
+                },
+            )
+        recall_detail = (
+            f"语义召回 {len(semantic_sources)} 条 · 关键词召回 {len(keyword_sources)} 条"
+        )
         if positional_sources:
             ids = sorted(s.chunk_id for s in positional_sources)
             span = f"#{ids[0]}" if len(ids) == 1 else f"#{ids[0]}–{ids[-1]}"
-            where = "结尾" if structural == "结局" else "开头" if structural == "开头" else "位置"
-            recall_detail += f" · 结构性召回 {len(positional_sources)} 条（定位到{where} {span}）"
+            where = (
+                "结尾" if structural == "结局" else "开头" if structural == "开头" else "位置"
+            )
+            recall_detail += (
+                f" · 结构性召回 {len(positional_sources)} 条（定位到{where} {span}）"
+            )
         if hierarchy_sources:
             recall_detail += f" · 层级召回映射原文 {len(hierarchy_sources)} 条"
         if not named_novels and hint_novels:
-            recall_detail += f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
-        yield "step", {
-            "step": "多路召回",
-            "stage_key": "recall_summary",
-            "detail": recall_detail,
-            "ms": 0,
-        }
+            recall_detail += (
+                f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
+            )
+        yield (
+            "step",
+            {
+                "step": "多路召回",
+                "stage_key": "recall_summary",
+                "detail": recall_detail,
+                "ms": 0,
+            },
+        )
 
         # Reciprocal Rank Fusion：把多路召回合并成一个候选池。
         # RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
@@ -470,25 +522,28 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         # 界面上就出现了「合并去重后共 38 个候选」紧跟着「对 20 个候选重新打分」
         # 这种数字断层——少掉的 18 个去哪了没人知道。**思考过程的价值就在于
         # 可解释，出现解释不了的数字反而比不展示更糟。**
-        yield "step", {
-            "step": "融合排序",
-            "detail": (
-                f"合并去重后共 {len(scores)} 个候选"
-                + (
-                    f"，按 RRF 分数取前 {candidate_k} 个进入精排"
-                    if len(scores) > candidate_k
-                    else ""
-                )
-            ),
-            "ms": took(),
-            "stage_key": "rrf",
-            "candidates": _trace_candidates(
-                fused_sources,
-                score_label="RRF",
-                score_of=lambda _source, key: scores[key],
-                selected_count=min(candidate_k, len(fused_sources)),
-            ),
-        }
+        yield (
+            "step",
+            {
+                "step": "融合排序",
+                "detail": (
+                    f"合并去重后共 {len(scores)} 个候选"
+                    + (
+                        f"，按 RRF 分数取前 {candidate_k} 个进入精排"
+                        if len(scores) > candidate_k
+                        else ""
+                    )
+                ),
+                "ms": took(),
+                "stage_key": "rrf",
+                "candidates": _trace_candidates(
+                    fused_sources,
+                    score_label="RRF",
+                    score_of=lambda _source, key: scores[key],
+                    selected_count=min(candidate_k, len(fused_sources)),
+                ),
+            },
+        )
 
         # 阶段五：交叉编码器重排。
         # 前面几路召回都是「粗筛」——快，但只能判断主题相近，判断不了「这段话
@@ -515,35 +570,41 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                     for rank, source in enumerate(candidates, start=1)
                 }
                 result = reranked[:top_k]
-                yield "step", {
-                    "step": "精排",
-                    "stage_key": "rerank",
-                    "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
-                    "ms": took(),
-                    "candidates": _trace_candidates(
-                        reranked,
-                        score_label="CrossEncoder",
-                        score_of=lambda _source, key: rerank_scores[key],
-                        previous_ranks=previous_ranks,
-                        selected_count=len(result),
-                    ),
-                }
+                yield (
+                    "step",
+                    {
+                        "step": "精排",
+                        "stage_key": "rerank",
+                        "detail": f"用交叉编码器对 {len(candidates)} 个候选重新打分，取最相关的 {len(result)} 段",
+                        "ms": took(),
+                        "candidates": _trace_candidates(
+                            reranked,
+                            score_label="CrossEncoder",
+                            score_of=lambda _source, key: rerank_scores[key],
+                            previous_ranks=previous_ranks,
+                            selected_count=len(result),
+                        ),
+                    },
+                )
             except Exception as exc:
                 # 重排是锦上添花，模型加载失败/推理出错都不该让整个问答挂掉，
                 # 退回融合排序的结果即可（质量差一点，但功能可用）。
                 result = candidates[:top_k]
-                yield "step", {
-                    "step": "精排",
-                    "stage_key": "rerank",
-                    "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）",
-                    "ms": took(),
-                    "candidates": _trace_candidates(
-                        candidates,
-                        score_label="RRF（降级）",
-                        score_of=lambda _source, key: scores[key],
-                        selected_count=len(result),
-                    ),
-                }
+                yield (
+                    "step",
+                    {
+                        "step": "精排",
+                        "stage_key": "rerank",
+                        "detail": f"重排不可用，按融合排序取前 {len(result)} 段（{exc}）",
+                        "ms": took(),
+                        "candidates": _trace_candidates(
+                            candidates,
+                            score_label="RRF（降级）",
+                            score_of=lambda _source, key: scores[key],
+                            selected_count=len(result),
+                        ),
+                    },
+                )
         else:
             result = candidates[:top_k]
 
@@ -551,9 +612,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         # 挂在重排完成之后：此时才拿得到重排归一化分数，置信度信号才有意义。
         # 开关关闭（默认）时这段完全不执行，主链路行为与从前逐字节一致。
         if QUERY_EXPAND_ENABLED and _allow_expand:
-            rescue = self._maybe_expand(
-                question, top_k, candidates, scored_final, took
-            )
+            rescue = self._maybe_expand(question, top_k, candidates, scored_final, took)
             try:
                 while True:
                     yield "step", next(rescue)
@@ -671,9 +730,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             # 在线没有标准答案，「是否仍无证据」只能近似：补救后信号仍然低
             # 就如实记录 True，供评测脚本和排查参考。仍无证据时不做任何额外
             # 动作，与现有的无证据拒答逻辑保持一致。
-            still_no_evidence = compute_confidence(
-                question, final_scored[:top_k]
-            )["is_low_confidence"]
+            still_no_evidence = compute_confidence(question, final_scored[:top_k])[
+                "is_low_confidence"
+            ]
 
         yield {
             "step": "扩展重排",
@@ -681,11 +740,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             "stage": "expand",
             "detail": (
                 detail_extra
-                + (
-                    "；仍未找到可靠证据，按现有拒答逻辑处理"
-                    if still_no_evidence
-                    else ""
-                )
+                + ("；仍未找到可靠证据，按现有拒答逻辑处理" if still_no_evidence else "")
             ),
             "ms": took(),
             "still_no_evidence": still_no_evidence,

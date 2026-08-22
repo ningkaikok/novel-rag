@@ -23,14 +23,16 @@ manifest 扫描即可继续未完成的书。
 任务定期调用 ``check_cancel``，发现 Event 后主动抛出 ``IndexCancelled``，数据库层
 再通过事务回滚保证一致性。这也是很多 Agent 长任务实现取消/暂停时的基本模式。
 """
+
 from __future__ import annotations
 
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from backend.logging_config import get_logger
 from ingest import IndexCancelled
@@ -187,8 +189,13 @@ class IndexTaskManager:
         """
         if self._store is None:
             return
-        terminal_or_stage = task.status in TERMINAL_STATUSES or task.stage != task._persisted_stage
-        if not terminal_or_stage and time.monotonic() - task._persisted_at < _PERSIST_MIN_INTERVAL:
+        terminal_or_stage = (
+            task.status in TERMINAL_STATUSES or task.stage != task._persisted_stage
+        )
+        if (
+            not terminal_or_stage
+            and time.monotonic() - task._persisted_at < _PERSIST_MIN_INTERVAL
+        ):
             return
         try:
             self._store.save(task.snapshot())

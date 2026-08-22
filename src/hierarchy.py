@@ -8,6 +8,7 @@
 
 后续想实验 LLM 摘要，只需替换 ``extract_summary``，数据库表和检索链路无需重写。
 """
+
 from __future__ import annotations
 
 import hashlib

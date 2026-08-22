@@ -9,6 +9,7 @@ init_pool 失败时要关掉半初始化的池子、不留着它在后台重连�
 是因为 conftest.py 里 `import backend.main` 已经在整个 pytest 会话开始时
 做过这件事——sys.path 的修改是进程级的，不是按文件隔离的。）
 """
+
 import pytest
 
 import postgres

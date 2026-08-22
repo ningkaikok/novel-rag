@@ -3,6 +3,7 @@
 分词是 BM25 的地基：建索引和查询必须切出一致的词，否则两边对不上。
 这些用例不需要数据库，纯函数测试。
 """
+
 from tokenizer import query_terms, term_frequencies, tokenize
 
 

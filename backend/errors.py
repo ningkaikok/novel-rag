@@ -11,6 +11,7 @@ FastAPI 自己的 RequestValidationError（请求体不符合 Pydantic 模型时
 "服务器炸了"，处理逻辑统一只读 `error.message`（想要更精细的判断可以读
 `error.code`）。
 """
+
 from enum import StrEnum
 
 from fastapi import FastAPI, Request

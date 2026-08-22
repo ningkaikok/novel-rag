@@ -1,30 +1,30 @@
-import type { Page } from "@playwright/test";
+import type { Page } from '@playwright/test';
 
 /**
  * e2e 测试只验证前端渲染逻辑，所有 /api/* 请求都在这里拦截、返回固定假数据。
  * 不依赖真实后端、PostgreSQL、Ollama 或任何云端 key，测试稳定且不产生任何费用。
  */
 
-export const MOCK_BOOKS = ["雾隐山庄", "《诡秘之主》（精校版全本）作者：爱潜水的乌贼"];
+export const MOCK_BOOKS = ['雾隐山庄', '《诡秘之主》（精校版全本）作者：爱潜水的乌贼'];
 
 export const MOCK_MODELS = {
-  models: ["qwen2.5:7b", "claude:sonnet", "glm:glm-4-flash"],
-  current: "qwen2.5:7b",
+  models: ['qwen2.5:7b', 'claude:sonnet', 'glm:glm-4-flash'],
+  current: 'qwen2.5:7b',
 };
 
 export const MOCK_INDEX_TASK = {
-  id: "index-task-1",
-  status: "completed",
-  stage: "complete",
+  id: 'index-task-1',
+  status: 'completed',
+  stage: 'complete',
   progress: 100,
-  message: "书架索引已更新",
+  message: '书架索引已更新',
   error: null,
   force: false,
   retry_of: null,
   result: {
     novels: MOCK_BOOKS,
     chunk_count: 3,
-    added: ["新小说"],
+    added: ['新小说'],
     modified: [],
     deleted: [],
     unchanged: MOCK_BOOKS,
@@ -32,9 +32,9 @@ export const MOCK_INDEX_TASK = {
     relations: 0,
     hierarchy_nodes: 0,
   },
-  created_at: "2026-08-09T00:00:00Z",
-  started_at: "2026-08-09T00:00:00Z",
-  finished_at: "2026-08-09T00:00:01Z",
+  created_at: '2026-08-09T00:00:00Z',
+  started_at: '2026-08-09T00:00:00Z',
+  finished_at: '2026-08-09T00:00:01Z',
 };
 
 export interface MockAskOptions {
@@ -59,46 +59,76 @@ export interface MockAskOptions {
 }
 
 const DEFAULT_TRACE = [
-  { step: "理解问题", detail: "识别到你在问《雾隐山庄》" },
-  { step: "检索范围", detail: "只在《雾隐山庄》内检索" },
+  { step: '理解问题', detail: '识别到你在问《雾隐山庄》' },
+  { step: '检索范围', detail: '只在《雾隐山庄》内检索' },
   {
-    step: "向量召回",
-    detail: "按语义相似度召回 2 个片段",
+    step: '向量召回',
+    detail: '按语义相似度召回 2 个片段',
     ms: 18,
-    stage_key: "vector",
+    stage_key: 'vector',
     candidates: [
-      { novel: "雾隐山庄", chunk_id: 1, rank: 1, score: 0.82, score_label: "余弦相似度" },
-      { novel: "雾隐山庄", chunk_id: 0, rank: 2, score: 0.76, score_label: "余弦相似度" },
+      { novel: '雾隐山庄', chunk_id: 1, rank: 1, score: 0.82, score_label: '余弦相似度' },
+      { novel: '雾隐山庄', chunk_id: 0, rank: 2, score: 0.76, score_label: '余弦相似度' },
     ],
   },
   {
-    step: "BM25 召回",
-    detail: "按关键词相关性召回 2 个片段",
+    step: 'BM25 召回',
+    detail: '按关键词相关性召回 2 个片段',
     ms: 7,
-    stage_key: "bm25",
+    stage_key: 'bm25',
     candidates: [
-      { novel: "雾隐山庄", chunk_id: 0, rank: 1, score: 8.3, score_label: "BM25" },
-      { novel: "雾隐山庄", chunk_id: 1, rank: 2, score: 4.1, score_label: "BM25" },
+      { novel: '雾隐山庄', chunk_id: 0, rank: 1, score: 8.3, score_label: 'BM25' },
+      { novel: '雾隐山庄', chunk_id: 1, rank: 2, score: 4.1, score_label: 'BM25' },
     ],
   },
   {
-    step: "融合排序",
-    detail: "合并去重后共 2 个候选",
+    step: '融合排序',
+    detail: '合并去重后共 2 个候选',
     ms: 1,
-    stage_key: "rrf",
+    stage_key: 'rrf',
     candidates: [
-      { novel: "雾隐山庄", chunk_id: 0, rank: 1, score: 0.0325, score_label: "RRF", selected: true },
-      { novel: "雾隐山庄", chunk_id: 1, rank: 2, score: 0.0325, score_label: "RRF", selected: true },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 0,
+        rank: 1,
+        score: 0.0325,
+        score_label: 'RRF',
+        selected: true,
+      },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 1,
+        rank: 2,
+        score: 0.0325,
+        score_label: 'RRF',
+        selected: true,
+      },
     ],
   },
   {
-    step: "精排",
-    detail: "取最相关的 2 段",
+    step: '精排',
+    detail: '取最相关的 2 段',
     ms: 80,
-    stage_key: "rerank",
+    stage_key: 'rerank',
     candidates: [
-      { novel: "雾隐山庄", chunk_id: 1, rank: 1, previous_rank: 2, score: 0.99, score_label: "CrossEncoder", selected: true },
-      { novel: "雾隐山庄", chunk_id: 0, rank: 2, previous_rank: 1, score: 0.91, score_label: "CrossEncoder", selected: true },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 1,
+        rank: 1,
+        previous_rank: 2,
+        score: 0.99,
+        score_label: 'CrossEncoder',
+        selected: true,
+      },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 0,
+        rank: 2,
+        previous_rank: 1,
+        score: 0.91,
+        score_label: 'CrossEncoder',
+        selected: true,
+      },
     ],
   },
 ];
@@ -107,33 +137,33 @@ const DEFAULT_TRACE = [
 // 不需要截断，不会渲染"展开"链接，测试点击展开时就会找不到元素——之前踩过这个坑。
 const DEFAULT_SOURCES = [
   {
-    novel: "雾隐山庄",
+    novel: '雾隐山庄',
     chunk_id: 0,
-    chapter_title: "第一章 风雪来客",
-    text: "三个月前旧疾复发，卧床不起，庄里的药材已经快要用尽，正愁没有人能翻山进来采买，眼下唯一的指望，就是能有名医恰好路过此地。",
+    chapter_title: '第一章 风雪来客',
+    text: '三个月前旧疾复发，卧床不起，庄里的药材已经快要用尽，正愁没有人能翻山进来采买，眼下唯一的指望，就是能有名医恰好路过此地。',
   },
   {
-    novel: "雾隐山庄",
+    novel: '雾隐山庄',
     chunk_id: 1,
-    chapter_title: "第二章 蚀骨奇毒",
-    text: "沈砚之带着师父的信前往雾隐山庄寻访名医顾长风，恰逢顾长风旧疾复发且庄中药材匮乏，正是雪中送炭的好时机。",
+    chapter_title: '第二章 蚀骨奇毒',
+    text: '沈砚之带着师父的信前往雾隐山庄寻访名医顾长风，恰逢顾长风旧疾复发且庄中药材匮乏，正是雪中送炭的好时机。',
   },
 ];
 
-const DEFAULT_TOKENS = ["雾隐", "山庄", "的庄主是", "顾长风", "[1]", "。"];
+const DEFAULT_TOKENS = ['雾隐', '山庄', '的庄主是', '顾长风', '[1]', '。'];
 
 /** 把 SSE 事件序列拼成一段符合后端格式的响应体：event: xxx\ndata: ...\n\n */
 function buildSseBody(opts: MockAskOptions): string {
   const trace = opts.trace ?? DEFAULT_TRACE;
   const sources = opts.sources ?? DEFAULT_SOURCES;
   const tokens = opts.tokens ?? DEFAULT_TOKENS;
-  let body = "";
+  let body = '';
   body += `event: trace\ndata: ${JSON.stringify(trace)}\n\n`;
   body += `event: sources\ndata: ${JSON.stringify(sources)}\n\n`;
   for (const t of tokens) {
     body += `event: token\ndata: ${JSON.stringify(t)}\n\n`;
   }
-  body += "event: done\ndata: {}\n\n";
+  body += 'event: done\ndata: {}\n\n';
   return body;
 }
 
@@ -141,29 +171,27 @@ function buildAgentSseBody(): string {
   const steps = [
     {
       step: 1,
-      reason: "先定位与问题相关的原文",
-      tool: "search_novels",
-      args: { query: "顾长风为什么卧床" },
-      observation: "检索到 2 个相关原文片段",
-      source_ids: ["S1", "S2"],
+      reason: '先定位与问题相关的原文',
+      tool: 'search_novels',
+      args: { query: '顾长风为什么卧床' },
+      observation: '检索到 2 个相关原文片段',
+      source_ids: ['S1', 'S2'],
     },
     {
       step: 2,
-      reason: "证据已足够，生成带引用答案",
-      tool: "answer_with_citations",
-      args: { source_ids: ["S1", "S2"] },
-      observation: "使用 2 个原文片段生成带引用答案",
-      source_ids: ["S1", "S2"],
+      reason: '证据已足够，生成带引用答案',
+      tool: 'answer_with_citations',
+      args: { source_ids: ['S1', 'S2'] },
+      observation: '使用 2 个原文片段生成带引用答案',
+      source_ids: ['S1', 'S2'],
     },
   ];
-  let body = steps
-    .map((step) => `event: agent_step\ndata: ${JSON.stringify(step)}\n\n`)
-    .join("");
+  let body = steps.map((step) => `event: agent_step\ndata: ${JSON.stringify(step)}\n\n`).join('');
   body += `event: sources\ndata: ${JSON.stringify(DEFAULT_SOURCES)}\n\n`;
   for (const token of DEFAULT_TOKENS) {
     body += `event: token\ndata: ${JSON.stringify(token)}\n\n`;
   }
-  return body + "event: done\ndata: {}\n\n";
+  return body + 'event: done\ndata: {}\n\n';
 }
 
 /** 拦截页面加载时用到的所有 /api/* 请求，换成受控的假数据。 */
@@ -175,17 +203,17 @@ export async function mockApi(
     ask?: MockAskOptions;
     /** 会话历史：模拟刷新页面后从后端读回的对话 */
     sessionTurns?: unknown[];
-  } = {}
+  } = {},
 ) {
   const books = opts.books ?? MOCK_BOOKS;
   const models = opts.models ?? MOCK_MODELS;
 
-  await page.route("**/api/sessions/**", async (route) => {
+  await page.route('**/api/sessions/**', async (route) => {
     await route.fulfill({ json: { turns: opts.sessionTurns ?? [] } });
   });
 
-  await page.route("**/api/books", async (route) => {
-    if (route.request().method() === "GET") {
+  await page.route('**/api/books', async (route) => {
+    if (route.request().method() === 'GET') {
       await route.fulfill({ json: { books } });
     } else {
       // 上传：读一下 multipart 里的文件名，回显为"已保存"，方便测试断言
@@ -193,39 +221,41 @@ export async function mockApi(
     }
   });
 
-  await page.route("**/api/index-tasks/**", async (route) => {
+  await page.route('**/api/index-tasks/**', async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname.endsWith("/current")) {
+    if (url.pathname.endsWith('/current')) {
       await route.fulfill({ json: null });
     } else {
       await route.fulfill({ json: MOCK_INDEX_TASK });
     }
   });
 
-  await page.route("**/api/reindex**", async (route) => {
+  await page.route('**/api/reindex**', async (route) => {
     await route.fulfill({ json: MOCK_INDEX_TASK });
   });
 
-  await page.route("**/api/models", async (route) => {
+  await page.route('**/api/models', async (route) => {
     await route.fulfill({ json: models });
   });
 
-  await page.route("**/api/model", async (route) => {
-    await route.fulfill({ json: { current: JSON.parse(route.request().postData() ?? "{}").model } });
+  await page.route('**/api/model', async (route) => {
+    await route.fulfill({
+      json: { current: JSON.parse(route.request().postData() ?? '{}').model },
+    });
   });
 
-  await page.route("**/api/agent/ask", async (route) => {
+  await page.route('**/api/agent/ask', async (route) => {
     await route.fulfill({
       status: 200,
-      contentType: "text/event-stream",
+      contentType: 'text/event-stream',
       body: buildAgentSseBody(),
     });
   });
 
-  await page.route("**/api/ask", async (route) => {
+  await page.route('**/api/ask', async (route) => {
     await route.fulfill({
       status: 200,
-      contentType: "text/event-stream",
+      contentType: 'text/event-stream',
       body: buildSseBody(opts.ask ?? {}),
     });
   });
@@ -242,7 +272,7 @@ export async function mockApi(
  * 这正是真实的中断路径。
  */
 export async function mockHangingAsk(page: Page) {
-  await page.route("**/api/ask", async () => {
+  await page.route('**/api/ask', async () => {
     // 故意不调用 route.fulfill()：请求保持 pending 直到被 abort 或测试结束。
     // 不需要 sleep，handler 不返回就等于挂住。
   });

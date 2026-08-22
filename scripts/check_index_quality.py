@@ -8,6 +8,7 @@
 快速发现编码、空片段和 embedding 长度问题。完整索引时同一门禁会在 ``ingest.py``
 中再次执行。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,4 +54,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

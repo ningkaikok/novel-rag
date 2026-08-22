@@ -1,4 +1,5 @@
 """多轮查询改写的单元测试。不调真实 LLM，用假生成函数验证调度逻辑。"""
+
 from query_rewriter import format_history, needs_rewrite, rewrite_query
 
 HISTORY = [
@@ -24,7 +25,7 @@ def test_pronoun_question_needs_rewrite():
 
 
 def test_short_question_needs_rewrite():
-    """"后来呢"这类极短问题基本都依赖上文。"""
+    """ "后来呢"这类极短问题基本都依赖上文。"""
     assert needs_rewrite("后来呢", has_history=True)
 
 

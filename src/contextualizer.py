@@ -38,6 +38,7 @@ Anthropic 的原始做法是把**整篇文档**连同片段一起发给 LLM（�
 2. **增量**：生成结果按「片段原文的哈希」存起来，重建索引时能复用。
    否则用户在界面上随手点一次「重新整理书架」就要重跑几小时。
 """
+
 import collections
 import hashlib
 from concurrent.futures import ThreadPoolExecutor

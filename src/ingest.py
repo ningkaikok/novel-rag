@@ -33,6 +33,7 @@ M3 还会在基础片段之上建立“章节摘要 → 全书摘要”导航层
 
 用法: python src/ingest.py
 """
+
 import hashlib
 import json
 import sys
@@ -45,23 +46,17 @@ from sentence_transformers import SentenceTransformer
 from config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    CONTEXTUAL_MAX_CHUNKS_PER_BOOK,
+    CONTEXTUAL_MODE,
+    CONTEXTUAL_MODEL,
+    CONTEXTUAL_WORKERS,
     EMBEDDING_MODEL,
     GRAPH_ENABLED,
     GRAPH_MAX_CHUNKS_PER_RELATION,
     GRAPH_MIN_NAME_HITS,
     GRAPH_MODEL,
     HIERARCHY_ENABLED,
-    CONTEXTUAL_MAX_CHUNKS_PER_BOOK,
-    CONTEXTUAL_MODE,
-    CONTEXTUAL_MODEL,
-    CONTEXTUAL_WORKERS,
     NOVELS_DIR,
-)
-from graph import (
-    RELATION_KEYWORDS,
-    build_edges,
-    chunks_with_relation,
-    extract_characters_from_chunks,
 )
 from contextualizer import (
     build_window,
@@ -71,6 +66,12 @@ from contextualizer import (
     text_hash,
 )
 from embedder import load_embedder
+from graph import (
+    RELATION_KEYWORDS,
+    build_edges,
+    chunks_with_relation,
+    extract_characters_from_chunks,
+)
 from hierarchy import build_hierarchy_nodes, hierarchy_pipeline_hash
 from index_quality import (
     QUALITY_GATE_VERSION,
@@ -89,12 +90,12 @@ from postgres import (
     hierarchy_node_count,
     index_chunk_count,
     indexed_novels,
-    load_index_manifest,
-    load_hierarchy_manifest,
     load_cached_contexts,
     load_cached_graph_characters,
-    replace_novel_index,
+    load_hierarchy_manifest,
+    load_index_manifest,
     replace_novel_hierarchy,
+    replace_novel_index,
     save_contexts,
     save_graph_characters,
     vector_literal,
@@ -326,7 +327,7 @@ def _build_contexts(chunks: list) -> dict[str, str]:
         ]
         print(
             f"  《{novel[:16]}》：{len(novel_chunks)} 个片段，"
-            f"其中 {len(poor_indices)} 个缺上下文（{len(poor_indices)/len(novel_chunks)*100:.1f}%）"
+            f"其中 {len(poor_indices)} 个缺上下文（{len(poor_indices) / len(novel_chunks) * 100:.1f}%）"
         )
         for i in poor_indices:
             chunk = novel_chunks[i]
@@ -339,7 +340,7 @@ def _build_contexts(chunks: list) -> dict[str, str]:
     # 闸门 3：复用已缓存的结果
     cached = load_cached_contexts(pending_hashes)
     todo = [
-        (task, h) for task, h in zip(pending, pending_hashes) if h not in cached
+        (task, h) for task, h in zip(pending, pending_hashes, strict=True) if h not in cached
     ]
     print(
         f"  需要生成 {len(pending)} 条，其中 {len(cached)} 条可复用缓存，"
@@ -353,7 +354,7 @@ def _build_contexts(chunks: list) -> dict[str, str]:
         _make_generate_fn(),
         max_workers=CONTEXTUAL_WORKERS,
     )
-    new_items = [(h, ctx) for (_, h), ctx in zip(todo, generated)]
+    new_items = [(h, ctx) for (_, h), ctx in zip(todo, generated, strict=True)]
     save_contexts(new_items)
 
     failed = sum(1 for _, ctx in new_items if not ctx)
@@ -375,9 +376,7 @@ def _noop_cancel() -> None:
     return None
 
 
-def _emit(
-    callback: ProgressCallback | None, stage: str, percent: int, message: str
-) -> None:
+def _emit(callback: ProgressCallback | None, stage: str, percent: int, message: str) -> None:
     """通过回调上报进度；没有回调时静默跳过，百分比钳制到 0-100 防御脏数据。"""
     if callback:
         callback(stage, max(0, min(100, int(percent))), message)
@@ -499,20 +498,24 @@ def _prepare_hierarchy_rows(
                 show_progress_bar=False,
             )
         )
-    return [
-        (
-            node.novel,
-            node.level,
-            node.node_id,
-            node.title,
-            node.node_order,
-            node.start_chunk_id,
-            node.end_chunk_id,
-            summary,
-            vector_literal(embedding),
-        )
-        for node, summary, embedding in zip(nodes, summaries, embeddings)
-    ], summaries, embeddings
+    return (
+        [
+            (
+                node.novel,
+                node.level,
+                node.node_id,
+                node.title,
+                node.node_order,
+                node.start_chunk_id,
+                node.end_chunk_id,
+                summary,
+                vector_literal(embedding),
+            )
+            for node, summary, embedding in zip(nodes, summaries, embeddings, strict=True)
+        ],
+        summaries,
+        embeddings,
+    )
 
 
 def build_index(
@@ -621,9 +624,7 @@ def build_index(
         for start in range(0, len(indexed_texts), batch_size):
             check()
             batch = indexed_texts[start : start + batch_size]
-            encoded = model.encode(
-                batch, normalize_embeddings=True, show_progress_bar=False
-            )
+            encoded = model.encode(batch, normalize_embeddings=True, show_progress_bar=False)
             embeddings.extend(encoded)
             done = min(start + len(batch), len(indexed_texts))
             local = 15 + int(done / len(indexed_texts) * 50)
@@ -691,7 +692,7 @@ def build_index(
                 contexts.get(text_hash(chunk.text), ""),
             )
             for chunk, embedding, token_count in zip(
-                chunks, embeddings, token_counts
+                chunks, embeddings, token_counts, strict=True
             )
         ]
         check()
@@ -791,9 +792,7 @@ def _build_relation_edges(chunks: list) -> list[tuple[str, str, str, str, int]]:
             else:
                 if generate_fn is None:
                     generate_fn = _make_generate_fn(GRAPH_MODEL)
-                name_hits = extract_characters_from_chunks(
-                    matched, generate_fn, errors=errors
-                )
+                name_hits = extract_characters_from_chunks(matched, generate_fn, errors=errors)
                 characters = {
                     n for n, hits in name_hits.items() if hits >= GRAPH_MIN_NAME_HITS
                 }

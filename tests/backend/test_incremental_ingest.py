@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import ingest
 
 
@@ -125,9 +123,18 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ingest,
         "replace_novel_index",
-        lambda novel, rows, terms, source_hash, pipeline_hash, relations, check,
-        hierarchy_rows, hierarchy_hash, **kwargs: replaced.append(
-            (novel, rows, terms, source_hash, pipeline_hash, hierarchy_rows, hierarchy_hash)
+        lambda novel, rows, terms, source_hash, pipeline_hash, relations, check, hierarchy_rows, hierarchy_hash, **kwargs: (
+            replaced.append(
+                (
+                    novel,
+                    rows,
+                    terms,
+                    source_hash,
+                    pipeline_hash,
+                    hierarchy_rows,
+                    hierarchy_hash,
+                )
+            )
         ),
     )
 
@@ -156,9 +163,7 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
     assert stages[-1] == ("complete", 100)
 
 
-def test_build_index_cancelled_before_write_keeps_database_untouched(
-    tmp_path, monkeypatch
-):
+def test_build_index_cancelled_before_write_keeps_database_untouched(tmp_path, monkeypatch):
     path = tmp_path / "取消.txt"
     path.write_text("正文内容", encoding="utf-8")
     plan = ingest.IndexPlan(
@@ -181,7 +186,9 @@ def test_build_index_cancelled_before_write_keeps_database_untouched(
 
     monkeypatch.setattr(ingest, "plan_index", lambda *args, **kwargs: plan)
     monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
-    monkeypatch.setattr(ingest, "replace_novel_index", lambda *args, **kwargs: writes.append(args))
+    monkeypatch.setattr(
+        ingest, "replace_novel_index", lambda *args, **kwargs: writes.append(args)
+    )
 
     try:
         ingest.build_index(
@@ -197,9 +204,7 @@ def test_build_index_cancelled_before_write_keeps_database_untouched(
     assert writes == []
 
 
-def test_build_index_backfills_only_hierarchy_for_unchanged_book(
-    tmp_path, monkeypatch
-):
+def test_build_index_backfills_only_hierarchy_for_unchanged_book(tmp_path, monkeypatch):
     path = tmp_path / "旧书.txt"
     path.write_text("第一章 开始\n正文内容", encoding="utf-8")
     plan = ingest.IndexPlan(
@@ -219,9 +224,7 @@ def test_build_index_backfills_only_hierarchy_for_unchanged_book(
     monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
     monkeypatch.setattr(ingest, "index_chunk_count", lambda: 1)
     monkeypatch.setattr(ingest, "hierarchy_node_count", lambda: 2)
-    monkeypatch.setattr(
-        ingest, "replace_novel_index", lambda *args: base_writes.append(args)
-    )
+    monkeypatch.setattr(ingest, "replace_novel_index", lambda *args: base_writes.append(args))
     monkeypatch.setattr(
         ingest, "replace_novel_hierarchy", lambda *args: hierarchy_writes.append(args)
     )

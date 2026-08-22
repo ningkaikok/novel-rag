@@ -67,12 +67,7 @@ export interface SearchResponse {
 }
 
 export type IndexTaskState =
-  | "queued"
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
 
 export interface IndexResult {
   novels: string[];
@@ -102,30 +97,30 @@ export interface IndexTask {
 }
 
 /** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。 */
-export type AnswerMode = "auto" | "grounded" | "free";
+export type AnswerMode = 'auto' | 'grounded' | 'free';
 
 export async function searchBooks(
   query: string,
   book?: string,
   limit = 20,
-  offset = 0
+  offset = 0,
 ): Promise<SearchResponse> {
   const params = new URLSearchParams({
     q: query,
     limit: String(limit),
     offset: String(offset),
   });
-  if (book) params.set("book", book);
+  if (book) params.set('book', book);
   const res = await fetch(`/api/search?${params.toString()}`);
   if (!res.ok) {
-    throw new Error(await extractErrorMessage(res, "全文搜索失败"));
+    throw new Error(await extractErrorMessage(res, '全文搜索失败'));
   }
   return await res.json();
 }
 
 export async function listBooks(): Promise<string[]> {
-  const res = await fetch("/api/books");
-  if (!res.ok) throw new Error("获取书架失败");
+  const res = await fetch('/api/books');
+  if (!res.ok) throw new Error('获取书架失败');
   return (await res.json()).books;
 }
 
@@ -134,53 +129,53 @@ export async function listBooks(): Promise<string[]> {
 
 export async function uploadBooks(files: FileList | File[]): Promise<IndexTask> {
   const form = new FormData();
-  for (const f of Array.from(files)) form.append("files", f);
-  const res = await fetch("/api/books", { method: "POST", body: form });
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "上传失败"));
+  for (const f of Array.from(files)) form.append('files', f);
+  const res = await fetch('/api/books', { method: 'POST', body: form });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '上传失败'));
   return (await res.json()).task;
 }
 
 export async function deleteBook(name: string): Promise<IndexTask> {
   const res = await fetch(`/api/books/${encodeURIComponent(name)}`, {
-    method: "DELETE",
+    method: 'DELETE',
   });
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "删除失败"));
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '删除失败'));
   return (await res.json()).task;
 }
 
 export async function reindex(force = false): Promise<IndexTask> {
-  const res = await fetch(`/api/reindex?force=${force ? "true" : "false"}`, {
-    method: "POST",
+  const res = await fetch(`/api/reindex?force=${force ? 'true' : 'false'}`, {
+    method: 'POST',
   });
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "索引同步失败"));
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '索引同步失败'));
   return await res.json();
 }
 
 export async function getCurrentIndexTask(): Promise<IndexTask | null> {
-  const res = await fetch("/api/index-tasks/current");
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取索引任务失败"));
+  const res = await fetch('/api/index-tasks/current');
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '获取索引任务失败'));
   return await res.json();
 }
 
 export async function getIndexTask(taskId: string): Promise<IndexTask> {
   const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}`);
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取索引进度失败"));
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '获取索引进度失败'));
   return await res.json();
 }
 
 export async function cancelIndexTask(taskId: string): Promise<IndexTask> {
   const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}/cancel`, {
-    method: "POST",
+    method: 'POST',
   });
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "取消索引任务失败"));
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '取消索引任务失败'));
   return await res.json();
 }
 
 export async function retryIndexTask(taskId: string): Promise<IndexTask> {
   const res = await fetch(`/api/index-tasks/${encodeURIComponent(taskId)}/retry`, {
-    method: "POST",
+    method: 'POST',
   });
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "重试索引任务失败"));
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '重试索引任务失败'));
   return await res.json();
 }
 
@@ -190,18 +185,18 @@ export interface ModelsInfo {
 }
 
 export async function listModels(): Promise<ModelsInfo> {
-  const res = await fetch("/api/models");
-  if (!res.ok) throw new Error(await extractErrorMessage(res, "获取模型列表失败"));
+  const res = await fetch('/api/models');
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '获取模型列表失败'));
   return await res.json();
 }
 
 export async function setModel(model: string): Promise<void> {
-  const res = await fetch("/api/model", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  const res = await fetch('/api/model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model }),
   });
-  if (!res.ok) throw new Error("切换模型失败");
+  if (!res.ok) throw new Error('切换模型失败');
 }
 
 export interface AskHandlers {
@@ -225,22 +220,22 @@ export async function askStream(
   question: string,
   topK: number,
   handlers: AskHandlers,
-  options: { signal?: AbortSignal; sessionId?: string; mode?: AnswerMode } = {}
+  options: { signal?: AbortSignal; sessionId?: string; mode?: AnswerMode } = {},
 ): Promise<void> {
   try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         question,
         top_k: topK,
         session_id: options.sessionId,
-        mode: options.mode ?? "auto",
+        mode: options.mode ?? 'auto',
       }),
       signal: options.signal,
     });
     if (!res.ok || !res.body) {
-      throw new Error(await extractErrorMessage(res, "请求失败"));
+      throw new Error(await extractErrorMessage(res, '请求失败'));
     }
 
     // 网络层出错（包括用户 abort 触发的 AbortError）统一交给 onError，
@@ -261,12 +256,12 @@ export async function askStream(
 export async function askAgentStream(
   question: string,
   handlers: AskHandlers,
-  options: { signal?: AbortSignal; maxSteps?: number; sessionId?: string } = {}
+  options: { signal?: AbortSignal; maxSteps?: number; sessionId?: string } = {},
 ): Promise<void> {
   try {
-    const res = await fetch("/api/agent/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const res = await fetch('/api/agent/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         question,
         max_steps: options.maxSteps ?? 5,
@@ -275,7 +270,7 @@ export async function askAgentStream(
       signal: options.signal,
     });
     if (!res.ok || !res.body) {
-      throw new Error(await extractErrorMessage(res, "Agent Lab 请求失败"));
+      throw new Error(await extractErrorMessage(res, 'Agent Lab 请求失败'));
     }
     await consumeEventStream(res, handlers);
     handlers.onDone?.();
@@ -290,7 +285,7 @@ async function consumeEventStream(res: Response, handlers: AskHandlers) {
   // 也可能同时拿到多个事件。TextDecoder 的 stream:true 保留跨分片的 UTF-8
   // 字节状态，buffer 则保留尚未遇到空行终止符的半个 SSE 事件。
   const decoder = new TextDecoder();
-  let buffer = "";
+  let buffer = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -302,7 +297,7 @@ async function consumeEventStream(res: Response, handlers: AskHandlers) {
     // SSE 以空行分隔事件。循环处理是因为一个网络包里可能粘着多个事件；
     // 最后不足一个事件的尾巴继续留在 buffer，等待下一次 read() 补齐。
     let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
       const raw = buffer.slice(0, sep);
       buffer = buffer.slice(sep + 2);
       handleEvent(raw, handlers);
@@ -313,19 +308,19 @@ async function consumeEventStream(res: Response, handlers: AskHandlers) {
 // 后端存下来的一轮对话（用于刷新页面后恢复）
 export interface StoredTurn {
   turn_index: number;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
   sources: Source[] | null;
   trace: TraceStep[] | null;
   // 只有 Agent Lab 那条链路的对话会有这个字段；普通问答模式恒为 null。
   agent_steps: AgentStep[] | null;
-  status: "complete" | "interrupted";
+  status: 'complete' | 'interrupted';
 }
 
 /** 读回某个会话的历史对话。会话不存在时返回空数组，不算错误。 */
 export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
   const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-  if (!res.ok) throw new Error("读取会话历史失败");
+  if (!res.ok) throw new Error('读取会话历史失败');
   return (await res.json()).turns ?? [];
 }
 
@@ -333,21 +328,21 @@ export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
 // step → (sources) → token* → 连接关闭，没有显式的 done 事件——
 // 「生成结束」由连接关闭表达，所以 onDone 在 consumeEventStream 返回后才触发。
 function handleEvent(raw: string, handlers: AskHandlers) {
-  let event = "message";
-  let data = "";
-  for (const line of raw.split("\n")) {
-    if (line.startsWith("event:")) event = line.slice(6).trim();
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
     // SSE 规范允许一个事件的 data 拆成多行 data: 逐行拼接；
     // 本后端虽然总是单行发送，这里仍按规范处理以保持健壮。
-    else if (line.startsWith("data:")) data += line.slice(5).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
   }
   // 没有负载的事件（如只用来保活的注释行）直接跳过
   if (!data) return;
   // step 是检索期间逐条推的（新），trace 是一次性整包（历史会话恢复走这条）
-  if (event === "step") handlers.onStep?.(JSON.parse(data));
-  else if (event === "agent_step") handlers.onAgentStep?.(JSON.parse(data));
-  else if (event === "trace") handlers.onTrace?.(JSON.parse(data));
-  else if (event === "sources") handlers.onSources?.(JSON.parse(data));
-  else if (event === "token") handlers.onToken?.(JSON.parse(data));
+  if (event === 'step') handlers.onStep?.(JSON.parse(data));
+  else if (event === 'agent_step') handlers.onAgentStep?.(JSON.parse(data));
+  else if (event === 'trace') handlers.onTrace?.(JSON.parse(data));
+  else if (event === 'sources') handlers.onSources?.(JSON.parse(data));
+  else if (event === 'token') handlers.onToken?.(JSON.parse(data));
   // 未识别的事件类型静默忽略：后端将来加新事件时旧前端不会崩
 }

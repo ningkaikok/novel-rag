@@ -1,0 +1,68 @@
+[project]
+name = "novel-rag"
+version = "0.6.0"
+description = "把 RAG 做「透明」的中文小说问答系统：向量/BM25/RRF/重排全链路可观测"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "python-multipart==0.0.20",
+    # pgvector + 连接池
+    "psycopg[binary,pool]>=3.2,<4",
+    # 本地 embedding / 重排 / BM25 分词
+    "sentence-transformers==3.3.1",
+    "jieba==0.42.1",
+    # 云端模型客户端
+    "requests==2.32.3",
+    # 匿名使用统计（posthog，可整体移除不影响功能）
+    "posthog==3.7.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "httpx==0.28.1",  # TestClient 依赖
+    "ruff==0.16.4",
+    "pyright>=1.1.390",
+    "pre-commit>=4.0",
+]
+
+# --- Ruff：lint + format（P1 工程化） -----------------------------------
+[tool.ruff]
+line-length = 95
+target-version = "py311"
+extend-exclude = ["venv", ".venv", "frontend"]
+
+[tool.ruff.lint]
+# E/W=pycodestyle, F=pyflakes, I=isort, B=bugbear, UP=pyupgrade, SIM=simplify
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
+ignore = [
+    "E501",  # 行超长交给 formatter 处理，注释里有大量中文长行
+]
+
+[tool.ruff.lint.isort]
+# 项目把 src/ 以顶层模块导入（sys.path 注入），本地包排序按已知清单
+known-first-party = [
+    "config", "loader", "embedder", "reranker", "tokenizer", "postgres",
+    "ingest", "hierarchy", "graph", "contextualizer", "index_quality",
+    "query_router", "query_rewriter", "rag", "agent_lab", "citation_eval",
+    "chunk_model", "novel_match", "retrieval_mixins", "generation_mixin",
+    "confidence", "query_expander", "backend",
+]
+
+# --- Pyright：类型检查 basic 起步（P1 工程化） ---------------------------
+[tool.pyright]
+# 存量 7000+ 行代码从 strict 直接切会报上千个错；工业界惯例是 basic 起步，
+# 新代码逐步收紧。include/exclude 与 ruff 对齐。
+include = ["src", "backend"]
+exclude = ["venv", ".venv", "**/__pycache__", "tests"]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+reportMissingImports = "none"      # src 顶层导入依赖 sys.path 注入，运行时已验证
+reportMissingTypeStubs = "none"
+
+[tool.pytest.ini_options]
+# 与原 pytest.ini 保持一致：只跑 mock 单测，评测集脚本不进默认收集
+testpaths = ["tests/backend"]

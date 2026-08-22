@@ -10,12 +10,13 @@
 循环最多 3～5 步；最后必须调用 ``answer_with_citations``。工具层只读 PostgreSQL，
 不会上传、删除或重建索引，因此适合初学者观察 Agent 行为而不承担写操作风险。
 """
+
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
 
 from postgres import connect
 from rag import NovelRAG, SourceChunk, _mentions_novel
@@ -66,7 +67,7 @@ class AgentToolbox:
                     row = conn.execute(
                         "SELECT COUNT(DISTINCT novel) AS total FROM novel_chunks"
                     ).fetchone()
-                    total = int(row["total"])
+                    total = int(row["total"]) if row else 0
                     return ToolResult(
                         f"书架共有 {total} 部小说",
                         facts={
@@ -112,7 +113,7 @@ class AgentToolbox:
                         f"SELECT COUNT(DISTINCT chapter_title) AS total FROM novel_chunks{where}",
                         tuple(params),
                     ).fetchone()
-                    total = int(row["total"])
+                    total = int(row["total"]) if row else 0
                     return ToolResult(
                         f"符合条件的章节共有 {total} 章",
                         facts={
@@ -158,7 +159,7 @@ class AgentToolbox:
                     f"SELECT COUNT(*) AS total FROM novel_chunks{where}",
                     tuple(params),
                 ).fetchone()
-                total = int(row["total"])
+                total = int(row["total"]) if row else 0
                 return ToolResult(
                     f"符合条件的片段共有 {total} 段",
                     facts={
@@ -233,9 +234,7 @@ class AgentToolbox:
             },
         )
 
-    def read_neighbors(
-        self, novel: str, chunk_id: int, radius: int = 1
-    ) -> ToolResult:
+    def read_neighbors(self, novel: str, chunk_id: int, radius: int = 1) -> ToolResult:
         resolved = self._resolve_novel(novel)
         radius = max(0, min(int(radius), 3))
         with connect() as conn:
@@ -258,9 +257,7 @@ class AgentToolbox:
             },
         )
 
-    def get_chapter(
-        self, novel: str, chapter_title: str, limit: int = 8
-    ) -> ToolResult:
+    def get_chapter(self, novel: str, chapter_title: str, limit: int = 8) -> ToolResult:
         resolved = self._resolve_novel(novel)
         with connect() as conn:
             rows = conn.execute(
@@ -356,7 +353,9 @@ _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个
 _CATALOG_QUESTION_RE = re.compile(
     r"(?:一共有|共有|总共有|多少部|几部|多少本|几本|有哪些小说|哪些书|所有小说|全部小说|书架)"
 )
-_EXHAUSTIVE_MARKER_RE = re.compile(r"(?:全部|所有|完整|一共|总共|共有|有哪些|多少|几部|几本|列出)")
+_EXHAUSTIVE_MARKER_RE = re.compile(
+    r"(?:全部|所有|完整|一共|总共|共有|有哪些|多少|几部|几本|列出)"
+)
 
 
 def _question_scope(question: str) -> str:
@@ -391,19 +390,13 @@ def _catalog_answer(question: str, facts: list[dict[str, object]]) -> str | None
             for item in reversed(facts)
             if item.get("kind") in {"book_catalog", "library_query"}
             and item.get("coverage") == "complete"
-            and (
-                item.get("kind") == "book_catalog"
-                or item.get("domain") == "books"
-            )
+            and (item.get("kind") == "book_catalog" or item.get("domain") == "books")
         ),
         None,
     )
     if catalog is None:
         return None
-    books = [
-        str(book)
-        for book in catalog.get("books", catalog.get("items", []))
-    ]
+    books = [str(book) for book in catalog.get("books", catalog.get("items", []))]
     count = int(catalog.get("book_count", catalog.get("total", len(books))))
     if not books:
         return "当前书架中没有已建立索引的小说。"
@@ -418,8 +411,7 @@ def _library_answer(question: str, facts: list[dict[str, object]]) -> str | None
         (
             item
             for item in reversed(facts)
-            if item.get("kind") == "library_query"
-            and item.get("coverage") == "complete"
+            if item.get("kind") == "library_query" and item.get("coverage") == "complete"
         ),
         None,
     )
@@ -465,7 +457,7 @@ def _parse_action(raw: str) -> dict:
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
-            raise ValueError("规划器没有返回 JSON")
+            raise ValueError("规划器没有返回 JSON") from None
         data = json.loads(match.group(0))
     if not isinstance(data, dict) or not isinstance(data.get("args", {}), dict):
         raise ValueError("规划器 action 形状不正确")
@@ -579,14 +571,17 @@ def run_agent(
                 args = {"query": question, "limit": 5}
                 reason = "尚无可引用证据，先检索小说原文"
             else:
-                yield "agent_step", {
-                    "step": step,
-                    "reason": reason,
-                    "tool": "answer_with_citations",
-                    "args": {"source_ids": requested or list(source_registry)},
-                    "observation": f"使用 {len(selected)} 个原文片段生成带引用答案",
-                    "source_ids": requested or list(source_registry),
-                }
+                yield (
+                    "agent_step",
+                    {
+                        "step": step,
+                        "reason": reason,
+                        "tool": "answer_with_citations",
+                        "args": {"source_ids": requested or list(source_registry)},
+                        "observation": f"使用 {len(selected)} 个原文片段生成带引用答案",
+                        "source_ids": requested or list(source_registry),
+                    },
+                )
                 yield "sources", selected
                 deterministic = _catalog_answer(question, fact_registry) or _library_answer(
                     question, fact_registry

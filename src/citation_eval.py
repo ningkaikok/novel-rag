@@ -14,6 +14,7 @@
 纯规则永远不能证明语义蕴含，所以返回值明确保留 ``manual_support_review_required``，
 避免把"编号合法"误写成"事实一定被支持"。
 """
+
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -133,9 +134,8 @@ def judge_support(
         if label not in ("supported", "unsupported", "uncertain"):
             raise ValueError(f"label 非法：{label!r}")
     except Exception as exc:
-        reason = (
-            f"{type(exc).__name__}: {exc}；原始输出前 200 字："
-            + raw[:200].replace("\n", "\\n")
+        reason = f"{type(exc).__name__}: {exc}；原始输出前 200 字：" + raw[:200].replace(
+            "\n", "\\n"
         )
         if errors is not None:
             errors.append(reason)
@@ -176,9 +176,7 @@ def split_statements(answer: str) -> list[str]:
     return [part.strip() for part in _SENTENCE_SPLIT_RE.split(answer.strip()) if part.strip()]
 
 
-def evaluate_completeness(
-    answer: str, exempt_phrases: Sequence[str] | None = None
-) -> dict:
+def evaluate_completeness(answer: str, exempt_phrases: Sequence[str] | None = None) -> dict:
     """完整性指标：事实性陈述里有多大比例缺少任何 ``[n]`` 引用。
 
     分母是"非豁免陈述"：寒暄/元描述/拒答句按豁免词表跳过（见
@@ -241,7 +239,10 @@ def evaluate_citations(
     covered_keywords = [
         keyword
         for keyword in expected_keywords
-        if any(keyword in str(source.get("text") or source.get("excerpt") or "") for source in cited_sources)
+        if any(
+            keyword in str(source.get("text") or source.get("excerpt") or "")
+            for source in cited_sources
+        )
     ]
     keyword_coverage = (
         len(covered_keywords) / len(expected_keywords) if expected_keywords else None

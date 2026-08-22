@@ -1,4 +1,5 @@
 """小书全文短路的单元测试（不连数据库，mock 掉查询）。"""
+
 from unittest.mock import MagicMock, patch
 
 import rag
@@ -46,7 +47,10 @@ def test_library_answer_uses_distinct_books_not_retrieved_fragments():
     with patch.object(rag, "connect", lambda: conn):
         answer = _rag().library_answer("现在一共有几部小说")
 
-    assert answer == "当前书架一共有 4 部小说：《凡人修仙传》、《降龙》、《雾隐山庄》、《诡秘之主》。"
+    assert (
+        answer
+        == "当前书架一共有 4 部小说：《凡人修仙传》、《降龙》、《雾隐山庄》、《诡秘之主》。"
+    )
 
 
 def test_library_answer_ignores_normal_content_questions():

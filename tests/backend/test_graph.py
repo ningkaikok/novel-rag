@@ -1,4 +1,5 @@
 """GraphRAG 的单元测试。不调真实 LLM、不连数据库。"""
+
 from dataclasses import dataclass
 
 from graph import (
@@ -83,9 +84,7 @@ def test_extraction_failure_skips_batch_not_whole_build():
         raise RuntimeError("模型限流")
 
     errors: list[str] = []
-    result = extract_characters_from_chunks(
-        [FakeChunk("书", "内容")], boom, errors=errors
-    )
+    result = extract_characters_from_chunks([FakeChunk("书", "内容")], boom, errors=errors)
 
     assert result == {}  # 降级：这批没抽到
     assert len(errors) == 1 and "限流" in errors[0]  # 但原因保留了

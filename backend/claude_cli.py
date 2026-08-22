@@ -6,6 +6,7 @@
 1. 这条路径会把检索到的原文片段和问题发送到 Anthropic 的服务器，不再是"完全本地"。
 2. 调用计入用户自己 Claude 订阅的用量/额度。
 """
+
 import json
 import shutil
 import subprocess
@@ -25,7 +26,9 @@ def is_available() -> bool:
 
 def claude_model_options() -> list[str]:
     """返回可选的 claude:xxx 模型名列表；CLI 未安装时返回空列表。"""
-    return [f"{MODEL_PREFIX}{alias}" for alias in CLAUDE_MODEL_ALIASES] if is_available() else []
+    return (
+        [f"{MODEL_PREFIX}{alias}" for alias in CLAUDE_MODEL_ALIASES] if is_available() else []
+    )
 
 
 def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
@@ -52,6 +55,8 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
+    # 显式声明 PIPE 后两者不可能为 None（类型收窄，否则 pyright 在三处报 Optional）
+    assert proc.stdout is not None and proc.stderr is not None
     try:
         # 逐行读子进程 stdout：stream-json 模式下每行是一个独立 JSON 事件，
         # 行即消息边界，不需要自己攒缓冲区。非 stream_event / 非 text_delta 的

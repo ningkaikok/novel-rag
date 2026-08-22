@@ -1,9 +1,10 @@
 """M3 层级索引测试；数据库与 embedding 都用轻量替身。"""
+
 from unittest.mock import MagicMock, patch
 
 import rag
-from loader import Chunk
 from hierarchy import build_hierarchy_nodes, extract_summary, is_global_question
+from loader import Chunk
 
 
 def _chunk(chunk_id: int, text: str, chapter: str | None) -> Chunk:

@@ -5,6 +5,7 @@
 ——uvicorn 自己的 uvicorn.error/uvicorn.access 走它自己的 handler，
 这里的配置不会和它互相干扰或导致日志打印两遍。
 """
+
 import logging
 
 from backend.context import request_id_var
@@ -32,9 +33,7 @@ def configure_logging() -> None:
     handler = logging.StreamHandler()
     handler.addFilter(RequestIDFilter())
     handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s"
-        )
+        logging.Formatter("%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s")
     )
     logger = logging.getLogger("novel_rag")
     logger.setLevel(level)

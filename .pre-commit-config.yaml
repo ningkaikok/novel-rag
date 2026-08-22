@@ -1,0 +1,58 @@
+# Git 提交前的自动检查（P1 工程化）。
+#
+# 安装：uv sync && uv run pre-commit install
+# 手动全量跑一遍：uv run pre-commit run --all-files
+#
+# 设计取舍：
+# - Python 的 ruff 用官方镜像 hook（自带隔离环境，不依赖本地 .venv）；
+#   pyright 增量门禁和前端检查用 local hook 走项目自己的脚本/依赖——
+#   它们需要 uv 环境 / node_modules，pre-commit 的隔离环境里装不了。
+# - 慢检查（pytest、playwright、完整 tsc）不放这里，留给 CI：
+#   pre-commit 的定位是「秒级反馈」，超过 10 秒的钩子会被人绕过。
+
+repos:
+  # 通用卫生：行尾空白、文件末尾换行、YAML/JSON 合法性
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^frontend/playwright-report/
+      - id: end-of-file-fixer
+        exclude: ^frontend/playwright-report/
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+
+  # Python：lint + 格式化（版本与 pyproject 的 ruff>=0.9 对齐）
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # 本地脚本类检查：需要项目环境（uv sync 之后可用）
+  - repo: local
+    hooks:
+      # 类型错误只拦增量（存量在 .pyright-baseline.json，见脚本 docstring）
+      - id: pyright-incremental
+        name: pyright (增量门禁)
+        entry: uv run python scripts/pyright_check.py
+        language: system
+        pass_filenames: false
+        files: ^(src|backend)/.*\.py$
+
+      - id: eslint
+        name: eslint (前端)
+        entry: npm --prefix frontend run lint
+        language: system
+        pass_filenames: false
+        files: ^frontend/src/.*\.(ts|tsx)$
+
+      - id: prettier-check
+        name: prettier (前端格式)
+        entry: npm --prefix frontend run format:check
+        language: system
+        pass_filenames: false
+        files: ^frontend/.*\.(ts|tsx|css|json)$

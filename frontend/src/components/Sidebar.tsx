@@ -1,5 +1,5 @@
-import { Alert, Button, Collapse, List, Progress, Slider, Tag } from "antd";
-import type { IndexTask } from "../api";
+import { Alert, Button, Collapse, List, Progress, Slider, Tag } from 'antd';
+import type { IndexTask } from '../api';
 
 /**
  * 左侧「我的书架」侧栏，纯展示组件：自己不发请求、不持有任务状态，
@@ -46,7 +46,7 @@ export default function Sidebar({
         size="small"
         className="book-list"
         dataSource={books}
-        locale={{ emptyText: "书架还是空的，用输入框上方的「📎 添加小说」开始吧" }}
+        locale={{ emptyText: '书架还是空的，用输入框上方的「📎 添加小说」开始吧' }}
         renderItem={(b) => (
           <List.Item
             actions={[
@@ -77,24 +77,24 @@ export default function Sidebar({
                 queued/running/cancelling 都算"还在跑"，统一蓝色 processing。 */}
             <Tag
               color={
-                indexTask.status === "completed"
-                  ? "success"
-                  : indexTask.status === "failed"
-                    ? "error"
-                    : indexTask.status === "cancelled"
-                      ? "default"
-                      : "processing"
+                indexTask.status === 'completed'
+                  ? 'success'
+                  : indexTask.status === 'failed'
+                    ? 'error'
+                    : indexTask.status === 'cancelled'
+                      ? 'default'
+                      : 'processing'
               }
             >
-              {indexTask.status === "completed"
-                ? "已完成"
-                : indexTask.status === "failed"
-                  ? "失败"
-                  : indexTask.status === "cancelled"
-                    ? "已取消"
-                    : indexTask.status === "cancelling"
-                      ? "正在停止"
-                      : "处理中"}
+              {indexTask.status === 'completed'
+                ? '已完成'
+                : indexTask.status === 'failed'
+                  ? '失败'
+                  : indexTask.status === 'cancelled'
+                    ? '已取消'
+                    : indexTask.status === 'cancelling'
+                      ? '正在停止'
+                      : '处理中'}
             </Tag>
           </div>
           {/* 进度条状态同样跟随任务状态机：失败红色、完成绿色，
@@ -103,51 +103,45 @@ export default function Sidebar({
             percent={indexTask.progress}
             size="small"
             status={
-              indexTask.status === "failed"
-                ? "exception"
-                : indexTask.status === "completed"
-                  ? "success"
-                  : ["queued", "running", "cancelling"].includes(indexTask.status)
-                    ? "active"
-                    : "normal"
+              indexTask.status === 'failed'
+                ? 'exception'
+                : indexTask.status === 'completed'
+                  ? 'success'
+                  : ['queued', 'running', 'cancelling'].includes(indexTask.status)
+                    ? 'active'
+                    : 'normal'
             }
           />
           <p className="index-task-message">{indexTask.message}</p>
           {/* 失败原因由后端随任务状态一起返回，展示出来方便判断是文件问题还是服务问题 */}
           {indexTask.error && (
-            <Alert
-              type="error"
-              showIcon
-              message="失败原因"
-              description={indexTask.error}
-            />
+            <Alert type="error" showIcon message="失败原因" description={indexTask.error} />
           )}
           {/* 增量索引的结果摘要：只有终态任务才带 result。
               "保留"是文件没变化、索引直接复用的书——这个数字大说明增量同步在生效。 */}
           {indexTask.result && (
             <p className="index-task-summary">
               新增 {indexTask.result.added.length} · 更新 {indexTask.result.modified.length}
-              {" · "}删除 {indexTask.result.deleted.length} · 保留 {indexTask.result.unchanged.length}
+              {' · '}删除 {indexTask.result.deleted.length} · 保留{' '}
+              {indexTask.result.unchanged.length}
             </p>
           )}
           {/* 操作按钮由状态机决定：还在跑（queued/running/cancelling）显示「安全停止」；
               cancelling 是点了停止后的过渡态——后端要等当前这本书写完事务才真正停，
               期间按钮转圈禁用，防止重复发送取消请求。
               停在 failed/cancelled 终态时给「重试」，从没完成的书继续，不重做全库。 */}
-          {(["queued", "running", "cancelling"] as string[]).includes(
-            indexTask.status
-          ) ? (
+          {(['queued', 'running', 'cancelling'] as string[]).includes(indexTask.status) ? (
             <Button
               block
               size="small"
               danger
-              disabled={indexTask.status === "cancelling"}
-              loading={indexTask.status === "cancelling"}
+              disabled={indexTask.status === 'cancelling'}
+              loading={indexTask.status === 'cancelling'}
               onClick={onCancelIndex}
             >
               安全停止
             </Button>
-          ) : ["failed", "cancelled"].includes(indexTask.status) ? (
+          ) : ['failed', 'cancelled'].includes(indexTask.status) ? (
             <Button block size="small" onClick={onRetryIndex}>
               重试未完成内容
             </Button>
@@ -162,8 +156,8 @@ export default function Sidebar({
         className="settings"
         items={[
           {
-            key: "1",
-            label: "⚙️ 更多设置",
+            key: '1',
+            label: '⚙️ 更多设置',
             children: (
               <>
                 <div className="slider-label">

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from 'react';
 import {
   askAgentStream,
   askStream,
@@ -7,8 +7,16 @@ import {
   type AnswerMode,
   type AskHandlers,
   type Source,
-} from "../api";
-import type { ChatMessage } from "../components/MessageBubble";
+} from '../api';
+import type { ChatMessage } from '../components/MessageBubble';
+// 打字机节奏与消息收尾的纯逻辑抽在 lib/streaming.ts，可独立单测；
+// 本 hook 只保留定时器、ref 与 setState 的接线。
+import {
+  TICK_MS,
+  applyStreamError,
+  finalizeStreamedMessage,
+  takeTypewriterBatch,
+} from '../lib/streaming';
 
 /**
  * useChatStream —— 聊天问答的全部状态与副作用（从 App.tsx 抽出，逻辑零变更）。
@@ -27,22 +35,12 @@ import type { ChatMessage } from "../components/MessageBubble";
  * 写进最后一条消息。因此不单独拆第三个 hook，在此说明。
  */
 
-// 打字机节奏：每 TICK_MS 吐一批字符。
-// 后端返回粒度不一致（Ollama 逐 token，GLM 常常一两个大 chunk 就是全文），
-// 所以统一在前端排队按字输出，视觉上才是匀速打字。
-// 用 ~33ms（≈30fps）而非 16ms：打字机不需要 60fps，帧率减半就把重渲染次数砍掉一半，
-// 明显降低长回答时的卡顿。
-const TICK_MS = 33;
-// 每次至少吐 2 个字；积压越多吐越快，避免生成快时字幕越落越远
-const MIN_CHARS_PER_TICK = 2;
-const CATCH_UP_TICKS = 42; // 目标：约 42 帧（≈1.4s）内清空当前积压
-
 // 离底部超过这个距离（px）就认为用户"翻到别处去了"，显示回到底部的浮动按钮
 const JUMP_THRESHOLD = 200;
 
 // 会话 ID 存在 localStorage：刷新页面后还能拿同一个 ID 把历史捞回来。
 // 用 sessionStorage 会在关标签页时丢失，用 localStorage 更符合"我的阅读记录"的预期。
-const SESSION_KEY = "novel-rag-session-id";
+const SESSION_KEY = 'novel-rag-session-id';
 
 function getOrCreateSessionId(): string {
   try {
@@ -63,12 +61,12 @@ export interface UseChatStreamOptions {
   /** 回答模式：auto / grounded / free */
   answerMode: AnswerMode;
   /** 工作模式：标准 RAG 或 Agent Lab（决定走哪个流式端点） */
-  workspaceMode: "rag" | "agent";
+  workspaceMode: 'rag' | 'agent';
 }
 
 export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStreamOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   // 是否显示「跳到最近回答」浮动按钮：用户往上翻看历史/出处、离底部较远时出现
@@ -77,7 +75,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
   // 区分"我自己翻上来的"和"下面真有我没看到的东西"
   const [hasNewBelow, setHasNewBelow] = useState(false);
   // 打字机队列：待输出的字符、定时器、以及"后端已推完"的标记
-  const queueRef = useRef("");
+  const queueRef = useRef('');
   const timerRef = useRef<number | null>(null);
   const streamEndedRef = useRef(false);
   // 当前这次生成的中断句柄；Stop 按钮调它的 abort()
@@ -140,17 +138,17 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
       if ((e.touches[0]?.clientY ?? 0) > touchY + 4) pinnedRef.current = false;
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (["PageUp", "ArrowUp", "Home"].includes(e.key)) pinnedRef.current = false;
+      if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) pinnedRef.current = false;
     }
-    el.addEventListener("wheel", unpinIfScrollingUp, { passive: true });
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: true });
-    el.addEventListener("keydown", onKeyDown);
+    el.addEventListener('wheel', unpinIfScrollingUp, { passive: true });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('keydown', onKeyDown);
     return () => {
-      el.removeEventListener("wheel", unpinIfScrollingUp);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("keydown", onKeyDown);
+      el.removeEventListener('wheel', unpinIfScrollingUp);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('keydown', onKeyDown);
     };
   }, []);
 
@@ -170,8 +168,8 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
         setHasNewBelow(false);
       }
     }
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
   // 内容更新但用户没在底部时，标记"下面有新回复"。
@@ -198,7 +196,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
     // 生成中内容每帧都在变长，smooth 平滑滚动追不上增长速度，
     // 用户点了却到不了底、按钮一直亮着反而更烦。所以生成期间直接跳到底，
     // 到位之后由"贴底就自动跟随"的逻辑接管；空闲时才用平滑滚动。
-    el.scrollTo({ top: el.scrollHeight, behavior: busy ? "auto" : "smooth" });
+    el.scrollTo({ top: el.scrollHeight, behavior: busy ? 'auto' : 'smooth' });
     // 点这个按钮就是"我要回去看最新的"，重新粘住跟随
     pinnedRef.current = true;
     // 点了就算已读；不等滚动动画结束再清，避免按钮在滑动过程中还闪着"有新回复"
@@ -226,8 +224,8 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
           agentSteps: t.agent_steps ?? undefined,
           // 历史消息一定不在流式中；被中断的那轮标出来，让用户知道内容不完整
           streaming: false,
-          interrupted: t.status === "interrupted",
-        }))
+          interrupted: t.status === 'interrupted',
+        })),
       );
     } catch {
       // 忽略：当作没有历史
@@ -260,18 +258,13 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
   function finishTyping() {
     stopTyping();
     const rest = queueRef.current;
-    queueRef.current = "";
+    queueRef.current = '';
     // 用户点过停止就标记为已中断——内容不完整，界面上要如实告知。
     // 注意：abort 后 reader.read() 可能直接返回 done 而不抛异常，
     // 于是走的是正常结束路径（onDone → finishTyping）而不是 onError，
     // 所以中断标记必须在这里也处理，不能只放在 onError 里。
     const stopped = userStoppedRef.current;
-    patchLast((m) => ({
-      ...m,
-      content: m.content + rest,
-      streaming: false,
-      interrupted: stopped || m.interrupted,
-    }));
+    patchLast((m) => finalizeStreamedMessage(m, rest, stopped));
     setBusy(false);
   }
 
@@ -284,12 +277,9 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
         if (streamEndedRef.current) finishTyping();
         return;
       }
-      const n = Math.max(
-        MIN_CHARS_PER_TICK,
-        Math.ceil(pending.length / CATCH_UP_TICKS)
-      );
-      queueRef.current = pending.slice(n);
-      patchLast((m) => ({ ...m, content: m.content + pending.slice(0, n) }));
+      const { emit, rest } = takeTypewriterBatch(pending);
+      queueRef.current = rest;
+      patchLast((m) => ({ ...m, content: m.content + emit }));
     }, TICK_MS);
   }
 
@@ -308,18 +298,18 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
 
   async function ask(question: string) {
     if (busy || !question.trim()) return;
-    setInput("");
+    setInput('');
     // 注意：这里**不**强制恢复跟随。发问时如果人正翻在历史上面（gap 很大），
     // 新回答应该像任何"下面来了新内容"一样走「有新回复」提示，而不是把人
     // 直接拽回底部——那样反而打断了他正在看的东西。跟随与否仍然只由
     // 用户自己的滚动动作决定（见下面的 wheel/touch/keydown 监听）。
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: question },
-      { role: "assistant", content: "", streaming: true },
+      { role: 'user', content: question },
+      { role: 'assistant', content: '', streaming: true },
     ]);
     setBusy(true);
-    queueRef.current = "";
+    queueRef.current = '';
     streamEndedRef.current = false;
     userStoppedRef.current = false;
     const controller = new AbortController();
@@ -328,8 +318,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
 
     const handlers: AskHandlers = {
       // 检索每完成一步就追加一条，思考过程逐条点亮（不是等 2 秒后一次性弹出）
-      onStep: (s) =>
-        patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
+      onStep: (s) => patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
       onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
       onAgentStep: (step: AgentStep) =>
         patchLast((m) => ({
@@ -346,27 +335,19 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
         streamEndedRef.current = true; // 队列吐完后由定时器收尾
       },
       onError: (e) => {
-          // 不再慢慢打了，把已收到的内容一次补齐
-          streamEndedRef.current = true;
-          stopTyping();
-          const rest = queueRef.current;
-          queueRef.current = "";
-          // 用户主动停止不是错误：保留已生成的内容、标记为已中断，不显示报错文案。
-          // 只有真的失败（网络、后端 5xx）才显示 ⚠️。
-          const stopped = userStoppedRef.current || e.name === "AbortError";
-          patchLast((m) => {
-            const content = m.content + rest;
-            return {
-              ...m,
-              streaming: false,
-              interrupted: stopped,
-              content: stopped ? content : content || `⚠️ ${e.message}`,
-            };
-          });
-          setBusy(false);
+        // 不再慢慢打了，把已收到的内容一次补齐
+        streamEndedRef.current = true;
+        stopTyping();
+        const rest = queueRef.current;
+        queueRef.current = '';
+        // 用户主动停止不是错误：保留已生成的内容、标记为已中断，不显示报错文案。
+        // 只有真的失败（网络、后端 5xx）才显示 ⚠️。
+        const stopped = userStoppedRef.current || e.name === 'AbortError';
+        patchLast((m) => applyStreamError(m, rest, stopped, e.message));
+        setBusy(false);
       },
     };
-    if (workspaceMode === "agent") {
+    if (workspaceMode === 'agent') {
       await askAgentStream(question, handlers, {
         signal: controller.signal,
         maxSteps: 5,

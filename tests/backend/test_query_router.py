@@ -1,4 +1,5 @@
 """问答路由回归测试：全部是纯规则，不加载模型或数据库。"""
+
 import pytest
 
 from query_router import AnswerMode, build_free_prompt, choose_answer_route
@@ -24,13 +25,9 @@ def test_auto_route(question, expected):
 
 def test_explicit_modes_override_auto_rules():
     assert (
-        choose_answer_route("什么是 RAG？", AnswerMode.grounded).route
-        is AnswerMode.grounded
+        choose_answer_route("什么是 RAG？", AnswerMode.grounded).route is AnswerMode.grounded
     )
-    assert (
-        choose_answer_route("韩立的师父是谁？", AnswerMode.free).route
-        is AnswerMode.free
-    )
+    assert choose_answer_route("韩立的师父是谁？", AnswerMode.free).route is AnswerMode.free
 
 
 def test_explicit_no_search_wins_in_auto_mode():

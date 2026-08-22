@@ -10,12 +10,13 @@
 执行路径，并给出可展示的 reason。但它还不是完整 Agent，因为没有工具循环、状态图
 或自主规划。先把这种确定性路由理解清楚，再升级到 LangGraph 条件边会更直观。
 """
+
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class AnswerMode(str, Enum):
+class AnswerMode(StrEnum):
     """用户选择的问答模式；值也是前后端 API 契约的一部分。"""
 
     auto = "auto"

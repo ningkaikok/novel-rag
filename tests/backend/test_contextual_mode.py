@@ -4,6 +4,7 @@ _contextual_decision 是 Contextual Retrieval auto 成本分级的核心：off �
 大书跳过、auto 档要求生成后端可用。这里用 monkeypatch 控制 config 导入值和
 环境变量，不碰真实数据库和模型。
 """
+
 import pytest
 
 import ingest
@@ -20,7 +21,9 @@ def test_off_mode_short_circuits_without_checks(monkeypatch):
     """off 档直接不做，连后端可用性检查都不该发生。"""
     monkeypatch.setattr(ingest, "CONTEXTUAL_MODE", "off")
     monkeypatch.setattr(
-        ingest, "_generation_backend_available", lambda: (_ for _ in ()).throw(AssertionError("不应检查后端"))
+        ingest,
+        "_generation_backend_available",
+        lambda: (_ for _ in ()).throw(AssertionError("不应检查后端")),
     )
     build, reason = _contextual_decision("书", 10)
     assert build is False

@@ -2,7 +2,7 @@ import threading
 import time
 from typing import Any
 
-from backend.index_tasks import IndexTaskManager, PostgresTaskStore, TaskAlreadyRunning
+from backend.index_tasks import IndexTaskManager, TaskAlreadyRunning
 
 
 class FakeStore:
@@ -175,6 +175,7 @@ def test_set_store_marks_stale_active_tasks_interrupted():
 
 def test_store_failure_never_breaks_tasks():
     """落库抛异常只允许记警告，任务的运行与结果必须不受影响。"""
+
     class BrokenStore(FakeStore):
         def save(self, snapshot):
             raise RuntimeError("数据库不可用")

@@ -49,6 +49,7 @@
 运行：uvicorn backend.main:app --reload --port 8000
 （在项目根目录 novel-rag/ 下运行）
 """
+
 import json
 import sys
 import uuid
@@ -77,15 +78,17 @@ from backend.logging_config import configure_logging, get_logger  # noqa: E402
 configure_logging()
 logger = get_logger("main")
 
+import ingest  # noqa: E402
+from agent_lab import run_agent  # noqa: E402
 from backend import claude_cli, zhipu  # noqa: E402
 from backend.errors import APIError, ErrorCode, register_exception_handlers  # noqa: E402
-from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.index_tasks import (  # noqa: E402
     IndexTaskManager,
     PostgresTaskStore,
     TaskAlreadyRunning,
     TaskNotFound,
 )
+from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AgentAskRequest,
     AgentStep,
@@ -101,11 +104,9 @@ from backend.schemas import (  # noqa: E402
     SessionHistory,
     SetModelRequest,
     SourceItem,
-    StoredTurn,
     TraceStep,
     UploadResult,
 )
-import ingest  # noqa: E402
 from config import (  # noqa: E402
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
@@ -118,14 +119,7 @@ from config import (  # noqa: E402
     RERANK_ENABLED,
     RERANKER_MODEL,
 )
-from query_rewriter import rewrite_query  # noqa: E402
-from agent_lab import run_agent  # noqa: E402
-from rag import (  # noqa: E402
-    PROMPT_TEMPLATE_VERSION,
-    NovelRAG,
-    generate_ollama_prompt_stream,
-)
-from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
+from embedder import load_embedder  # noqa: E402
 from postgres import (  # noqa: E402
     close_pool,
     connect,
@@ -138,7 +132,13 @@ from postgres import (  # noqa: E402
     next_turn_index,
     save_turn,
 )
-from embedder import load_embedder  # noqa: E402
+from query_rewriter import rewrite_query  # noqa: E402
+from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
+from rag import (  # noqa: E402
+    PROMPT_TEMPLATE_VERSION,
+    NovelRAG,
+    generate_ollama_prompt_stream,
+)
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
@@ -150,9 +150,7 @@ async def lifespan(app: FastAPI):
     # 只打变量名不打值：既能确认密钥已加载，又不会把密钥写进日志
     if _ENV_KEYS:
         logger.info(f"已从 .env 加载：{', '.join(_ENV_KEYS)}")
-    logger.info(
-        f"云端可选模型：{claude_cli.claude_model_options() + zhipu.model_options()}"
-    )
+    logger.info(f"云端可选模型：{claude_cli.claude_model_options() + zhipu.model_options()}")
     # 连接池要在其他任何用到 connect() 的操作之前建好，这样 ensure_chat_schema、
     # 后面每次请求的检索/会话持久化都能直接复用池子里的连接，不用逐次握手。
     try:
@@ -203,8 +201,8 @@ def _try_load_rag() -> NovelRAG | None:
     # QUERY_EXPAND_MODEL 前缀路由注入（和上面 _rewrite_for_search 的路由
     # 是同一个模式）。开关默认关闭，关闭时这里什么都不挂、零开销。
     if QUERY_EXPAND_ENABLED:
-        service.expand_generate_fn = (
-            lambda prompt: zhipu.generate_stream(prompt, QUERY_EXPAND_MODEL)
+        service.expand_generate_fn = lambda prompt: (
+            zhipu.generate_stream(prompt, QUERY_EXPAND_MODEL)
             if QUERY_EXPAND_MODEL.startswith(zhipu.MODEL_PREFIX)
             else claude_cli.generate_stream(prompt, QUERY_EXPAND_MODEL)
         )
@@ -320,9 +318,7 @@ def _start_index_task(
         return result
 
     try:
-        return index_tasks.start(
-            build, force=force, retry_of=retry_of, prepare=prepare
-        )
+        return index_tasks.start(build, force=force, retry_of=retry_of, prepare=prepare)
     except TaskAlreadyRunning as exc:
         raise APIError(
             409,
@@ -380,7 +376,9 @@ def search(
         return SearchResult(query=q, total=0, results=[])
 
     if not has_index():
-        raise APIError(409, ErrorCode.index_not_ready, "PostgreSQL 索引未建立，请先重新整理书架")
+        raise APIError(
+            409, ErrorCode.index_not_ready, "PostgreSQL 索引未建立，请先重新整理书架"
+        )
 
     if book:
         where_sql = "novel = %s AND position(lower(%s) in lower(text)) > 0"
@@ -440,9 +438,11 @@ def _rewrite_for_search(req: AskRequest) -> str:
     rewritten = rewrite_query(
         req.question,
         turns,
-        lambda prompt: zhipu.generate_stream(prompt, QUERY_REWRITE_MODEL)
-        if QUERY_REWRITE_MODEL.startswith(zhipu.MODEL_PREFIX)
-        else claude_cli.generate_stream(prompt, QUERY_REWRITE_MODEL),
+        lambda prompt: (
+            zhipu.generate_stream(prompt, QUERY_REWRITE_MODEL)
+            if QUERY_REWRITE_MODEL.startswith(zhipu.MODEL_PREFIX)
+            else claude_cli.generate_stream(prompt, QUERY_REWRITE_MODEL)
+        ),
         errors,
     )
     for reason in errors:
@@ -518,9 +518,7 @@ async def ask(req: AskRequest, request: Request):
     # 用户原始问题（见下面 save_turn 用的是 req.question）。
     # 自由问答不检索，所以也没必要额外花一次模型调用做“面向检索”的问题改写。
     search_question = (
-        _rewrite_for_search(req)
-        if decision.route is AnswerMode.grounded
-        else req.question
+        _rewrite_for_search(req) if decision.route is AnswerMode.grounded else req.question
     )
 
     model = state["model"]
@@ -683,8 +681,8 @@ async def ask(req: AskRequest, request: Request):
             if interrupted:
                 token_iter.close()
             if session_id and assistant_index is not None:
-                final_status = "interrupted" if interrupted else (
-                    "error" if error else "complete"
+                final_status = (
+                    "interrupted" if interrupted else ("error" if error else "complete")
                 )
                 try:
                     save_turn(
@@ -833,11 +831,7 @@ def _list_ollama_models() -> list[str]:
 
 def _available_models() -> list[str]:
     """本地 Ollama 已安装的 + 装了 claude CLI 时的 Claude 订阅 + 配了 ZHIPU_API_KEY 时的 GLM。"""
-    return (
-        _list_ollama_models()
-        + claude_cli.claude_model_options()
-        + zhipu.model_options()
-    )
+    return _list_ollama_models() + claude_cli.claude_model_options() + zhipu.model_options()
 
 
 @app.get("/api/models", response_model=ModelList)

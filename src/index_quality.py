@@ -7,6 +7,7 @@ M3.3 的关键原则是：质量检查必须针对真正交给 embedding 模型�
 
 这里不连接数据库，也不依赖 FastAPI，方便初学者单独运行、测试和扩展评测规则。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -14,7 +15,6 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
-
 
 QUALITY_GATE_VERSION = 1
 
@@ -142,16 +142,18 @@ def _token_count(model: Any, text: str) -> int | None:
         return None
 
 
-def analyze_embedding_inputs(
-    model: Any, texts: list[str], *, kind: str
-) -> dict[str, Any]:
+def analyze_embedding_inputs(model: Any, texts: list[str], *, kind: str) -> dict[str, Any]:
     """分析一批最终 embedding 输入，返回 token 分布和超长信息。"""
     metadata = embedding_model_metadata(model)
     counts = [_token_count(model, text) for text in texts]
     available_counts = [count for count in counts if count is not None]
     limit = metadata["max_seq_length"]
     overflow = (
-        [index for index, count in enumerate(counts) if count is not None and limit and count > limit]
+        [
+            index
+            for index, count in enumerate(counts)
+            if count is not None and limit and count > limit
+        ]
         if limit
         else []
     )
@@ -254,12 +256,13 @@ def chunk_statistics(chunks: list[Any]) -> tuple[dict[str, Any], list[str]]:
     char_lengths = [len(text) for text in texts]
     replacement_char_count = sum(text.count("�") for text in texts)
     control_char_count = sum(
-        sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
-        for text in texts
+        sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t") for text in texts
     )
     warnings: list[str] = []
     if duplicate_count:
-        warnings.append(f"发现 {duplicate_count} 个精确重复片段（请结合 overlap 判断是否合理）")
+        warnings.append(
+            f"发现 {duplicate_count} 个精确重复片段（请结合 overlap 判断是否合理）"
+        )
     if texts and chapter_count == 0:
         warnings.append("没有识别到章节标题；已使用无标题片段窗口，不视为硬错误")
     if replacement_char_count:
@@ -311,9 +314,7 @@ def make_quality_report(
                 f"{info['max_seq_length']}"
             )
     if source.get("fallback"):
-        warnings.append(
-            "源文件未能用 UTF-8/GB18030 严格解码，已使用忽略错误字节的兜底路径"
-        )
+        warnings.append("源文件未能用 UTF-8/GB18030 严格解码，已使用忽略错误字节的兜底路径")
     return QualityReport(
         novel=novel,
         source_hash=source_hash,
@@ -331,4 +332,7 @@ def assert_quality_report(report: QualityReport | dict[str, Any]) -> None:
     errors = report.errors if isinstance(report, QualityReport) else report.get("errors", [])
     if errors:
         novel = report.novel if isinstance(report, QualityReport) else report.get("novel", "")
-        raise IndexQualityError(f"《{novel}》索引质量门禁失败：" + "；".join(errors), report.as_dict() if isinstance(report, QualityReport) else report)
+        raise IndexQualityError(
+            f"《{novel}》索引质量门禁失败：" + "；".join(errors),
+            report.as_dict() if isinstance(report, QualityReport) else report,
+        )

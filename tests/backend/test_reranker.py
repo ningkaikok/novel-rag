@@ -3,6 +3,7 @@
 不加载真实的交叉编码器模型（1.1GB，CI 里也没有），用假模型验证调度逻辑：
 输入怎么组装成「问题-文档」对、分数怎么排序、top_k 怎么截断。
 """
+
 from dataclasses import dataclass
 
 from reranker import rerank

@@ -2,6 +2,7 @@
 
 全部纯函数测试，不碰数据库或模型。
 """
+
 import json
 
 from citation_eval import (
@@ -30,11 +31,7 @@ def test_meta_and_greeting_sentences_are_exempted():
     后半句带事实和引用也会被豁免），这是可接受的近似——评测统计宁可少算
     一句事实，也不把客套话当成缺引用的事实陈述。
     """
-    answer = (
-        "顾长风中了蚀骨散[1]。"
-        "根据提供的片段无法确定具体年份。"
-        "希望对你有帮助！"
-    )
+    answer = "顾长风中了蚀骨散[1]。根据提供的片段无法确定具体年份。希望对你有帮助！"
     metrics = evaluate_completeness(answer)
     # 三句里只有第一句是事实陈述（且带引用）
     assert metrics["statement_count"] == 3

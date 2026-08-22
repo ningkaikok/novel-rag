@@ -14,7 +14,13 @@
 数据类与候选 trace 记录在 ``chunk_model``；检索/生成/流水线编排见各 Mixin 与
 ``rag`` 模块头部的说明。
 """
+
 import re
+from typing import TYPE_CHECKING
+
+# 仅类型注解引用（运行时是字符串不会被求值）；避免 novel_match ↔ chunk_model 循环导入
+if TYPE_CHECKING:
+    from chunk_model import SourceChunk
 
 
 def _novel_titles(novel: str) -> list[str]:

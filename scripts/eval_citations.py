@@ -7,6 +7,7 @@
 新结果由 ``tests/run_qa_tests.py`` 直接写入 citation_metrics；旧结果没有该字段时，
 本脚本会基于保存的 80 字来源摘录重新计算，因此覆盖率可能偏低，但编号合法率准确。
 """
+
 import argparse
 import json
 import sys
@@ -28,8 +29,10 @@ def main() -> int:
     for item in payload.get("results", []):
         metrics = item.get("citation_metrics")
         if metrics is None:
-            keywords = ((item.get("retrieval") or {}).get("expect_keywords") or [])
-            metrics = evaluate_citations(item.get("answer", ""), item.get("sources", []), keywords)
+            keywords = (item.get("retrieval") or {}).get("expect_keywords") or []
+            metrics = evaluate_citations(
+                item.get("answer", ""), item.get("sources", []), keywords
+            )
         rows.append((item.get("id", "?"), metrics))
 
     if not rows:
@@ -56,8 +59,7 @@ def main() -> int:
     problems = [
         (case_id, metrics)
         for case_id, metrics in rows
-        if metrics["invalid_citation_numbers"]
-        or metrics["expected_evidence_coverage"] == 0
+        if metrics["invalid_citation_numbers"] or metrics["expected_evidence_coverage"] == 0
     ]
     if problems:
         print("\n需要复核：")
