@@ -105,6 +105,7 @@ from backend.schemas import (  # noqa: E402
 )
 import ingest  # noqa: E402
 from config import (  # noqa: E402
+    MAX_UPLOAD_BYTES,
     NOVELS_DIR,
     OLLAMA_HOST,
     OLLAMA_MODEL,
@@ -200,6 +201,26 @@ def list_books():
     return BookList(books=sorted(p.stem for p in NOVELS_DIR.glob("*.txt")))
 
 
+async def _read_limited(f: UploadFile, name: str) -> bytes:
+    """按 1MB 一块流式读取上传文件，超过 MAX_UPLOAD_BYTES 立即中断。
+
+    不用 `await f.read()` 一次读入：那会把整个文件先放进内存，用户误选一个
+    几百 MB 的文件就能打爆进程。分块读让超限在最早的一刻被发现，此时最多
+    只浪费了上限+1MB 的内存。
+    """
+    buf = bytearray()
+    while chunk := await f.read(1024 * 1024):
+        buf.extend(chunk)
+        if len(buf) > MAX_UPLOAD_BYTES:
+            limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+            raise APIError(
+                413,
+                ErrorCode.file_too_large,
+                f"《{name}》超过单文件 {limit_mb}MB 的大小上限，请拆分或转换后再上传",
+            )
+    return bytes(buf)
+
+
 @app.post("/api/books", response_model=UploadResult)
 async def upload_books(files: list[UploadFile]):
     payloads: list[tuple[str, bytes]] = []
@@ -207,7 +228,7 @@ async def upload_books(files: list[UploadFile]):
         name = Path(f.filename or "").name  # 防止路径穿越
         if not name.lower().endswith(".txt"):
             continue
-        payloads.append((name, await f.read()))
+        payloads.append((name, await _read_limited(f, name)))
     if not payloads:
         raise APIError(400, ErrorCode.no_valid_files, "没有有效的 .txt 文件")
 

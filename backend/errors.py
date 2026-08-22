@@ -32,6 +32,7 @@ class ErrorCode(StrEnum):
     """
 
     no_valid_files = "no_valid_files"
+    file_too_large = "file_too_large"
     book_not_found = "book_not_found"
     index_not_ready = "index_not_ready"
     index_task_running = "index_task_running"
