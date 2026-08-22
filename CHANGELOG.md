@@ -3,7 +3,7 @@
 本项目所有值得记录的改动都写在这里。日期为绝对日期（YYYY-MM-DD）。
 分类：`新增` / `修复` / `优化` / `文档`。
 
-## [未发布]
+## [0.6.0] - 2026-08-22
 
 ### 新增
 
@@ -29,7 +29,9 @@
     进入 prompt，受真实 tokenizer 的 token 预算闸门约束，截断方向与范围写入 trace
   - 第一轮实验报告：[docs/experiments/m34-retrieval-matrix.md](docs/experiments/m34-retrieval-matrix.md)——
     chunk300 使 recall@1 从 0.8 降到 0.6；chunk800 被 M3.3 门禁正确拦截；
-    BGE-M3 dense 在小语料无质量收益且成本更高（延迟 ×2.6、存储 ×1.4）
+    BGE-M3 dense 在小语料无质量收益且成本更高（延迟 ×2.6、存储 ×1.4）。
+    大部头验证（《凡人修仙传》全本）：chunk300 结论迁移成立（recall@1 -12.5pp）、
+    BGE-M3 无收益结论强化（索引 ×11、延迟 +47%）；新发现大部头检索已达秒级延迟
 - **夜间检索评测门禁（M3.3.5 收官）**：CI 每晚用仓库自带的原创小语料在临时数据库
   重建索引，跑检索评测并对照基线，核心指标（recall@1/3/5、MRR、路由准确率）回退
   超过容差即标红；`eval_retrieval.py` 新增 `--test-set/--strict/--tolerance` 参数，
