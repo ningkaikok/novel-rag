@@ -81,6 +81,7 @@ from backend.errors import APIError, ErrorCode, register_exception_handlers  # n
 from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.index_tasks import (  # noqa: E402
     IndexTaskManager,
+    PostgresTaskStore,
     TaskAlreadyRunning,
     TaskNotFound,
 )
@@ -120,6 +121,7 @@ from postgres import (  # noqa: E402
     close_pool,
     connect,
     ensure_chat_schema,
+    ensure_index_task_schema,
     ensure_novel_metadata_schema,
     has_index,
     init_pool,
@@ -163,6 +165,16 @@ async def lifespan(app: FastAPI):
         ensure_novel_metadata_schema()
     except Exception as exc:
         logger.warning(f"小说索引元数据升级失败（章节名暂不可用）：{exc}")
+    # 索引任务卡片状态落库（M3.3.5）：重启后侧栏能恢复上一次任务卡片；上次进程
+    # 遗留的 active 任务会被如实标记为 failed（事务已随连接断开回滚，可安全重试）。
+    try:
+        ensure_index_task_schema()
+        interrupted = index_tasks.set_store(PostgresTaskStore())
+        if interrupted:
+            logger.info(f"已把 {interrupted} 个上次遗留的索引任务标记为中断，可重试")
+    except Exception as exc:
+        # 落库不可用只影响"重启恢复卡片"，任务本身照常运行（内存状态足够）
+        logger.warning(f"索引任务状态落库初始化失败（重启后不恢复卡片）：{exc}")
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
