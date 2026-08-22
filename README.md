@@ -71,6 +71,7 @@ novel-rag/
 | [**架构决策：是否需要 LangGraph**](docs/architecture-decisions.md) | 当前请求链路为什么保持显式编排、GraphRAG 和 LangGraph 的区别、什么情况下再引入 | 想学习技术选型 |
 | [**Agent 平台化架构**](docs/agent-platform-architecture.md) | Control/Data Plane、Tool/Model Gateway、安全、状态、Trace、MCP 与生产演进 | 想从 Agent Lab 走向生产设计 |
 | [**项目路线图**](docs/roadmap.md) | 已完成能力、后续里程碑和每阶段验收标准 | 想继续完善项目 |
+| [**检索实验报告**](docs/experiments/m34-retrieval-matrix.md) | chunk 粒度与 embedding 模型对照的实测数据（含大部头验证） | 改检索参数前先看结论 |
 
 另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
 [从项目里提炼的 28 道面试题](docs/interview-questions.md)。
@@ -266,6 +267,7 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `GRAPH_ENABLED` | `0` | 设成 `1` 建人物关系图，让"某某有哪些伴侣/师父"这类问题能查图而不是靠碰运气 |
 | `GRAPH_MAX_CHUNKS_PER_RELATION` | `80` | 成本闸门：每个「书×关系」最多采样多少片段去抽人名 |
 | `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名用的模型（便宜的小模型就够） |
+| `MAX_UPLOAD_BYTES` | `20971520` | 单个上传文件的大小上限（字节），按 1MB 分块流式读取，超限返回 413 |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
 | `DB_POOL_MAX_SIZE` | `10` | PostgreSQL 连接池最大连接数 |
@@ -282,7 +284,7 @@ OLLAMA_MODEL=qwen2.5:3b uvicorn backend.main:app --port 8000
 
 - 仅支持 `.txt` 纯文本，如果是 epub/pdf 需要先自行转换成 txt。
 - 章节识别覆盖常见“第 N 章/卷、序章、番外”等标题；非常规排版仍可能识别不到，此时章节字段为空但片段仍可检索。
-- 后台任务状态保存在当前 FastAPI 进程内存中：刷新网页可以恢复进度，但重启后端后任务卡片会消失。数据库按书事务和哈希清单仍会保留，重新点击同步即可从未完成的书继续。
+- 后台任务状态会落库（`index_task_runs` 表）：刷新网页可以恢复进度，重启后端后侧栏也能恢复上一次任务的最后已知状态；上次进程遗留的进行中任务会被如实标记为 failed 并提示重试。数据库按书事务和哈希清单仍会保留，重新点击同步即可从未完成的书继续。
 - 网页上传没有做用户隔离和内容审核，仅适合本地单人使用；如果要对外提供服务，需要额外加上大小限制、格式校验和按用户隔离存储。
 - **文本编码**：`loader.py` 会依次尝试 UTF-8 → GB18030 解码，覆盖国内小说站常见的两种编码。如果上传后回答明显文不对题（比如问主角是谁答非所问），先检查文件真实编码（`file -I data/novels/xxx.txt`），极少数生僻编码可能仍需手动转码为 UTF-8 后再上传。
 - **小模型幻觉**：`qwen2.5:3b` 参数量较小，即使检索到了正确的原文片段，也可能忽略上下文、凭训练时的记忆编造答案（例如把小说人物错认成其他知名小说的角色）。真实使用建议用 `qwen2.5:7b` 或更大的模型，指令遵循和上下文依据能力明显更强。
