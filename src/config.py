@@ -5,6 +5,11 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 NOVELS_DIR = ROOT_DIR / "data" / "novels"
 
+# 单个上传文件的大小上限（默认 20MB）。上传接口按 1MB 一块流式读取，一旦超过
+# 这个值立即报错中断，避免误选超大文件把整个进程的内存吃光、或让 embedding
+# 阶段拖死后台任务。正常长篇网文 txt 在 5~15MB 之间，20MB 已留足余量。
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 20 * 1024 * 1024))
+
 # PostgreSQL + pgvector。可用 DATABASE_URL 覆盖默认本机连接。
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",

@@ -28,6 +28,22 @@ def test_upload_no_valid_files(client):
     assert error["code"] == ErrorCode.no_valid_files
 
 
+def test_upload_file_too_large(client, monkeypatch):
+    """超过大小上限的上传要返回 413 + file_too_large，而不是把大文件读进内存。
+
+    把上限 patch 成 8 字节，用 9 字节的「书」触发；真实默认值是 20MB，
+    测试里不值得真造一个大文件。
+    """
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 8)
+    files = [("files", ("big.txt", io.BytesIO(b"a" * 9), "text/plain"))]
+    resp = client.post("/api/books", files=files)
+
+    assert resp.status_code == 413
+    error = _error_body(resp)
+    assert error["code"] == ErrorCode.file_too_large
+    assert "big.txt" in error["message"]
+
+
 def test_delete_nonexistent_book(client, tmp_path, monkeypatch):
     monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
 
