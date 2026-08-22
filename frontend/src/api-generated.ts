@@ -84,6 +84,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/graph/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Graph Edges
+         * @description 分页列出人物关系边，供审核面板消费。默认只看 pending（待审核队列）。
+         *
+         *     status 可选 pending/approved/rejected；传 all 列出全部状态。
+         */
+        get: operations["list_graph_edges_api_graph_edges_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review Graph Edge
+         * @description 写入一条关系边的人工审核结论。
+         *
+         *     rejected 的边在所有查询里立即不可见（可见性过滤见 postgres.query_relations）；
+         *     approved 的 co_occurrence 边即使开着「只要明确陈述」的门槛也不会自动进入
+         *     在线结果——门槛过滤的是 evidence_type，审核通过解决的是"这条共现边我看过，
+         *     是真的"。两者语义不同，刻意不混用。
+         */
+        post: operations["review_graph_edge_api_graph_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -338,6 +385,60 @@ export interface components {
             /** Deleted */
             deleted: string;
             task: components["schemas"]["IndexTaskStatus"];
+        };
+        /** GraphEdgeItem */
+        GraphEdgeItem: {
+            /** Confidence */
+            confidence?: number | null;
+            /** Direction */
+            direction?: string | null;
+            /** Evidence Excerpt */
+            evidence_excerpt?: string | null;
+            /** Evidence Type */
+            evidence_type?: string | null;
+            /** Novel */
+            novel: string;
+            /** Person A */
+            person_a: string;
+            /** Person B */
+            person_b: string;
+            /** Relation */
+            relation: string;
+            /** Review Status */
+            review_status: string;
+            /** Source Chunk Ids */
+            source_chunk_ids?: number[];
+            /** Weight */
+            weight: number;
+        };
+        /** GraphEdgeList */
+        GraphEdgeList: {
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeItem"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** GraphReviewRequest */
+        GraphReviewRequest: {
+            /** Novel */
+            novel: string;
+            /** Person A */
+            person_a: string;
+            /** Person B */
+            person_b: string;
+            /** Relation */
+            relation: string;
+            /** Status */
+            status: string;
+        };
+        /** GraphReviewResult */
+        GraphReviewResult: {
+            /** Review Status */
+            review_status: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -699,6 +800,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_graph_edges_api_graph_edges_get: {
+        parameters: {
+            query?: {
+                status?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdgeList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_graph_edge_api_graph_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphReviewResult"];
                 };
             };
             /** @description Validation Error */

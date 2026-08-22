@@ -97,6 +97,10 @@ from backend.schemas import (  # noqa: E402
     BookList,
     CurrentModel,
     DeleteResult,
+    GraphEdgeItem,
+    GraphEdgeList,
+    GraphReviewRequest,
+    GraphReviewResult,
     HealthStatus,
     IndexTaskStatus,
     ModelList,
@@ -123,16 +127,20 @@ from config import (  # noqa: E402
 )
 from embedder import load_embedder  # noqa: E402
 from postgres import (  # noqa: E402
+    VALID_REVIEW_STATUSES,
     close_pool,
     connect,
     ensure_chat_schema,
+    ensure_graph_review_schema,
     ensure_index_task_schema,
     ensure_novel_metadata_schema,
     has_index,
     init_pool,
+    list_relation_edges,
     load_turns,
     next_turn_index,
     save_turn,
+    set_relation_review,
 )
 from query_rewriter import rewrite_query  # noqa: E402
 from query_router import AnswerMode, build_free_prompt, choose_answer_route  # noqa: E402
@@ -184,6 +192,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         # 落库不可用只影响"重启恢复卡片"，任务本身照常运行（内存状态足够）
         logger.warning(f"索引任务状态落库初始化失败（重启后不恢复卡片）：{exc}")
+    # 人物关系图 schema v2（M4）：审核界面依赖的两张表在这里幂等升级，
+    # 让用户不必先重建一次索引就能打开关系审核面板。
+    try:
+        ensure_graph_review_schema()
+    except Exception as exc:
+        logger.warning(f"人物关系图 schema 升级失败（关系审核不可用）：{exc}")
     # 启动时加载一次 embedding 模型，并尝试连接 PostgreSQL 索引
     state["embedder"] = load_embedder()
     state["rag"] = _try_load_rag()
@@ -822,6 +836,64 @@ def get_session(session_id: str):
     # 报 500 并带清晰原因，而不是等 response_model 序列化时才炸。
     turns = [StoredTurn.model_validate(row) for row in rows]
     return SessionHistory(session_id=session_id, turns=turns)
+
+
+# ----------------------------------------------------------------- 关系边审核（M4）
+@app.get("/api/graph/edges", response_model=GraphEdgeList)
+def list_graph_edges(
+    status: str = Query(default="pending"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """分页列出人物关系边，供审核面板消费。默认只看 pending（待审核队列）。
+
+    status 可选 pending/approved/rejected；传 all 列出全部状态。
+    """
+    if status != "all" and status not in VALID_REVIEW_STATUSES:
+        raise APIError(400, ErrorCode.validation_error, f"未知的审核状态：{status}")
+    try:
+        edges, total = list_relation_edges(
+            status=None if status == "all" else status, limit=limit, offset=offset
+        )
+    except Exception as exc:
+        raise APIError(500, ErrorCode.internal_error, f"读取关系边失败：{exc}") from exc
+    # dict 行显式过一遍 Pydantic：字段缺失/类型漂移在这里报错，而不是序列化时
+    return GraphEdgeList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        edges=[GraphEdgeItem.model_validate(edge) for edge in edges],
+    )
+
+
+@app.post("/api/graph/review", response_model=GraphReviewResult)
+def review_graph_edge(req: GraphReviewRequest):
+    """写入一条关系边的人工审核结论。
+
+    rejected 的边在所有查询里立即不可见（可见性过滤见 postgres.query_relations）；
+    approved 的 co_occurrence 边即使开着「只要明确陈述」的门槛也不会自动进入
+    在线结果——门槛过滤的是 evidence_type，审核通过解决的是"这条共现边我看过，
+    是真的"。两者语义不同，刻意不混用。
+    """
+    if req.status not in {"approved", "rejected"}:
+        raise APIError(
+            400,
+            ErrorCode.validation_error,
+            "审核动作只能是 approved（通过）或 rejected（拒绝）",
+        )
+    try:
+        updated = set_relation_review(
+            req.novel,
+            req.person_a,
+            req.person_b,
+            req.relation,
+            req.status,
+        )
+    except Exception as exc:
+        raise APIError(500, ErrorCode.internal_error, f"写入审核结论失败：{exc}") from exc
+    if updated == 0:
+        raise APIError(404, ErrorCode.book_not_found, "关系边不存在（可能已被重建索引刷新）")
+    return GraphReviewResult(review_status=req.status)
 
 
 # ----------------------------------------------------------------- 模型切换

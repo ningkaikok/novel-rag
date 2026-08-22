@@ -105,11 +105,14 @@ class GenerationMixin:
         if not relation:
             return ""
         try:
-            # 问题里提到的人物名——从图里已有的人物名反查，避免再做一次分词
+            # 问题里提到的人物名——从图里已有的人物名反查，避免再做一次分词。
+            # 已被人工拒绝的边不参与（M4 审核结论优先于一切自动判断）
             with connect() as conn:
                 rows = conn.execute(
                     "SELECT DISTINCT person_a AS name FROM character_relations "
-                    "UNION SELECT DISTINCT person_b FROM character_relations"
+                    "WHERE COALESCE(review_status, 'pending') <> 'rejected' "
+                    "UNION SELECT DISTINCT person_b FROM character_relations "
+                    "WHERE COALESCE(review_status, 'pending') <> 'rejected'"
                 ).fetchall()
             subjects = [r["name"] for r in rows if r["name"] in question]
             if not subjects:

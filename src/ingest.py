@@ -68,9 +68,10 @@ from contextualizer import (
 from embedder import load_embedder
 from graph import (
     RELATION_KEYWORDS,
-    build_edges,
+    build_edge_records,
     chunks_with_relation,
     extract_characters_from_chunks,
+    extract_relations_llm,
 )
 from hierarchy import build_hierarchy_nodes, hierarchy_pipeline_hash
 from index_quality import (
@@ -256,12 +257,13 @@ def _make_generate_fn(model: str = CONTEXTUAL_MODEL):
     raise RuntimeError(f"{model} 不是支持的模型前缀（需要 glm: 或 claude:）")
 
 
-def _generation_backend_available() -> bool:
-    """检查上下文增强的生成后端当前是否真的可用（auto 档的最后一道闸门）。
+def _generation_backend_available(model: str = CONTEXTUAL_MODEL) -> bool:
+    """检查生成后端当前是否真的可用（auto 档与图抽取共用的最后一道闸门）。
 
     踩过的坑：451 个片段生成"全部失败"却只有一句日志，根因是独立跑 ingest
     时没有加载 ZHIPU_API_KEY。与其让 auto 档在每次同步时都制造一页失败记录，
     不如先花几毫秒确认后端存在——glm: 前缀看 key，其他模型名当作 claude CLI。
+    M4 起关系抽取也用它做前置检查，model 参数决定看哪个后端。
     """
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -270,7 +272,7 @@ def _generation_backend_available() -> bool:
     load_env(ROOT / ".env")  # 与 _make_generate_fn 同一套加载顺序，保证判断一致
     import os
 
-    if CONTEXTUAL_MODEL.startswith("glm:"):
+    if model.startswith("glm:"):
         return bool(os.environ.get("ZHIPU_API_KEY"))
     # 其余模型名走 claude --print 子进程
     import shutil
@@ -650,7 +652,7 @@ def build_index(
                     f"《{novel}》BM25 分词 {index}/{len(indexed_texts)}",
                 )
 
-        relations: list[tuple[str, str, str, str, int]] = []
+        relations: list[dict] = []
         if GRAPH_ENABLED:
             check()
             book_progress("graph", 85, f"正在更新《{novel}》的人物关系图")
@@ -750,13 +752,18 @@ def build_index(
     }
 
 
-def _build_relation_edges(chunks: list) -> list[tuple[str, str, str, str, int]]:
-    """按 (书, 关系类型) 抽人物关系边，在原子写入前返回全部边。
+def _build_relation_edges(chunks: list) -> list[dict]:
+    """按 (书, 关系类型) 抽人物关系边，在原子写入前返回全部边记录。
 
     **只从「含关系词的片段」里抽人名**，这是整个设计的关键（详见 graph.py
     的模块 docstring）：关系本来就只存在于这些片段里，从全书均匀采样既贵
     又抽不到关键角色——实测均匀采样 60 段（占全书 0.3%）时，南宫婉这样的
     主要角色根本抽不到。
+
+    M4 抽取升级：生成后端可用时用 LLM 逐对判断「明确关系陈述还是仅同段共现」
+    （extract_relations_llm），产出带方向/置信度/来源定位的边记录；后端不可用
+    或解析失败时**自动降级**为纯共现统计（build_edge_records）——降级不是错误，
+    但每条边都会如实标上 co_occurrence 和低置信度，供门槛过滤和人工审核。
 
     成本闸门：每个 (书, 关系) 最多采样 GRAPH_MAX_CHUNKS_PER_RELATION 个片段。
     「师父」这类词能命中上千个片段，不设上限会让建图和全库抽取一样贵。
@@ -768,9 +775,11 @@ def _build_relation_edges(chunks: list) -> list[tuple[str, str, str, str, int]]:
     for chunk in chunks:
         by_novel.setdefault(chunk.novel, []).append(chunk)
 
-    all_edges: list[tuple] = []
+    all_edges: list[dict] = []
     errors: list[str] = []
     reused = 0
+    llm_groups = 0
+    backend_warned = False
     for novel, novel_chunks in by_novel.items():
         for relation in RELATION_KEYWORDS:
             matched = chunks_with_relation(novel_chunks, relation)
@@ -786,36 +795,96 @@ def _build_relation_edges(chunks: list) -> list[tuple[str, str, str, str, int]]:
             # 会重抽——那是对的，内容确实变了。
             sample_hash = text_hash("\n".join(c.text for c in matched))
             cached = load_cached_graph_characters(novel, relation, sample_hash)
+            characters: set[str] = set()
+            llm_relations: list[dict] | None = None
             if cached is not None:
-                characters = set(cached)
+                characters = set(cached["names"])
+                llm_relations = cached["relations"]
                 reused += 1
-            else:
+
+            # LLM 关系抽取：缓存里没有结果（新采样 / 老版本缓存 / 上次失败）
+            # 且生成后端真的可用时才调模型。注意"后端可用性"要按 GRAPH_MODEL
+            # 判断而不是 CONTEXTUAL_MODEL——两者可能配了不同厂商。
+            if llm_relations is None and _generation_backend_available(GRAPH_MODEL):
                 if generate_fn is None:
                     generate_fn = _make_generate_fn(GRAPH_MODEL)
-                name_hits = extract_characters_from_chunks(matched, generate_fn, errors=errors)
-                characters = {
-                    n for n, hits in name_hits.items() if hits >= GRAPH_MIN_NAME_HITS
-                }
-                save_graph_characters(novel, relation, sample_hash, sorted(characters))
-            if len(characters) < 2:
+                if not characters:
+                    # 人名也没缓存过才抽人名；已有名单就直接进入关系判断
+                    name_hits = extract_characters_from_chunks(
+                        matched, generate_fn, errors=errors
+                    )
+                    characters = {
+                        n for n, hits in name_hits.items() if hits >= GRAPH_MIN_NAME_HITS
+                    }
+                llm_relations = (
+                    extract_relations_llm(
+                        matched, characters, relation, generate_fn, errors=errors
+                    )
+                    if len(characters) >= 2
+                    else None
+                )
+                if llm_relations is not None:
+                    llm_groups += 1
+                # 人名无论如何都值得缓存（下次省一轮调用）；关系结果只在成功时
+                # 缓存——失败（None）保持 NULL，下次同步自动重试，不会把"网络
+                # 抖动"固化成"模型确认过没有关系"
+                save_graph_characters(
+                    novel, relation, sample_hash, sorted(characters), llm_relations
+                )
+
+            # —— 三种产出来源统一收口 ——
+            if llm_relations is not None:
+                edges: list[dict] = llm_relations
+            elif len(characters) >= 2:
+                # 无后端或抽取失败：纯共现推断顶上。低置信度 + 待审核，
+                # 在 GRAPH_REQUIRE_EXPLICIT 开启时不会进入在线结果，
+                # 但保留在库里供人工审核——降级不等于丢弃
+                edges = build_edge_records(matched, characters, relation)
+            else:
+                if not backend_warned:
+                    print(
+                        "  未检测到可用的生成后端（GRAPH_MODEL），"
+                        "人物关系只做共现推断；配置 ZHIPU_API_KEY 或 claude CLI 后重建可升级"
+                    )
+                    backend_warned = True
                 continue
-            edges = build_edges(matched, characters, relation)
+
             all_edges.extend(edges)
+            kind = "LLM 抽取" if llm_relations is not None else "共现推断"
             print(
                 f"  《{novel[:12]}》{relation}：{len(matched)} 段 → "
-                f"{len(characters)} 个人物 → {len(edges)} 条边"
+                f"{len(characters)} 个人物 → {len(edges)} 条边（{kind}）"
             )
 
     if reused:
         print(f"  {reused} 组「书×关系」直接复用了缓存，没有重复调用 LLM")
+    if llm_groups:
+        print(f"  其中 {llm_groups} 组完成了 LLM 关系抽取（含方向/置信度/来源片段）")
     if errors:
         # 降级不能吞掉原因（Contextual Retrieval 那边踩过这个坑）
         distinct = sorted(set(errors))
-        print(f"  {len(errors)} 批抽取失败（已跳过，不影响其余部分）")
+        print(f"  {len(errors)} 批抽取失败（已跳过或降级，不影响其余部分）")
         for reason in distinct[:2]:
             print(f"    失败原因：{reason[:110]}")
 
-    return all_edges
+    return _merge_all_edges(all_edges)
+
+
+def _merge_all_edges(edges: list[dict]) -> list[dict]:
+    """跨 (书, 关系) 合并重复边记录。
+
+    正常流程下每个 (书, 关系) 只产出一批边，键不会重复；这里兜底防御
+    未来调用方式变化导致的意外重复——撞主键的事务级错误宁可在这里消化。
+    """
+    seen: set[tuple] = set()
+    unique = []
+    for edge in edges:
+        key = (edge["novel"], edge["person_a"], edge["person_b"], edge["relation"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(edge)
+    return unique
 
 
 if __name__ == "__main__":

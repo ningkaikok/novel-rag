@@ -293,6 +293,43 @@ export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
   return (await res.json()).turns ?? [];
 }
 
+// ── 人物关系审核（M4 质量闭环）──────────────────────────────────────────────
+// 关系边 = 建图时抽出的人物对（含证据类型/置信度/来源定位），共现推断必然
+// 产生假边，所以每条边都要经过人工通过/拒绝。这里的两个接口就是审核面板的
+// 数据入口；被拒绝的边在后端所有查询里立即不可见。
+
+/** 一条待审核的人物关系边（生成物里的名字是 GraphEdgeItem）。 */
+export type GraphEdge = Schemas['GraphEdgeItem'];
+
+/** 审核动作：通过（approved）或拒绝（rejected）。 */
+export type ReviewAction = 'approved' | 'rejected';
+
+/** 分页拉取关系边。status 缺省 pending（待审核队列），'all' 列全部状态。 */
+export async function listGraphEdges(
+  status: 'pending' | 'approved' | 'rejected' | 'all' = 'pending',
+  limit = 20,
+  offset = 0,
+): Promise<Schemas['GraphEdgeList']> {
+  const params = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
+  const res = await fetch(`/api/graph/edges?${params.toString()}`);
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '读取关系边失败'));
+  return await res.json();
+}
+
+/** 写入一条边的人工审核结论。返回后端的最终状态。 */
+export async function reviewGraphEdge(
+  edge: Pick<GraphEdge, 'novel' | 'person_a' | 'person_b' | 'relation'>,
+  action: ReviewAction,
+): Promise<Schemas['GraphReviewResult']> {
+  const res = await fetch('/api/graph/review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...edge, status: action }),
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '写入审核结论失败'));
+  return await res.json();
+}
+
 // 解析单个 SSE 事件块（不含结尾空行）。事件协议是隐式约定的：
 // step → (sources) → token* → 连接关闭，没有显式的 done 事件——
 // 「生成结束」由连接关闭表达，所以 onDone 在 consumeEventStream 返回后才触发。

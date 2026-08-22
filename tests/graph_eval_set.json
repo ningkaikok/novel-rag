@@ -1,0 +1,31 @@
+{
+  "_readme": [
+    "M4 人物关系抽取评测集（全部取自仓库原创语料 tests/ci_corpus/ 两篇短篇，无版权内容）。",
+    "每条 case 标注一对人物在某种关系类型上的真值：positive = 确实存在该关系；negative = 不存在。",
+    "relation 必须是 src/graph.py RELATION_KEYWORDS 支持的类型之一；人名必须与原文完全一致。",
+    "刻意混入『同段大量共现但关系不成立』和『真关系但缺少触发词』两类困难样本——",
+    "前者考验精确率（共现基线的典型假边），后者考验召回率（LLM 抽取的预期收益）。"
+  ],
+  "cast": {
+    "青梧镇异闻": ["沈砚秋", "顾长风", "小顺", "周掌柜", "白先生", "陈伯"],
+    "沙海航灯": ["陆知微", "巴特尔", "小何"]
+  },
+  "cases": [
+    { "id": "qwt-001", "novel": "青梧镇异闻", "a": "沈砚秋", "b": "顾长风", "relation": "师徒", "label": "positive", "note": "明确陈述：手艺是师父顾长风一手带出来的" },
+    { "id": "qwt-002", "novel": "青梧镇异闻", "a": "沈砚秋", "b": "小顺", "relation": "师徒", "label": "positive", "note": "明确陈述：想学手艺可以/手艺过关了；触发词未出现，共现基线抓不到" },
+    { "id": "qwt-003", "novel": "青梧镇异闻", "a": "沈砚秋", "b": "顾长风", "relation": "亲属", "label": "negative", "note": "同段高频共现但只是师徒，不是亲属" },
+    { "id": "qwt-004", "novel": "青梧镇异闻", "a": "小顺", "b": "沈砚秋", "relation": "亲属", "label": "negative", "note": "多段共现；小顺的父亲才是亲属关系的主体" },
+    { "id": "qwt-005", "novel": "青梧镇异闻", "a": "顾长风", "b": "小顺", "relation": "师徒", "label": "negative", "note": "两人从未同时出场" },
+    { "id": "qwt-006", "novel": "青梧镇异闻", "a": "沈砚秋", "b": "周掌柜", "relation": "师徒", "label": "negative", "note": "修表客户关系，多段共现但不构成师徒" },
+    { "id": "qwt-007", "novel": "青梧镇异闻", "a": "白先生", "b": "陈伯", "relation": "同伴", "label": "negative", "note": "同为失主被点名，彼此并无交往" },
+    { "id": "qwt-008", "novel": "青梧镇异闻", "a": "周掌柜", "b": "白先生", "relation": "同伴", "label": "negative", "note": "同段列出三位失主，仅是同镇居民" },
+    { "id": "shh-001", "novel": "沙海航灯", "a": "陆知微", "b": "巴特尔", "relation": "同伴", "label": "positive", "note": "同一支勘探队：队长与司机兼机械师" },
+    { "id": "shh-002", "novel": "沙海航灯", "a": "陆知微", "b": "小何", "relation": "同伴", "label": "positive", "note": "同一支勘探队：队长与实习生" },
+    { "id": "shh-003", "novel": "沙海航灯", "a": "巴特尔", "b": "小何", "relation": "同伴", "label": "positive", "note": "同一段点名队友名单" },
+    { "id": "shh-004", "novel": "沙海航灯", "a": "陆知微", "b": "小何", "relation": "师徒", "label": "positive", "note": "教沙漠规矩/陆队长教会我的第一件事；全文无『师父』字样，共现基线抓不到" },
+    { "id": "shh-005", "novel": "沙海航灯", "a": "巴特尔", "b": "小何", "relation": "师徒", "label": "negative", "note": "同队共现，但没有传授关系" },
+    { "id": "shh-006", "novel": "沙海航灯", "a": "陆知微", "b": "巴特尔", "relation": "师徒", "label": "negative", "note": "同事关系，不是师徒" },
+    { "id": "shh-007", "novel": "沙海航灯", "a": "小何", "b": "巴特尔", "relation": "亲属", "label": "negative", "note": "同队共现，非亲属" },
+    { "id": "xbk-001", "novel": "青梧镇异闻", "a": "沈砚秋", "b": "陈伯", "relation": "师徒", "label": "negative", "note": "过渡口的客户，多段共现而非师徒" }
+  ]
+}
