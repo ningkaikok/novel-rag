@@ -77,13 +77,14 @@ RECALL_AT = [1, 3, 5, 10, 20]
 FETCH_K = max(RECALL_AT)
 
 
-def load_cases() -> list[dict]:
+def load_cases(test_set: Path | None = None) -> list[dict]:
     """读测试集，只保留标了 retrieval 期望的用例。
 
     有些用例（抗幻觉、纯生成层回归）天生没有"应该被召回的片段"，
     它们在 JSON 里 retrieval 字段是 null，并写明了跳过原因。
     """
-    cases = json.loads(TEST_SET.read_text(encoding="utf-8"))
+    path = test_set or TEST_SET
+    cases = json.loads(path.read_text(encoding="utf-8"))
     return [c for c in cases if c.get("retrieval")]
 
 
@@ -209,9 +210,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="检索质量评测")
     parser.add_argument("--save", metavar="FILE", help="把本次结果存成基线文件")
     parser.add_argument("--compare", metavar="FILE", help="跟指定的基线文件对比")
+    parser.add_argument(
+        "--test-set",
+        metavar="FILE",
+        help="指定评测集路径（默认 tests/qa_test_set.json；CI 用小语料评测集）",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="配合 --compare 做门禁：任一核心指标回退超过容差就以非零码退出",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.05,
+        help="--strict 允许的指标波动幅度（默认 0.05，吸收 embedding 模型的微小数值抖动）",
+    )
     args = parser.parse_args()
 
-    cases = load_cases()
+    test_set = Path(args.test_set) if args.test_set else None
+    if test_set and not test_set.is_absolute():
+        test_set = ROOT / test_set
+    cases = load_cases(test_set)
     if not cases:
         print("测试集里没有标注 retrieval 期望的用例", file=sys.stderr)
         sys.exit(1)
@@ -228,6 +248,24 @@ def main() -> None:
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
     print_report(report, baseline)
+
+    # CI 门禁（路线图 M3.3.5）：任何核心指标比基线回退超过容差就标红退出。
+    # 只看 recall@1/3/5、MRR 和路由准确率——recall@10/20 反映的是召回池大小，
+    # 对主链路改动不敏感，放进去只会制造噪音。
+    if args.strict and baseline:
+        s, base = report["summary"], baseline["summary"]
+        tracked = ["recall@1", "recall@3", "recall@5", "mrr", "routing_accuracy"]
+        regressed = [
+            f"{key}: {base[key]:.3f} -> {s[key]:.3f}"
+            for key in tracked
+            if s[key] < base[key] - args.tolerance
+        ]
+        if regressed:
+            print("检索指标回退超过容差，判定为回归：", file=sys.stderr)
+            for line in regressed:
+                print(f"  - {line}", file=sys.stderr)
+            sys.exit(1)
+        print("--strict 门禁通过，无指标回退")
 
     if args.save:
         save_path = Path(args.save)

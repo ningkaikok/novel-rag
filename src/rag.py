@@ -1,4 +1,17 @@
-"""RAG 核心：多路召回、融合、重排、上下文组装和本地生成。
+"""RAG 编排层：多路召回的流水线调度与对外兼容入口。
+
+这个模块现在是**编排层**：各职责已经拆到专职模块，这里负责把它们串成一条
+完整的检索-生成流水线，并保持 ``from rag import ...`` 的历史用法不变——
+
+    novel_match.py       书名识别与问题意图的纯函数（错字容错、结构问题、目录题）
+    chunk_model.py       SourceChunk 数据类与候选 trace 记录
+    retrieval_mixins.py  单路召回：向量 / BM25 / 结构性 / 邻居扩展（RetrievalMixin）
+    generation_mixin.py  prompt 组装、图线索、Ollama 生成（GenerationMixin）
+
+留在本模块的方法有两类：一是流水线编排本身（``retrieve_hybrid_stream`` 及其
+一次性/简化包装），二是被测试以 ``patch.object(rag, "connect")`` 等方式打桩、
+因此必须从本模块全局取名字的方法（``library_answer``、``_full_text_chunks``、
+``hierarchy_retrieve``）。
 
 这个模块刻意用普通 Python 函数显式编排，而不是交给 LangGraph：标准 RAG 请求是一条
 短生命周期、方向固定的流水线，没有工具调用循环、人工审批或失败后跨进程恢复的
@@ -22,311 +35,51 @@
 Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，因此评测脚本
 可以直接调用检索逻辑。完整选型理由见 ``docs/architecture-decisions.md``。
 """
-import json
-import re
 import time
-from collections.abc import Iterator
-from dataclasses import dataclass
 
-import requests
 from sentence_transformers import SentenceTransformer
 
 from embedder import load_embedder
 from config import (
-    BM25_B,
-    BM25_K1,
-    CONTEXT_NEIGHBORS,
     FULL_TEXT_MAX_CHARS,
     HIERARCHY_ENABLED,
     HIERARCHY_TOP_K,
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
-    OLLAMA_HOST,
-    OLLAMA_MODEL,
     RECALL_K,
     TOP_K,
 )
-from graph import detect_relation_question, format_graph_hint
 from hierarchy import is_global_question
 from postgres import (
     connect,
     has_index,
-    query_relations,
     search_hierarchy,
     vector_literal,
 )
 from reranker import rerank_with_scores
-from tokenizer import query_terms
-
-
-PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的编号原文片段回答问题。
-如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
-
-引用要求：
-- 每个来自原文的关键事实后标注支持它的片段编号，例如“顾长风中了蚀骨散[2]”。
-- 只能使用下面真实存在的编号，不能编造引用。
-- 如果一句话由多个片段共同支持，可以写成[1][3]。
-- 不要把编号写成脚注列表；直接放在对应事实后，方便用户点击核对。
-
-原文片段：
-{context}
-
-问题：{question}
-
-回答："""
-
-
-def generate_ollama_prompt_stream(
-    prompt: str, model: str = OLLAMA_MODEL
-) -> Iterator[str]:
-    """把已经构造好的 prompt 交给 Ollama，并逐 token 返回。
-
-    独立成模块函数是为了让“自由问答”在书架尚未建立索引、无法创建 NovelRAG
-    实例时仍能使用本地模型。NovelRAG.generate_stream 也复用它，避免维护两套协议。
-    """
-    with requests.post(
-        f"{OLLAMA_HOST}/api/generate",
-        json={"model": model, "prompt": prompt, "stream": True},
-        stream=True,
-        timeout=120,
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line:
-                continue
-            chunk = json.loads(line).get("response", "")
-            if chunk:
-                yield chunk
-
-
-def _novel_titles(novel: str) -> list[str]:
-    """从库里的书名（文件名）提取用户可能说出的标题。
-
-    文件名形如"《凡人修仙传》（校对版全本+番外）作者：忘语"，用户只会说"凡人修仙传"。
-    """
-    inner = re.findall(r"《([^》]+)》", novel)
-    titles = [name.strip() for name in inner if name.strip()]
-    if not titles:
-        # 没有书名号就退化为用文件名主体（截断，避免整串带作者名匹配不上）
-        titles = [novel.split("（")[0].split("作者")[0].strip()]
-    return [t for t in titles if t]
-
-
-def _edit_distance(a: str, b: str, limit: int) -> int:
-    """两字符串的 Levenshtein 距离；一旦确定超过 limit 就提前返回 limit + 1。
-
-    书名很短（通常 3~6 字），这里用滚动数组的朴素实现足够快，不引入额外依赖。
-    """
-    if a == b:
-        return 0
-    if abs(len(a) - len(b)) > limit:
-        return limit + 1
-    previous = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        current = [i] + [0] * len(b)
-        for j, cb in enumerate(b, start=1):
-            current[j] = min(
-                previous[j] + 1,  # 删除
-                current[j - 1] + 1,  # 插入
-                previous[j - 1] + (ca != cb),  # 替换
-            )
-        # 整行都超过阈值，后面只会更大，可以提前结束
-        if min(current) > limit:
-            return limit + 1
-        previous = current
-    return previous[-1]
-
-
-def _fuzzy_contains(question: str, title: str) -> bool:
-    """问题里是否有一个与 title 近似的片段（容忍少量错字）。
-
-    用户常打出同音错字，例如把"诡秘之主"打成"闺蜜之主"（guǐ mì / guī mì）。
-    精确子串匹配会失败，进而把问题归到别的书上。这里在问题里滑动一个与书名
-    等长的窗口，只要某个窗口与书名的编辑距离在容差内就算提到了这本书。
-
-    容差按标题长度取：3 字标题最多错 1 个字，4 字及以上最多错 2 个字
-    （"闺蜜之主"→"诡秘之主"就错了 2 个字）。距离上限约为标题长度的一半，
-    不同的书之间差异远大于此，不会互相误判。
-    """
-    n = len(title)
-    if n < 3:
-        # 标题太短，模糊匹配极易误判，只接受精确包含
-        return title in question
-    tolerance = 1 if n == 3 else 2
-    # 窗口长度允许有 ±tolerance 的浮动，覆盖多字/漏字的情况
-    for width in range(max(3, n - tolerance), n + tolerance + 1):
-        for start in range(0, len(question) - width + 1):
-            window = question[start : start + width]
-            if _edit_distance(window, title, tolerance) <= tolerance:
-                return True
-    return False
-
-
-def _mentions_novel(question: str, novel: str) -> bool:
-    """判断问题里是否提到了这本书（先精确匹配，失败再容错匹配错字）。"""
-    titles = _novel_titles(novel)
-    if any(title in question for title in titles):
-        return True
-    return any(_fuzzy_contains(question, title) for title in titles)
-
-
-# 正文收尾的结构标记。网上流传的 txt 常是"全本+番外"，文件最末往往是番外或
-# 作者后记，而不是正文结局，所以要靠这些标记定位真正的结局位置。
-_ENDING_MARKERS = ("全书完", "（大结局）", "(大结局)", "大结局", "全文完", "尾声")
-
-
-_LIBRARY_QUESTION_RE = re.compile(
-    r"(?:一共有|共有|总共有|多少部|几部|多少本|几本|有哪些小说|哪些书|所有小说|全部小说|书架)"
+from chunk_model import SourceChunk, _trace_candidates
+from novel_match import (
+    _display_title,
+    _dominant_novels,
+    _edit_distance,
+    _find_ending_anchor,
+    _fuzzy_contains,
+    _is_library_question,
+    _mentions_novel,
+    _named_via_typo,
+    _novel_titles,
+    _strip_novel_titles,
+    _structural_kind,
+)
+from retrieval_mixins import RetrievalMixin
+from generation_mixin import (
+    PROMPT_TEMPLATE,
+    GenerationMixin,
+    generate_ollama_prompt_stream,
 )
 
 
-def _is_library_question(question: str) -> bool:
-    """判断问题是否在问书架的完整目录，而不是小说正文内容。"""
-    text = question.strip()
-    return bool("小说" in text and _LIBRARY_QUESTION_RE.search(text)) or bool(
-        "书架" in text and re.search(r"(?:有|包含|多少|几|哪些|全部)", text)
-    )
-
-
-def _find_ending_anchor(conn, novel: str) -> int | None:
-    """找出正文结局所在的片段编号；找不到标记时返回 None（调用方退回文件末尾）。
-
-    取最后一个出现结束标记的片段：既能跳过目录里提前出现的"大结局"字样，
-    也能避免把后面的番外/后记误当结局。
-    """
-    row = conn.execute(
-        """
-        SELECT MAX(chunk_id) AS anchor
-        FROM novel_chunks
-        WHERE novel = %s
-          AND (text LIKE '%%全书完%%' OR text LIKE '%%大结局%%'
-               OR text LIKE '%%全文完%%' OR text LIKE '%%尾声%%')
-        """,
-        (novel,),
-    ).fetchone()
-    anchor = row and row["anchor"]
-    return int(anchor) if anchor is not None else None
-
-
-def _strip_novel_titles(question: str, novels: list[str]) -> str:
-    """把已经识别出来的书名从问题里去掉，只留下真正要检索的内容。
-
-    **为什么只对 BM25 这一路做，不对语义检索做**：书名的职责是「路由」——
-    确定要在哪本书里搜。一旦已经靠它把范围限定到《凡人修仙传》，再拿「凡人」
-    「修仙」这两个词去这本书内部做关键词匹配就是纯噪声：整本书都在讲凡人修仙，
-    这两个词对区分书内的哪一段毫无价值。
-
-    实测过这个 bug 的代价：问「《凡人修仙传》里，韩立小时候的绰号是什么」时，
-    书名切出的「凡人」「修仙」两个词给某个无关片段白送了 14.1 分
-    （凡人 7.73 + 修仙 6.40），而真正的关键词「绰号」只贡献 7.24 分——
-    结果无关片段以 17.63 : 10.13 压过了正确答案所在的片段。
-
-    语义检索不受这个影响：它编码的是整句话的含义，书名只是让语义更完整的
-    上下文，不会像 BM25 那样被拆成独立的词各自累加分数。
-    """
-    stripped = question
-    for novel in novels:
-        for title in _novel_titles(novel):
-            stripped = stripped.replace(f"《{title}》", " ").replace(title, " ")
-    return stripped
-
-
-def _display_title(novel: str) -> str:
-    """把库里的文件名式书名压成用户认得的短标题，如《诡秘之主》。"""
-    titles = _novel_titles(novel)
-    return f"《{titles[0]}》" if titles else novel
-
-
-def _named_via_typo(question: str, novel: str) -> bool:
-    """这本书是靠错字容错匹配上的（而非精确出现在问题里）——用于思考过程里提示'已纠正错字'。"""
-    titles = _novel_titles(novel)
-    exact = any(title in question for title in titles)
-    return (not exact) and any(_fuzzy_contains(question, t) for t in titles)
-
-
-def _structural_kind(question: str) -> str | None:
-    """判断是不是在问书的结构位置：返回 '结局' / '开头' / None。
-
-    与 positional_retrieve 里的词表保持一致，只是这里对外给出可读的类别名。
-    """
-    text = question.strip()
-    if any(w in text for w in ("结局", "结尾", "最后", "最终", "收尾", "大结局", "结束")):
-        return "结局"
-    if any(w in text for w in ("开头", "开篇", "最初", "一开始", "起初", "开始时")):
-        return "开头"
-    return None
-
-
-def _dominant_novels(sources: list["SourceChunk"]) -> list[str]:
-    """从已召回的片段里推断问题主要在问哪本书。
-
-    取命中数最多的书；若有其他书命中数达到它的一半以上，则一并保留
-    （问题可能确实跨书，例如"两本书的结局有什么不同"）。
-    """
-    if not sources:
-        return []
-    counts: dict[str, int] = {}
-    for source in sources:
-        counts[source.novel] = counts.get(source.novel, 0) + 1
-    top = max(counts.values())
-    return [novel for novel, n in counts.items() if n * 2 >= top]
-
-
-@dataclass
-class SourceChunk:
-    novel: str
-    chunk_id: int
-    text: str
-    distance: float
-    # 章节识别是增强元数据：旧索引和无规范标题的 txt 都可能为空。
-    chapter_title: str | None = None
-    # Contextual Retrieval 生成的上下文说明（没做增强时是空串）。
-    # 重排要用它（见 reranker.rerank 里 indexed_text 的说明），
-    # 但 build_prompt 只用 text——不把 AI 生成的说明当原文依据给模型。
-    context: str = ""
-
-    @property
-    def indexed_text(self) -> str:
-        """建索引时用的文本，也是重排该看到的文本。
-
-        必须和索引保持一致：索引的是「说明 + 原文」，重排如果只看原文，
-        就会把上下文增强的效果整个抵消掉。
-        """
-        return f"{self.context}\n{self.text}" if self.context else self.text
-
-
-_TRACE_CANDIDATE_LIMIT = 10
-
-
-def _trace_candidates(
-    sources: list[SourceChunk],
-    *,
-    score_label: str,
-    score_of,
-    previous_ranks: dict[tuple[str, int], int] | None = None,
-    selected_count: int = 0,
-) -> list[dict]:
-    """把内部候选压成适合 SSE/JSONB 的轻量排名记录，避免保存大段原文。"""
-    payload: list[dict] = []
-    for rank, source in enumerate(sources[:_TRACE_CANDIDATE_LIMIT], start=1):
-        key = (source.novel, source.chunk_id)
-        score = score_of(source, key)
-        payload.append(
-            {
-                "novel": source.novel,
-                "chunk_id": source.chunk_id,
-                "chapter_title": source.chapter_title,
-                "rank": rank,
-                "score": round(float(score), 6) if score is not None else None,
-                "score_label": score_label,
-                "previous_rank": (previous_ranks or {}).get(key),
-                "selected": bool(selected_count and rank <= selected_count),
-            }
-        )
-    return payload
-
-
-class NovelRAG:
+class NovelRAG(RetrievalMixin, GenerationMixin):
     def __init__(self, embedder: SentenceTransformer | None = None):
         self.embedder = embedder or load_embedder()
         if not has_index():
@@ -350,253 +103,6 @@ class NovelRAG:
             return "当前书架中没有已建立索引的小说。"
         titles = [_display_title(novel) for novel in novels]
         return f"当前书架一共有 {len(titles)} 部小说：" + "、".join(titles) + "。"
-
-    def retrieve(
-        self,
-        question: str,
-        top_k: int = TOP_K,
-        only_novels: list[str] | None = None,
-    ) -> list[SourceChunk]:
-        """向量检索。only_novels 非空时把搜索范围限定在这些书内。"""
-        query_embedding = self.embedder.encode([question], normalize_embeddings=True)
-        query_vector = vector_literal(query_embedding[0])
-        scope = "WHERE novel = ANY(%s)" if only_novels else ""
-        params: list = [query_vector]
-        if only_novels:
-            params.append(only_novels)
-        params.extend([query_vector, top_k])
-        with connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT novel, chunk_id, chapter_title, text, context,
-                       embedding <=> %s::vector AS distance
-                FROM novel_chunks
-                {scope}
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-                """,
-                params,
-            ).fetchall()
-        return [
-            SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                distance=float(row["distance"]),
-                chapter_title=row.get("chapter_title"),
-                context=row.get("context") or "",
-            )
-            for row in rows
-        ]
-
-    def keyword_retrieve(
-        self,
-        question: str,
-        top_k: int = TOP_K,
-        only_novels: list[str] | None = None,
-    ) -> list[SourceChunk]:
-        """BM25 关键词检索：按词精确匹配，并按相关性打分排序。
-
-        为什么需要它（向量检索补不上的洞）
-        ----------------------------------
-        向量检索靠语义相似度，对"必须逐字匹配"的东西不可靠——人名、功法名、
-        专有名词这些，语义上"韩铸"和"韩立"极其接近，但它们是两个人。
-        BM25 走的是完全不同的路子：按词精确匹配，谁都不会把「韩铸」匹配成「韩立」。
-
-        BM25 公式（这段是本函数的核心，SQL 里逐项对应）
-        ------------------------------------------------
-            score(D, Q) = Σ  IDF(t) · ────────tf · (k1 + 1)────────
-                         t∈Q            tf + k1 · (1 - b + b · |D|/avgdl)
-
-        三个部分各自解决一个问题：
-
-        1. **IDF(t) = ln((N - df + 0.5) / (df + 0.5) + 1)** —— 词的区分度
-           df 是"这个词出现在多少个片段里"。「韩立」出现在 15536 个片段里，
-           df 极大 → IDF 极小 → 权重被自动压到接近 0；「窝头」只出现 1 次，
-           df=1 → IDF 很大 → 命中它的片段分数被大幅拉高。
-
-           这一项直接取代了改造前那个手写的 KEYWORD_GENERIC_LIMIT 启发式
-           （"命中超过 300 个片段的词就整个丢掉"）。IDF 做的是同一件事，但是
-           **平滑降权**而不是**硬性丢弃**——常见词仍然贡献一点分数，只是很少。
-           这更合理：一个词常见不代表它没用，只代表它不该单独决定排序。
-
-        2. **tf 项** —— 词频，但边际递减
-           一个片段里出现 10 次「南宫婉」，比出现 1 次更可能真的在讲她，
-           但相关性不是 10 倍。k1 控制饱和速度（见 config.BM25_K1）。
-
-        3. **|D|/avgdl 长度归一化** —— 消除长片段的系统性优势
-           长片段天然更容易碰巧包含查询词。不归一化的话，最长的片段会在
-           所有查询里都排前面。b 控制归一化强度（见 config.BM25_B）。
-
-        这修掉了什么真实问题
-        --------------------
-        改造前这个函数是 `position(词 in 正文) > 0 ... ORDER BY chunk_id`——
-        **按片段在书里的先后顺序取前 20 个，完全没有相关性排序**。实测
-        《凡人修仙传》19501 个片段里，关键词召回永远只能返回 chunk_id ≤ 10123
-        的结果：**后半本书对关键词检索完全不可见**。
-
-        更糟的是这个无序列表会喂给 RRF 融合，而 RRF 的前提是每一路输入都已经
-        按相关性排好序——等于给 RRF 喂了噪声。
-
-        only_novels 非空时把搜索范围限定在这些书内。
-        """
-        terms = query_terms(question)
-        if not terms:
-            return []
-
-        # BM25_K1 / BM25_B 是从 config 读出来并经过 float() 转换的数值，
-        # 不是用户输入，直接内联进 SQL 没有注入风险，可读性比 4 个 %s 好很多。
-        k1, b = float(BM25_K1), float(BM25_B)
-
-        # 三处都要按书过滤：语料统计、df 统计、最终打分。范围不一致会让
-        # IDF 算错——比如按全库算 df 却只在一本书里打分，稀有词的权重会失真。
-        scope_sql = "WHERE novel = ANY(%s)" if only_novels else ""
-        scope_and = "AND novel = ANY(%s)" if only_novels else ""
-        scope_param = [only_novels] if only_novels else []
-
-        # q(term) 是把查询词做成一张临时表，好跟倒排索引 JOIN
-        values_sql = ", ".join(["(%s)"] * len(terms))
-
-        sql = f"""
-            WITH q(term) AS (VALUES {values_sql}),
-            -- 语料级统计：N（总片段数）和 avgdl（平均片段长度）
-            corpus AS (
-                SELECT COUNT(*)::float8 AS n,
-                       NULLIF(AVG(token_count), 0)::float8 AS avgdl
-                FROM novel_chunks
-                {scope_sql}
-            ),
-            -- df：每个查询词各自出现在多少个片段里（IDF 的输入）
-            df AS (
-                SELECT ct.term, COUNT(*)::float8 AS df
-                FROM chunk_terms ct
-                JOIN q ON q.term = ct.term
-                WHERE TRUE {scope_and.replace("novel", "ct.novel")}
-                GROUP BY ct.term
-            )
-            SELECT nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context,
-                   SUM(
-                       ln((c.n - d.df + 0.5) / (d.df + 0.5) + 1)
-                       * (ct.tf * ({k1} + 1))
-                       / (ct.tf + {k1} * (1 - {b} + {b} * nc.token_count / c.avgdl))
-                   )::float8 AS score
-            FROM chunk_terms ct
-            JOIN q ON q.term = ct.term
-            JOIN df d ON d.term = ct.term
-            JOIN novel_chunks nc
-              ON nc.novel = ct.novel AND nc.chunk_id = ct.chunk_id
-            CROSS JOIN corpus c
-            WHERE TRUE {scope_and.replace("novel", "nc.novel")}
-            GROUP BY nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context
-            ORDER BY score DESC
-            LIMIT %s
-        """
-        params = [*terms, *scope_param, *scope_param, *scope_param, top_k]
-
-        with connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-
-        return [
-            SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                context=row.get("context") or "",
-                chapter_title=row.get("chapter_title"),
-                # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
-                # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
-                # 按同一个字段排序时把最相关的排到最后。
-                distance=-float(row["score"]),
-            )
-            for row in rows
-        ]
-
-    def positional_retrieve(
-        self,
-        question: str,
-        top_k: int = TOP_K,
-        hint_novels: list[str] | None = None,
-    ) -> list[SourceChunk]:
-        """按"书里的位置"召回，解决语义检索根本答不了的结构性问题。
-
-        "结局是什么"这类问题，答案所在的原文里并不会出现"结局"二字，
-        向量检索因此几乎必然失败。这里改为直接按 chunk_id 取书的首/尾片段。
-
-        只在问题命中结构性词时生效。确定"哪本书"的优先级：
-        1. 问题里直接写了书名 → 只取那本；
-        2. 否则用 hint_novels（由语义/关键词召回推断出的书）→ 只取那些书。
-           这样"韩立的结局"（只提人物不提书名）也能定位到《凡人修仙传》；
-        3. 都没有 → 每本书各取一段。
-        """
-        text = question.strip()
-        tail_words = ("结局", "结尾", "最后", "最终", "收尾", "大结局", "结束")
-        head_words = ("开头", "开篇", "最初", "一开始", "起初", "开始时")
-        at_tail = any(w in text for w in tail_words)
-        at_head = any(w in text for w in head_words)
-        if not (at_tail or at_head):
-            return []
-
-        with connect() as conn:
-            novels = [
-                row["novel"]
-                for row in conn.execute("SELECT DISTINCT novel FROM novel_chunks").fetchall()
-            ]
-            # 问题里提到了某本书就只查那本，避免把别的书的结尾混进来
-            matched = [n for n in novels if _mentions_novel(text, n)]
-            if matched:
-                targets = matched
-            elif hint_novels:
-                # 只保留确实存在于库里的提示书名
-                targets = [n for n in novels if n in set(hint_novels)] or novels
-            else:
-                targets = novels
-
-            # 每本书分配的配额：只查一本时全给它，多本时平摊但至少 1 段
-            per_novel = max(1, top_k // len(targets)) if targets else top_k
-            order = "DESC" if at_tail else "ASC"
-            results: list[SourceChunk] = []
-            for novel in targets:
-                anchor = (
-                    _find_ending_anchor(conn, novel) if at_tail else None
-                )
-                if anchor is not None:
-                    # 有"大结局/全书完"标记：以它为终点向前取，避免把后面的
-                    # 番外、后记当成结局（很多"全本+番外"的 txt 末尾都不是正文结局）。
-                    rows = conn.execute(
-                        """
-                        SELECT novel, chunk_id, chapter_title, text, context
-                        FROM novel_chunks
-                        WHERE novel = %s AND chunk_id <= %s
-                        ORDER BY chunk_id DESC
-                        LIMIT %s
-                        """,
-                        (novel, anchor, per_novel),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        f"""
-                            SELECT novel, chunk_id, chapter_title, text, context
-                        FROM novel_chunks
-                        WHERE novel = %s
-                        ORDER BY chunk_id {order}
-                        LIMIT %s
-                        """,
-                        (novel, per_novel),
-                    ).fetchall()
-                # 保持 SQL 的 ORDER BY 顺序（问结局时最末片段排最前），
-                # 这个顺序会成为 RRF 的排名依据——排序错了最关键的片段就挤不进 top-k。
-                for row in rows:
-                    results.append(
-                        SourceChunk(
-                            novel=row["novel"],
-                            chunk_id=int(row["chunk_id"]),
-                            text=row["text"],
-                            distance=0.0,
-                            chapter_title=row.get("chapter_title"),
-                            context=row.get("context") or "",
-                        )
-                    )
-        return results
 
     def _full_text_chunks(self, named_novels: list[str]) -> list[SourceChunk] | None:
         """书够小就返回它的全部片段（按原文顺序），否则返回 None。
@@ -641,17 +147,6 @@ class NovelRAG:
             )
             for r in rows
         ]
-
-    def _named_novels(self, question: str) -> list[str]:
-        """问题里明确提到的书（书名精确或容错匹配）；没提到则返回空列表。"""
-        with connect() as conn:
-            novels = [
-                row["novel"]
-                for row in conn.execute(
-                    "SELECT DISTINCT novel FROM novel_chunks"
-                ).fetchall()
-            ]
-        return [n for n in novels if _mentions_novel(question, n)]
 
     def hierarchy_retrieve(
         self,
@@ -1033,146 +528,3 @@ class NovelRAG:
             result = candidates[:top_k]
 
         yield "result", result
-
-    def expand_neighbors(
-        self,
-        sources: list[SourceChunk],
-        neighbors: int = CONTEXT_NEIGHBORS,
-    ) -> list[SourceChunk]:
-        """为命中的片段补齐同一本书前后的相邻片段。
-
-        检索结果仍保留为 top-k，扩展结果只用于生成上下文，避免前端出处卡片
-        一次展示大量重复内容。相邻片段通过 PostgreSQL 的书名和片段编号读取。
-        """
-        if not sources or neighbors <= 0:
-            return sources
-
-        ranges: list[tuple[str, int, int]] = []
-        for source in sources:
-            ranges.append(
-                (
-                    source.novel,
-                    max(0, source.chunk_id - neighbors),
-                    source.chunk_id + neighbors,
-                )
-            )
-
-        conditions = " OR ".join(
-            "(novel = %s AND chunk_id BETWEEN %s AND %s)" for _ in ranges
-        )
-        params = [value for item in ranges for value in item]
-        with connect() as conn:
-            rows = conn.execute(
-                f"SELECT novel, chunk_id, chapter_title, text, context "
-                f"FROM novel_chunks WHERE {conditions}",
-                params,
-            ).fetchall()
-        by_key: dict[tuple[str, int], SourceChunk] = {}
-        for row in rows:
-            key = (row["novel"], int(row["chunk_id"]))
-            by_key[key] = SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                distance=0.0,
-                chapter_title=row.get("chapter_title"),
-                context=row.get("context") or "",
-            )
-
-        expanded: list[SourceChunk] = []
-        seen: set[tuple[str, int]] = set()
-        # 按检索相关性保留不同命中簇的顺序；每个命中簇内部按原文顺序排列。
-        for source in sources:
-            group = [
-                by_key[(source.novel, chunk_id)]
-                for chunk_id in range(
-                    max(0, source.chunk_id - neighbors), source.chunk_id + neighbors + 1
-                )
-                if (source.novel, chunk_id) in by_key
-            ]
-            for item in group:
-                key = (item.novel, item.chunk_id)
-                if key not in seen:
-                    expanded.append(item)
-                    seen.add(key)
-        return expanded or sources
-
-    def build_prompt(self, question: str, sources: list[SourceChunk]) -> str:
-        """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。
-
-        问到人物关系时，会在原文片段前面加一段「图线索」——那是从全书共现统计
-        推断出来的关系列表，用来补足 top-k 片段覆盖不到的部分（见 graph.py）。
-        线索明确标注了"是统计推断不是确定事实"，让模型拿它当线索去核对原文，
-        而不是直接照抄。
-        """
-        blocks = []
-        for index, source in enumerate(sources, start=1):
-            location = f"《{_display_title(source.novel).strip('《》')}》"
-            if source.chapter_title:
-                location += f" · {source.chapter_title}"
-            location += f" · 片段 #{source.chunk_id}"
-            blocks.append(f"[{index}] {location}\n{source.text}")
-        context = "\n\n---\n\n".join(blocks)
-        hint = self._graph_hint(question)
-        if hint:
-            context = f"{hint}\n\n---\n\n{context}"
-        return PROMPT_TEMPLATE.format(context=context, question=question)
-
-    def _graph_hint(self, question: str) -> str:
-        """问到人物关系时，从图里查一份补充线索；其余情况返回空串。
-
-        图检索是**补充而不是替代**：普通问题走原来的多路召回就好，
-        没必要多查一次图。任何一步失败都退回空串，不影响正常问答。
-        """
-        relation = detect_relation_question(question)
-        if not relation:
-            return ""
-        try:
-            # 问题里提到的人物名——从图里已有的人物名反查，避免再做一次分词
-            with connect() as conn:
-                rows = conn.execute(
-                    "SELECT DISTINCT person_a AS name FROM character_relations "
-                    "UNION SELECT DISTINCT person_b FROM character_relations"
-                ).fetchall()
-            subjects = [r["name"] for r in rows if r["name"] in question]
-            if not subjects:
-                return ""
-            # 问题里可能提到多个人名，取最长的那个（最具体）
-            subject = max(subjects, key=len)
-            neighbors = query_relations(subject, relation)
-            return format_graph_hint(subject, relation, neighbors)
-        except Exception:
-            # 图表可能不存在（没开 GRAPH_ENABLED 建过图），静默跳过即可——
-            # 这是纯增强功能，缺了只是回到没有图检索的状态
-            return ""
-
-    def generate(
-        self, question: str, sources: list[SourceChunk], model: str = OLLAMA_MODEL
-    ) -> str:
-        prompt = self.build_prompt(question, sources)
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        response.raise_for_status()
-        return response.json()["response"].strip()
-
-    def generate_stream(
-        self, question: str, sources: list[SourceChunk], model: str = OLLAMA_MODEL
-    ) -> Iterator[str]:
-        """逐字（token）流式返回回答，供界面实时展示。model 可按次调用覆盖，便于前端切换模型。"""
-        yield from generate_ollama_prompt_stream(self.build_prompt(question, sources), model)
-
-    def query(
-        self, question: str, top_k: int = TOP_K, model: str = OLLAMA_MODEL
-    ) -> tuple[str, list[SourceChunk]]:
-        """最小化的“纯向量检索 → Ollama 生成”示例。
-
-        这是方便在 REPL 里讲解基础 RAG 的入口，不是 Web 应用的生产调用链。
-        Web 接口使用 ``retrieve_hybrid_stream``，还会经过 BM25、结构性召回、
-        RRF、重排和邻居扩展。学习者若从这里调试，要注意两条路径的能力不同。
-        """
-        sources = self.retrieve(question, top_k)
-        answer = self.generate(question, sources, model=model)
-        return answer, sources

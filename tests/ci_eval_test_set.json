@@ -1,0 +1,92 @@
+[
+  {
+    "id": "C1",
+    "question": "沈砚秋的师父是谁？",
+    "retrieval": {
+      "expect_novel": "青梧镇异闻",
+      "difficulty": "简单",
+      "expect_keywords": ["顾长风"]
+    }
+  },
+  {
+    "id": "C2",
+    "question": "1897年的黄铜怀表表盘背面刻了什么字？",
+    "retrieval": {
+      "expect_novel": "青梧镇异闻",
+      "difficulty": "简单",
+      "expect_keywords": ["赠长风", "岁月恒准"]
+    }
+  },
+  {
+    "id": "C3",
+    "question": "镇上接连丢怀表的案子里，小顺偷表的原因是什么？",
+    "retrieval": {
+      "expect_novel": "青梧镇异闻",
+      "difficulty": "中等",
+      "expect_keywords": ["赌债", "工具", "赎回来"]
+    }
+  },
+  {
+    "id": "C4",
+    "question": "沈砚秋是根据什么线索发现钟楼有问题？",
+    "retrieval": {
+      "expect_novel": "青梧镇异闻",
+      "difficulty": "较难",
+      "expect_keywords": ["雨簿", "撞钟"]
+    }
+  },
+  {
+    "id": "C5",
+    "question": "陆知微为什么被队里人叫活地图？",
+    "retrieval": {
+      "expect_novel": "沙海航灯",
+      "difficulty": "简单",
+      "expect_keywords": ["迷过路"]
+    }
+  },
+  {
+    "id": "C6",
+    "question": "七号井位的承压水埋深是多少？能不能打井？",
+    "retrieval": {
+      "expect_novel": "沙海航灯",
+      "difficulty": "中等",
+      "expect_keywords": ["四点二米", "打井"]
+    }
+  },
+  {
+    "id": "C7",
+    "question": "勘探队在沙漠里靠什么发现了地下水离地表不远的线索？",
+    "retrieval": {
+      "expect_novel": "沙海航灯",
+      "difficulty": "较难",
+      "expect_keywords": ["芦苇根"]
+    }
+  },
+  {
+    "id": "C8",
+    "question": "老白是什么动物？它驮的是什么？",
+    "retrieval": {
+      "expect_novel": "沙海航灯",
+      "difficulty": "简单",
+      "expect_keywords": ["骆驼", "水和仪器"]
+    }
+  },
+  {
+    "id": "C9",
+    "question": "这两本书的主角分别靠什么本领立足？",
+    "retrieval": {
+      "expect_novel": "",
+      "difficulty": "跨书",
+      "expect_keywords": ["修表匠", "活地图"]
+    }
+  },
+  {
+    "id": "C10",
+    "question": "沙海航灯的结局里那口井叫什么名字？",
+    "retrieval": {
+      "expect_novel": "沙海航灯",
+      "difficulty": "结构",
+      "expect_keywords": ["知微井"]
+    }
+  }
+]

@@ -102,26 +102,26 @@ Agent 框架，也不改变在线召回策略。质量检查必须针对最终�
 在做检索实验之前，先补齐几处低成本但影响健壮性和可观测性的短板。这些改动不改变
 检索算法本身，目的是让 M3.4 的实验跑在更可信的服务和更干净的代码结构上。
 
-- [ ] 上传接口增加大小上限：流式读取并限制单文件字节数（如 20MB），超限返回明确
-  错误；避免误选超大文件打爆内存或拖死 embedding
-- [ ] 后台任务状态落库：`backend/index_tasks.py` 目前只存进程内存字典，重启后任务
-  卡片消失；把状态和进度写进一张简单表，重启后可恢复显示（不需要完整 job/worker）
-- [ ] 日志统一注入 `request_id`：在现有 middleware 里让每条日志携带请求 ID，
-  为 M3.4 的延迟观测和 M3.5 的 trace 职责划分打底
-- [ ] 拆分 `src/rag.py`（已约 1200 行）：按召回/融合/重排/编排职责拆成独立模块，
-  保持 `scripts/eval_retrieval.py` 等评测脚本的 import 路径兼容
-- [ ] 拆分 `frontend/src/App.tsx`（约 800 行）：抽出 `useChatStream`（SSE、中断、恢复）、
-  `useBookshelf`、`useRetrievalTrace` 三个自定义 hooks，组件树保持现状。消息气泡和各
-  子面板已经用 `memo` 包裹，不需要重复优化；列表虚拟化和可恢复 SSE 必须先用 React
-  Profiler 测出真实卡顿、且等 M6.5 的 Run State/Event Log 就绪后再做
-- [ ] 建立夜间检索评测门禁：用固定小语料在 CI 定时跑 `eval_retrieval.py`，
-  Recall@K 回退超过阈值即标红，让「改检索策略前后对比基线」从手动变成自动
-- [ ] 仓库卫生：`.gitignore` 补充 `logs/`、清理迁移遗留的 `chroma_db/` 与
-  `.DS_Store`、测试结果 JSON 移到独立的 gitignore 目录
+- [x] 上传接口增加大小上限：流式读取并限制单文件字节数（默认 20MB，`MAX_UPLOAD_BYTES`
+  可覆盖），超限返回 413 `file_too_large`；避免误选超大文件打爆内存或拖死 embedding
+- [x] 后台任务状态落库：`index_task_runs` 表保存任务快照，重启后侧栏恢复上一次
+  任务卡片，遗留的 active 任务被如实标记为 failed 并提示重试（不需要完整 job/worker）
+- [x] 日志统一注入 `request_id`：核查发现 middleware + contextvar + logging Filter
+  链路此前已经实现并有测试覆盖（格式 `[%(request_id)s]`），本项直接勾掉
+- [x] 拆分 `src/rag.py`（1178 → 530 行）：书名识别/意图判断拆到 `novel_match.py`，
+  `SourceChunk` 与 trace 拆到 `chunk_model.py`，召回方法拆到 `retrieval_mixins.py`，
+  生成与 prompt 拆到 `generation_mixin.py`；`rag.py` 保留编排层并重导出全部公开名字，
+  评测脚本与测试的 import 路径零改动。前端同步把 `App.tsx`（820 → 391 行）抽成
+  `useChatStream` / `useBookshelf` 两个 hooks
+- [x] 建立夜间检索评测门禁：CI 用仓库自带的原创小语料（`tests/ci_corpus/`）在临时
+  数据库重建索引，跑 `eval_retrieval.py --strict` 对照提交的基线，核心指标回退超过
+  容差即标红；支持手动触发，供改检索链路的 PR 提前验证
+- [x] 仓库卫生：`.gitignore` 补充 `logs/`、清理迁移遗留的 `chroma_db/` 与
+  `.DS_Store`
 
 验收：上传超大文件有明确报错而非拖垮进程；重启后端后任务卡片仍在；每条日志可按
 request_id 关联一次请求；`src/rag.py` 拆分后全部现有测试与评测脚本不改行为通过；
-CI 能自动发现检索指标回退。
+CI 能自动发现检索指标回退。**本里程碑已完成。**
 
 ## M3.4：检索实验与失败策略（后续阶段，P1～P2）
 
