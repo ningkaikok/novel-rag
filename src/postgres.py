@@ -773,3 +773,150 @@ def next_turn_index(session_id: str) -> int:
             (session_id,),
         ).fetchone()
     return int(row["next"]) if row else 0
+
+
+# --------------------------------------------------------------- 索引任务记录
+# 任务卡片的状态落库（路线图 M3.3.5）。这张表和 chat_turns 一样属于「与小说派生
+# 索引无关」的独立数据：只记录后台任务的可见状态，数据一致性仍由单书事务保证，
+# 所以这里不需要任何复杂结构——一行 = 一个任务快照，UPSERT 即可。
+
+_INDEX_TASK_ACTIVE_SQL = "('queued', 'running', 'cancelling')"
+
+
+def ensure_index_task_schema() -> None:
+    """建索引任务运行记录表（幂等，用 IF NOT EXISTS）。
+
+    时间列用 TIMESTAMPTZ 而不是 TEXT：manager 传进来的本来就是 ISO 字符串，
+    psycopg 能直接解析；落库成真正的时间类型后，以后想按时间清理旧记录或算
+    任务耗时都是 SQL 一句话的事。
+    """
+    with connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS index_task_runs (
+                id          TEXT PRIMARY KEY,
+                force       BOOLEAN NOT NULL DEFAULT FALSE,
+                retry_of    TEXT,
+                status      TEXT NOT NULL,
+                stage       TEXT NOT NULL DEFAULT '',
+                progress    INTEGER NOT NULL DEFAULT 0,
+                message     TEXT NOT NULL DEFAULT '',
+                error       TEXT,
+                result      JSONB,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                started_at  TIMESTAMPTZ,
+                finished_at TIMESTAMPTZ
+            )
+            """
+        )
+
+
+def save_index_task_run(snapshot: dict) -> None:
+    """写入/覆盖一个任务快照（id 是主键，重复写同一条就是覆盖）。
+
+    进度类字段会随任务推进被反复 UPSERT，这正好符合「重启后恢复显示」的语义：
+    表里永远保留每个任务最后已知的状态。
+    """
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO index_task_runs
+                (id, force, retry_of, status, stage, progress,
+                 message, error, result, created_at, started_at, finished_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                force       = EXCLUDED.force,
+                retry_of    = EXCLUDED.retry_of,
+                status      = EXCLUDED.status,
+                stage       = EXCLUDED.stage,
+                progress    = EXCLUDED.progress,
+                message     = EXCLUDED.message,
+                error       = EXCLUDED.error,
+                result      = EXCLUDED.result,
+                created_at  = EXCLUDED.created_at,
+                started_at  = EXCLUDED.started_at,
+                finished_at = EXCLUDED.finished_at
+            """,
+            (
+                snapshot["id"],
+                bool(snapshot.get("force")),
+                snapshot.get("retry_of"),
+                snapshot["status"],
+                snapshot.get("stage", ""),
+                int(snapshot.get("progress", 0)),
+                snapshot.get("message", ""),
+                snapshot.get("error"),
+                json.dumps(snapshot["result"], ensure_ascii=False)
+                if snapshot.get("result") is not None
+                else None,
+                snapshot.get("created_at"),
+                snapshot.get("started_at"),
+                snapshot.get("finished_at"),
+            ),
+        )
+
+
+def _task_row_to_snapshot(row: dict) -> dict:
+    """把表行还原成 API 层认识的快照字典（时间转回 ISO 字符串）。"""
+
+    def _iso(value):
+        return value.isoformat() if value is not None else None
+
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "stage": row["stage"],
+        "progress": int(row["progress"]),
+        "message": row["message"],
+        "error": row["error"],
+        "force": bool(row["force"]),
+        "retry_of": row["retry_of"],
+        "result": row["result"],
+        "created_at": _iso(row["created_at"]),
+        "started_at": _iso(row["started_at"]),
+        "finished_at": _iso(row["finished_at"]),
+    }
+
+
+def load_latest_index_task_runs(limit: int = 1) -> list[dict]:
+    """按创建时间倒序读回最近的任务快照（默认只要最新一条，供重启恢复）。"""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM index_task_runs ORDER BY created_at DESC LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    return [_task_row_to_snapshot(row) for row in rows]
+
+
+def load_index_task_run(task_id: str) -> dict | None:
+    """按 id 读回单个任务快照；不存在返回 None。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM index_task_runs WHERE id = %s",
+            (task_id,),
+        ).fetchone()
+    return _task_row_to_snapshot(row) if row else None
+
+
+def mark_interrupted_index_task_runs() -> int:
+    """把上次进程遗留的 active 状态改成 failed（服务重启时调用一次）。
+
+    重启意味着旧线程已经没了、进行中的事务已随连接断开而回滚——这些任务既不
+    可能继续跑也不可能变成 completed，如实地标成 failed 并提示重试，比留着
+    一个永远不会更新的"running"卡片诚实。返回受影响的行数，仅供启动日志。
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            UPDATE index_task_runs
+            SET status = 'failed',
+                stage = 'failed',
+                message = '后端曾重启，任务中断；已完成的书保持可用，可安全重试',
+                finished_at = COALESCE(finished_at, now())
+            WHERE status IN {_INDEX_TASK_ACTIVE_SQL}
+            RETURNING id
+            """
+        ).fetchall()
+    return len(rows)
