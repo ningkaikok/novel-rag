@@ -34,6 +34,16 @@
 名次和分数，不重复保存大段原文；原文仍只在最终 `sources` 中发送。普通会话落库时 trace
 会随回答保存，刷新页面后仍可复盘。
 
+M3.4/M3.5 之后 trace 还可能包含两类额外步骤：
+
+- `stage="expand"`（自适应查询扩展）：低置信度信号触发的一次有边界补救，记录触发
+  原因、生成的改写变体和额外耗时；默认关闭（`QUERY_EXPAND_ENABLED=1` 开启）
+- 证据扩展步骤（整章扩展实验）：记录 `expansion_mode`、进入 prompt 的证据 token 数
+  和截断原因；默认 `off` 时该步骤不出现
+
+每次问答落库时还会保存一份 `run_config` 在线配置快照（reranker/生成模型、回答模式
+与路由原因、prompt 模板版本、最终状态），让"这次回答用了什么配置"可追溯。
+
 后端回归测试 `tests/backend/test_retrieval_trace.py` 会固定构造一次排名变化，验证四层
 数据都存在且 `previous_rank/selected` 正确；前端 E2E 会展开面板验证真实交互。
 
