@@ -87,7 +87,9 @@ jobs:
       - name: 运行 pytest（单元测试，不依赖真实数据库/模型）
         # tests/backend/ 下的用例全部用 mock/monkeypatch，不需要真实
         # PostgreSQL、Ollama 或任何云端 key。
-        run: uv run pytest
+        # 用 python -m 而不是裸 pytest：后者不把仓库根加进 sys.path，
+        # 顶层导入 backend/config 依赖 cwd（与本地行为一致）
+        run: uv run python -m pytest
 
   notify:
     name: 飞书通知
