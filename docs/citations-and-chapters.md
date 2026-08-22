@@ -79,11 +79,14 @@ M3.5 把引用质量拆成三个可分别计算的指标（`src/citation_eval.py
 
 配套的影子评测基础设施：
 
-- `tests/citation_shadow_set.json`：18 条人工标注的 (陈述, 证据, 标签) 三元组，
-  证据全部逐字取自原创语料（两篇 CI 短篇 + 雾隐山庄 demo），刻意包含隐喻、
-  指代换名（"黑猫" vs "墨团"）、时间顺序颠倒、数字篡改等易混淆案例
-- `scripts/eval_faithfulness_shadow.py`：对比规则基线与可选的 LLM Judge
-  （`--model glm:glm-4-flash`）和人工标签的差异，输出混淆矩阵与误判清单
+- `tests/citation_shadow_set.json`：53 条人工标注的 (陈述, 证据, 标签) 三元组
+  （x2_ 前缀为 M3.5 第二批扩充），证据全部逐字取自原创语料（两篇 CI 短篇 +
+  雾隐山庄 demo），刻意包含隐喻、指代换名（"黑猫" vs "墨团"）、时间顺序颠倒、
+  数字篡改等易混淆案例，并补齐否定关系、跨句证据、多跳推理、程度/范围篡改、
+  代词链五个类别，每类均有 supported/partial/unsupported 三种标签
+- `scripts/eval_faithfulness_shadow.py`：对比规则基线与若干 LLM Judge
+  （`--model` 可重复传入做横向对比）和人工标签的差异，输出每个方法的混淆矩阵、
+  跨方法汇总指标表与方法间分歧样本；LLM 调用带限速与重试，失败降级 uncertain
 
 首跑结果（2026-08-22）：规则基线一致率仅 16.7%（大量落 uncertain，保守倾向）；
 glm-4-flash Judge 一致率 77.8%，4 条误判全部是「半真半假」类——前半句有据但
