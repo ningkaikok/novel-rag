@@ -1,4 +1,5 @@
 """MCP PoC 服务器的单元测试：不连数据库，只测纯逻辑。"""
+
 import sys
 from pathlib import Path
 
@@ -11,7 +12,12 @@ def test_four_readonly_tools_registered():
     import asyncio
 
     tools = asyncio.run(mcp_server.server.list_tools())
-    assert {t.name for t in tools} == {"list_books", "search_novels", "read_neighbors", "get_chapter"}
+    assert {t.name for t in tools} == {
+        "list_books",
+        "search_novels",
+        "read_neighbors",
+        "get_chapter",
+    }
 
 
 def test_payload_truncates_excerpt_and_marks_schema_version():
