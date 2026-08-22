@@ -7,6 +7,19 @@
 
 ### 新增
 
+- **工程化第二阶段：依赖审计 + Dependabot + 覆盖率**：
+  - CI 接入 `pip-audit`（后端）与 `npm audit --audit-level=high`（前端）；据此修复
+    全部已知漏洞——后端 fastapi/uvicorn/sentence-transformers 等大版本升级
+    （starlette 1.6 / transformers 5.15，219 测试与 embedding 实测兼容）、
+    前端 vite 8 / vitest 4 / playwright 1.62，`npm audit` 清零
+  - `.github/dependabot.yml`：pip / npm / github-actions 三生态周更，
+    minor/patch 分组合并减少 PR 噪音
+  - 覆盖率观测：pytest-cov + vitest `test:coverage` 进 CI（只建基线不设硬门槛）
+- **M5 第一项：Docker Compose 一键部署**：
+  - 多阶段 Dockerfile（Node 构建前端 → uv 装锁定运行时依赖），镜像内
+    FastAPI 检测到 `frontend/dist` 自动托管静态文件，单端口对外
+  - compose 带 pgvector 数据库、HF 模型缓存卷、小说文本挂载、容器健康检查；
+    容器内经 `host.docker.internal` 访问宿主机 Ollama
 - **前后端类型契约**：`scripts/export_openapi.py` 导出 OpenAPI schema，
   openapi-typescript 生成 `frontend/src/api-generated.ts`，`api.ts` 的 REST 类型
   全部改为生成类型的别名导出（SSE 事件协议不在 OpenAPI 内，保留手写并注明原因）；

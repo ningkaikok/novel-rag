@@ -119,7 +119,7 @@ novel-rag/
 
    开发工具（ruff / pyright / pre-commit）在 dev 依赖组里，`uv sync` 一并装好。提交前建议启用 Git 钩子：`uv run pre-commit install`。
 
-4. 安装前端依赖（需要 Node.js 18+）：
+4. 安装前端依赖（需要 Node.js 20.19+，推荐 22——vite 8 与 playwright 1.62 的硬要求；`nvm use 22`）：
 
    ```bash
    cd frontend
@@ -166,7 +166,20 @@ npm run dev
 “检索评测”可逐层查看排名。切到 Agent Lab 后，界面会改为展示最多五次
 “选择工具 → 获得观察 → 继续判断”，最终仍只能依据可点击的原文出处回答。
 
-> 生产部署：`cd frontend && npm run build` 生成静态文件，再由 FastAPI 或 Nginx 托管，即可单端口对外。
+> 生产部署（Docker，推荐）：
+>
+> ```bash
+> docker compose up --build -d
+> # 把 .txt 小说放进 data/novels/ 后建索引：
+> docker compose exec api uv run python src/ingest.py
+> ```
+>
+> 打开 `http://localhost:8000`——单端口同时服务 API 与前端页面。PostgreSQL(pgvector)、
+> 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
+> `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
+>
+> 不用 Docker 的手动路径：`cd frontend && npm run build` 生成静态文件后，
+> FastAPI 会自动检测 `frontend/dist` 并托管（存在即挂载，开发模式不受影响）。
 
 ## 切换生成模型（本地 Ollama / Claude 订阅 / 智谱 GLM）
 

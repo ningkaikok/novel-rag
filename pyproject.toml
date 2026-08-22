@@ -6,18 +6,18 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "fastapi==0.115.6",
-    "uvicorn[standard]==0.34.0",
-    "python-multipart==0.0.20",
+    "fastapi>=0.128",
+    "uvicorn[standard]>=0.38",
+    "python-multipart>=0.0.31",
     # pgvector + 连接池
     "psycopg[binary,pool]>=3.2,<4",
     # 本地 embedding / 重排 / BM25 分词
-    "sentence-transformers==3.3.1",
+    "sentence-transformers>=5",
     "jieba==0.42.1",
     # 云端模型客户端
-    "requests==2.32.3",
+    "requests>=2.33.0",
     # 匿名使用统计（posthog，可整体移除不影响功能）
-    "posthog==3.7.4",
+    "posthog>=3.12",
 ]
 
 [dependency-groups]
@@ -27,6 +27,8 @@ dev = [
     "ruff==0.16.4",
     "pyright>=1.1.390",
     "pre-commit>=4.0",
+    "pip-audit>=2.7",      # 依赖漏洞审计（CI 每次跑）
+    "pytest-cov>=6.0",     # 覆盖率统计（观测用，不设硬门槛）
 ]
 
 # --- Ruff：lint + format（P1 工程化） -----------------------------------
@@ -66,3 +68,14 @@ reportMissingTypeStubs = "none"
 [tool.pytest.ini_options]
 # 与原 pytest.ini 保持一致：只跑 mock 单测，评测集脚本不进默认收集
 testpaths = ["tests/backend"]
+
+
+# --- 覆盖率：只建观测基线，不设硬门槛（P2 工程化） ------------------------
+[tool.coverage.run]
+source = ["src", "backend"]
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+# 单测全部 mock 数据库/模型，覆盖率天然有上限；先记录现状，等真实环境
+# 集成测试补齐后再讨论阈值
+show_missing = true

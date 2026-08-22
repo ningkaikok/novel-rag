@@ -1,0 +1,31 @@
+# 版本控制与本地环境
+.git
+.venv
+venv
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+logs
+
+# 前端：构建产物在镜像内 stage 1 重新生成，依赖单独 COPY 安装
+frontend/node_modules
+frontend/dist
+frontend/playwright-report
+frontend/test-results
+frontend/blob-report
+
+# 文档/评测数据不属于运行时
+docs
+tests
+data/novels
+chroma_db
+*.md
+!README.md
+
+# CI / 工具配置
+.github
+.pre-commit-config.yaml
+.pyright-baseline.json
+.DS_Store

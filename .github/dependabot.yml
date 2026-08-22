@@ -1,0 +1,33 @@
+# Dependabot：三个生态的依赖自动升级（P2 工程化）。
+#
+# 分组策略：minor/patch 合并成一个 PR 周更一次，major 单独出 PR——
+# 学习项目没有专职 review 人力，把升级噪音压到每周至多几条才能坚持处理。
+version: 2
+
+updates:
+  # Python 依赖（uv.lock，Dependabot 2025 起支持 uv）
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # 前端依赖
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # CI 用的 actions 版本跟进
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
