@@ -138,6 +138,19 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   默认后台构建；大部头默认跳过或只处理低上下文质量片段；结果按内容哈希缓存；只有
   本项目评测集证明 Recall/MRR 明显提升才扩大范围。`CONTEXTUAL_MODE=off/auto/on`
   三档，auto 档还要求生成后端可用，避免制造整页失败日志
+- [x] **性能预算与延迟排查（P2）**：大部头实测单次混合检索 2.3~3.3s（见
+  [实验报告](experiments/m34-retrieval-matrix.md)）。用 M3.1 trace 的分阶段耗时
+  定位瓶颈占比（embedding 编码 / HNSW 召回 / BM25 / RRF / 重排），产出延迟画像
+  报告；只对"占比最大且修复成本低"的环节做优化，优化前后必须过夜间评测门禁
+  （已完成：精排占 51%、BM25 占 30% 且 EXPLAIN 实锤全量聚合问题，
+  见 [延迟画像](experiments/m34-latency-profile.md)；两条优化项见下）
+- [ ] BM25 两阶段聚合改写：SQL 内每词按 tf 取 Top-N、Python 端融合，替代
+  「聚合全部命中行再排序」；预计 ~290ms → <50ms，必须过夜间检索门禁验证
+- [ ] 重排候选数/批量调优实验：`RERANK_CANDIDATE_MULTIPLIER` 与批大小在
+  eval_matrix 上做质量×延迟对照（精排占端到端 51%）
+- [ ] **普通查询缓存与命中率观测**：对 (问题, 索引指纹) 做查询级缓存并记录命中率，
+  作为「下一问预取」的前置数据。命中率日志证明追问模式可预测之前，预取仍留在
+  暂缓清单
 - [ ] BGE-M3 对照实验按递进矩阵执行：① 基线 ✅；② BGE-M3 dense + BM25 + 现有
   reranker ✅（小语料无质量收益、成本更高，见实验报告）；③ BGE-M3 dense + sparse
   （需 pgvector `sparsevec` 列与稀疏检索通路）；④ multi-vector late interaction
@@ -275,6 +288,11 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 时，才把已测试的编排函数迁入 LangGraph。
 
 架构边界和迁移示例见 [Agent 平台化架构](agent-platform-architecture.md)。
+
+## 工程运营（持续）
+
+- **Dependabot 周处理节奏**：每周一集中处理一次——minor/patch 组直接合并
+  （CI 全绿即信任），major 单独评估；积压超过一周说明节奏失效，先清零再继续
 
 ## 暂不进入路线图主干
 
