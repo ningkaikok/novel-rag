@@ -45,12 +45,13 @@
 novel-rag/
 ├── src/           # 核心业务逻辑（切分/入库/检索/重排），不依赖 Web 框架
 ├── backend/       # FastAPI 后端（只做"把 src 包成 HTTP"这一件事）
-├── frontend/      # React + Vite 前端
-├── scripts/       # 独立工具（检索评测等）
-├── docs/          # 学习文档，见下
+├── frontend/      # React + Vite 前端（类型由 OpenAPI 生成，见 api-generated.ts）
+├── scripts/       # 独立工具（检索评测、质量门禁、OpenAPI 导出等）
+├── docs/          # 学习文档与实验报告，见下
 ├── tests/         # pytest + 问答评测集与历史基线
 ├── data/novels/   # 放小说 .txt 文件
-└── chroma_db/     # 旧 Chroma 数据目录（迁移后不再使用）
+├── Dockerfile     # 多阶段构建：前端 dist + Python 运行时，单镜像部署
+└── docker-compose.yml  # 应用 + pgvector 一键起（模型缓存/文本挂载持久化）
 ```
 
 ## 📖 学习路线
@@ -60,7 +61,8 @@ novel-rag/
 
 | 文档 | 讲什么 | 什么时候看 |
 | --- | --- | --- |
-| [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | ⭐ 从这里开始 |
+| [**系统技术架构**](docs/system-architecture.md) | 当前全栈架构图：分层、问答链路、索引流水线、数据模型、工程化设施 | ⭐ 想快速建立全局认识 |
+| [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | 从这里深入 RAG |
 | [**代码导读**](docs/code-walkthrough.md) | 这份代码怎么读、建议的阅读顺序、可直接上手跑的实验 | 第一次接触这个项目 |
 | [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写、GraphRAG 的原理与实测 | 想深入某个具体技术 |
 | [**问答模式与自动路由**](docs/answer-routing.md) | 一个输入框如何区分开放问题与小说问题，以及怎样离线评测 | 想理解新增的路由层 |

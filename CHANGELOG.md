@@ -7,6 +7,8 @@
 
 ### 新增
 
+- **系统架构文档**：`docs/system-architecture.md` 用 mermaid 图呈现当前全栈
+  分层、问答链路时序、索引流水线、数据模型与工程化设施，附设计决策速查表。
 - **工程化第二阶段：依赖审计 + Dependabot + 覆盖率**：
   - CI 接入 `pip-audit`（后端）与 `npm audit --audit-level=high`（前端）；据此修复
     全部已知漏洞——后端 fastapi/uvicorn/sentence-transformers 等大版本升级
