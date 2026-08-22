@@ -118,6 +118,12 @@ Agent 工作流的 LangGraph 不是同一个概念。
 | **GraphRAG** | 原理跑通、130 条边建好，但共现推断精度不够（把师父、男性角色都算成伴侣），端到端模型拒答，**净收益为零**。默认关闭，详见[第 6 节](rag-techniques.md) |
 | **jieba 词性标注抽人名** | 完全不可用。复姓被切成地名、三字名被切开，top-40 里**一个真人名都没有** |
 | **Late Chunking** | 没做。需要 8K 上下文的 embedding 模型，本项目的 `bge-small-zh-v1.5` 上限 512 |
+| **chunk300（更碎切分）** | 小语料 recall@1 从 0.8 掉到 0.6；《凡人修仙传》全本从 0.75 掉到 0.625——碎片化伤 top-1 命中，chunk=500 默认值得到双向验证 |
+| **BGE-M3 dense 直换** | 质量与 bge-small 完全持平，但大部头索引 ×11、查询延迟 +47%、存储 ×2.4——纯 dense 场景只有成本没有回报，价值要靠 sparse/multi-vector 通路兑现 |
+
+M3.4 的完整实验矩阵（含配置指纹、索引耗时、存储成本）见
+[检索实验报告](experiments/m34-retrieval-matrix.md)；引用忠实度影子评测首跑
+（规则基线 16.7% vs LLM Judge 77.8%）见[章节与引用文档](citations-and-chapters.md)。
 
 ---
 
