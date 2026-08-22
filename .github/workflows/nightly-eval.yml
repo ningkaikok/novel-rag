@@ -1,0 +1,94 @@
+name: 夜间检索评测
+
+# 路线图 M3.3.5 的「检索评测门禁」：用仓库自带的原创小语料（tests/ci_corpus/，
+# 不含任何版权文本）在隔离的临时数据库里重建索引，跑一遍检索评测集并与提交的
+# 基线（tests/ci_eval_baseline.json）对比。任一核心指标回退超过容差即标红。
+#
+# 为什么是"夜间定时 + 手动触发"而不是每次 push：
+# 1) 需要真实下载 embedding 模型并跑推理，单次约几分钟，不适合挂在每个 PR 上；
+# 2) 检索指标对纯文档/前端改动不敏感，夜间跑足够及时。
+# 改动检索链路（src/ 下）的 PR 也可以手动触发本 workflow 提前验证。
+
+on:
+  schedule:
+    - cron: "0 20 * * *" # 每天 UTC 20:00（北京时间凌晨 4 点）跑一次
+  workflow_dispatch: {} # 允许在改检索代码的 PR 上手动触发
+
+jobs:
+  eval:
+    name: 检索指标门禁
+    runs-on: ubuntu-latest
+
+    services:
+      # pgvector 官方镜像自带 vector 扩展，省去给 runner 装 postgresql-16-pgvector
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_PASSWORD: runner
+          POSTGRES_DB: novel_rag_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://runner:runner@127.0.0.1:5432/novel_rag_ci
+      # 语料很短，默认的 8000 字全文直通会把检索整个跳过、让排名失去意义
+      # （见 scripts/eval_retrieval.py 文档里对全文模式的说明），所以压到 200 字
+      # 强制所有问题都走真实的混合检索链路。
+      FULL_TEXT_MAX_CHARS: "200"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 初始化数据库扩展
+        run: |
+          PGPASSWORD=runner psql -h 127.0.0.1 -U runner -d novel_rag_ci \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+
+      - name: 建立原创小语料索引
+        # 索引质量门禁（硬性错误）会直接抛异常终止本步骤
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("src").resolve()))
+          from embedder import load_embedder
+          from ingest import build_index
+
+          result = build_index(
+              load_embedder(), force=True, novels_dir=Path("tests/ci_corpus")
+          )
+          print("indexed:", result["novels"], "chunks:", result["chunk_count"])
+          PY
+
+      - name: 跑检索评测并对照基线
+        # 同时把本次结果落盘：--strict 判定回退失败时，报告会作为 artifact 留痕，
+        # 方便对照逐条用例看是哪一类问题退化（召回、排序还是跨书路由）。
+        run: |
+          python scripts/eval_retrieval.py \
+            --test-set tests/ci_eval_test_set.json \
+            --compare tests/ci_eval_baseline.json \
+            --save /tmp/ci_eval_report.json \
+            --strict --tolerance 0.05
+
+      - name: 上传失败报告（失败时留痕）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-eval-report
+          path: /tmp/ci_eval_report.json
+          retention-days: 7
