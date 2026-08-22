@@ -1,4 +1,7 @@
 import type { Page } from '@playwright/test';
+// mock 数据直接对齐前端类型契约（src/api.ts 从 api-generated.ts 取的别名）：
+// 用 satisfies 在编辑器/未来把 e2e 纳入 tsc 时就能发现 mock 与后端契约漂移。
+import type { AgentStep, IndexTask, ModelsInfo, Source, StoredTurn, TraceStep } from '../src/api';
 
 /**
  * e2e 测试只验证前端渲染逻辑，所有 /api/* 请求都在这里拦截、返回固定假数据。
@@ -10,7 +13,7 @@ export const MOCK_BOOKS = ['雾隐山庄', '《诡秘之主》（精校版全本
 export const MOCK_MODELS = {
   models: ['qwen2.5:7b', 'claude:sonnet', 'glm:glm-4-flash'],
   current: 'qwen2.5:7b',
-};
+} satisfies ModelsInfo;
 
 export const MOCK_INDEX_TASK = {
   id: 'index-task-1',
@@ -35,29 +38,18 @@ export const MOCK_INDEX_TASK = {
   created_at: '2026-08-09T00:00:00Z',
   started_at: '2026-08-09T00:00:00Z',
   finished_at: '2026-08-09T00:00:01Z',
-};
+} satisfies IndexTask;
 
+// trace / sources 直接复用 REST 契约里的类型：SSE 事件负载虽然不走 OpenAPI，
+// 但后端序列化的正是同一批 Pydantic 模型，mock 保持同构才测得出真实回归。
 export interface MockAskOptions {
-  trace?: {
-    step: string;
-    detail: string;
-    ms?: number;
-    stage_key?: string;
-    candidates?: Array<{
-      novel: string;
-      chunk_id: number;
-      chapter_title?: string;
-      rank: number;
-      score?: number;
-      score_label?: string;
-      previous_rank?: number;
-      selected?: boolean;
-    }>;
-  }[];
-  sources?: { novel: string; chunk_id: number; text: string }[];
+  trace?: TraceStep[];
+  sources?: Source[];
   tokens?: string[];
 }
 
+// satisfies TraceStep[]：契约里 RetrievalCandidate.selected 是必填
+// （后端默认 false，序列化时始终存在），所以前两个阶段的候选要显式补上。
 const DEFAULT_TRACE = [
   { step: '理解问题', detail: '识别到你在问《雾隐山庄》' },
   { step: '检索范围', detail: '只在《雾隐山庄》内检索' },
@@ -67,8 +59,22 @@ const DEFAULT_TRACE = [
     ms: 18,
     stage_key: 'vector',
     candidates: [
-      { novel: '雾隐山庄', chunk_id: 1, rank: 1, score: 0.82, score_label: '余弦相似度' },
-      { novel: '雾隐山庄', chunk_id: 0, rank: 2, score: 0.76, score_label: '余弦相似度' },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 1,
+        rank: 1,
+        score: 0.82,
+        score_label: '余弦相似度',
+        selected: false,
+      },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 0,
+        rank: 2,
+        score: 0.76,
+        score_label: '余弦相似度',
+        selected: false,
+      },
     ],
   },
   {
@@ -77,8 +83,8 @@ const DEFAULT_TRACE = [
     ms: 7,
     stage_key: 'bm25',
     candidates: [
-      { novel: '雾隐山庄', chunk_id: 0, rank: 1, score: 8.3, score_label: 'BM25' },
-      { novel: '雾隐山庄', chunk_id: 1, rank: 2, score: 4.1, score_label: 'BM25' },
+      { novel: '雾隐山庄', chunk_id: 0, rank: 1, score: 8.3, score_label: 'BM25', selected: false },
+      { novel: '雾隐山庄', chunk_id: 1, rank: 2, score: 4.1, score_label: 'BM25', selected: false },
     ],
   },
   {
@@ -122,7 +128,7 @@ const DEFAULT_TRACE = [
       },
       {
         novel: '雾隐山庄',
-        chunk_id: 0,
+        chunk_id: 1,
         rank: 2,
         previous_rank: 1,
         score: 0.91,
@@ -131,7 +137,7 @@ const DEFAULT_TRACE = [
       },
     ],
   },
-];
+] satisfies TraceStep[];
 
 // 注意：文本要足够长（在桌面视口宽度下超过一行），否则 antd 的省略号组件判断
 // 不需要截断，不会渲染"展开"链接，测试点击展开时就会找不到元素——之前踩过这个坑。
@@ -148,7 +154,7 @@ const DEFAULT_SOURCES = [
     chapter_title: '第二章 蚀骨奇毒',
     text: '沈砚之带着师父的信前往雾隐山庄寻访名医顾长风，恰逢顾长风旧疾复发且庄中药材匮乏，正是雪中送炭的好时机。',
   },
-];
+] satisfies Source[];
 
 const DEFAULT_TOKENS = ['雾隐', '山庄', '的庄主是', '顾长风', '[1]', '。'];
 
@@ -185,7 +191,7 @@ function buildAgentSseBody(): string {
       observation: '使用 2 个原文片段生成带引用答案',
       source_ids: ['S1', 'S2'],
     },
-  ];
+  ] satisfies AgentStep[];
   let body = steps.map((step) => `event: agent_step\ndata: ${JSON.stringify(step)}\n\n`).join('');
   body += `event: sources\ndata: ${JSON.stringify(DEFAULT_SOURCES)}\n\n`;
   for (const token of DEFAULT_TOKENS) {
@@ -202,7 +208,7 @@ export async function mockApi(
     models?: typeof MOCK_MODELS;
     ask?: MockAskOptions;
     /** 会话历史：模拟刷新页面后从后端读回的对话 */
-    sessionTurns?: unknown[];
+    sessionTurns?: StoredTurn[];
   } = {},
 ) {
   const books = opts.books ?? MOCK_BOOKS;

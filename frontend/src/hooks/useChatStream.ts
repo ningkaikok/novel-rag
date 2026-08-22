@@ -7,6 +7,7 @@ import {
   type AnswerMode,
   type AskHandlers,
   type Source,
+  type StoredTurn,
 } from '../api';
 import type { ChatMessage } from '../components/MessageBubble';
 // 打字机节奏与消息收尾的纯逻辑抽在 lib/streaming.ts，可独立单测；
@@ -215,17 +216,25 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
       // 由他自己决定要不要滚下去看最近的回答。
       pinnedRef.current = false;
       setMessages(
-        turns.map((t) => ({
-          role: t.role,
-          content: t.content,
-          sources: t.sources ?? undefined,
-          trace: t.trace ?? undefined,
-          // 只有 Agent Lab 的历史消息才会带这个字段；普通问答恒为 null。
-          agentSteps: t.agent_steps ?? undefined,
-          // 历史消息一定不在流式中；被中断的那轮标出来，让用户知道内容不完整
-          streaming: false,
-          interrupted: t.status === 'interrupted',
-        })),
+        // 新契约里 StoredTurn.role 是普通 string（后端就是 str，历史脏数据兜底）：
+        // 只接受已知的两种角色再映射，比 as 断言诚实——万一混进异常数据，
+        // 宁可少显示一轮，也不把它渲染成错误的头像。
+        turns
+          .filter(
+            (t): t is StoredTurn & { role: 'user' | 'assistant' } =>
+              t.role === 'user' || t.role === 'assistant',
+          )
+          .map((t) => ({
+            role: t.role,
+            content: t.content,
+            sources: t.sources ?? undefined,
+            trace: t.trace ?? undefined,
+            // 只有 Agent Lab 的历史消息才会带这个字段；普通问答恒为 null。
+            agentSteps: t.agent_steps ?? undefined,
+            // 历史消息一定不在流式中；被中断的那轮标出来，让用户知道内容不完整
+            streaming: false,
+            interrupted: t.status === 'interrupted',
+          })),
       );
     } catch {
       // 忽略：当作没有历史

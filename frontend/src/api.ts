@@ -1,13 +1,34 @@
 // 与 FastAPI 后端通信的封装。开发期 /api 由 Vite 代理到 http://localhost:8000。
 //
-// 这里有两类通信方式，代表 AI 应用常见的“控制面”和“数据面”：
+// 这里有两类通信方式，代表 AI 应用常见的「控制面」和「数据面」：
 // 1. 普通 JSON 请求：上传、切换模型、查询任务状态——一次请求对应一次完整响应。
 // 2. SSE 流：问答过程中持续接收检索步骤、出处和 token——一个响应包含很多事件。
 // 把协议细节集中在本文件后，React 组件只处理业务状态，不需要理解 HTTP 分帧。
+//
+// ── 类型契约流水线 ─────────────────────────────────────────────────────────
+// REST 接口的请求/响应类型不再手写，统一来自生成文件 src/api-generated.ts：
+//
+//   backend/schemas.py（Pydantic 模型，类型的唯一事实来源）
+//     → uv run python scripts/export_openapi.py   （后端模型变更后先跑这个）
+//     → openapi.json
+//     → cd frontend && npm run gen:api            （再生成 TS 类型）
+//     → src/api-generated.ts（auto-generated，勿手改）
+//
+// 本文件用别名把生成类型导出成业务代码熟悉的旧名字，组件层零改动；
+// 生成物里 Pydantic 可选字段是 `field?: T | null`（比手写版多了 null），
+// 使用处以生成为准：读值时按可空处理，不要回头改生成文件。
+
+import type { components } from './api-generated';
+
+type Schemas = components['schemas'];
 
 // 后端统一的错误响应形状：{"error": {"code": ..., "message": ...}}。
 // 不管是业务代码主动抛的错误、还是 FastAPI 自己的请求校验错误、
 // 还是完全没预料到的异常，都是这个形状，这里只用得到 message。
+//
+// 关于 ErrorCode：后端 errors.py 里确实有 StrEnum，但这个信封是异常处理器
+// 手工拼的 JSONResponse，不是任何 Pydantic response_model，因此不出现在
+// OpenAPI / api-generated.ts 里；前端目前也不消费 code，所以没有对应类型。
 async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const body = await res.json();
@@ -17,87 +38,39 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
   }
 }
 
-export interface Source {
-  novel: string;
-  chunk_id: number;
-  /** 旧索引或没有规范章节标题的 txt 可能为空。 */
-  chapter_title?: string | null;
-  text: string;
-}
+/** 出处：一段被引用的原文（生成物里的名字是 SourceItem）。 */
+export type Source = Schemas['SourceItem'];
 
-// 「思考过程」的一步：检索流水线里某个阶段的真实动作
-export interface TraceStep {
-  step: string;
-  detail: string;
-  /** 本阶段耗时（毫秒）。历史会话里存的旧记录没有这个字段。 */
-  ms?: number;
-  /** 稳定的机器可读阶段名，用于评测面板，不依赖中文展示文案。 */
-  stage_key?: string | null;
-  candidates?: RetrievalCandidate[];
-}
+// 「思考过程」的一步：检索流水线里某个阶段的真实动作。
+// 生成版比旧手写版多了评测用的扩展字段（variants/reasons/evidence_tokens 等），
+// 以及 ms?: number | null——读耗时的地方本来就做了 ?? 0 / != null 兜底，无需改动。
+export type TraceStep = Schemas['TraceStep'];
 
-export interface RetrievalCandidate {
-  novel: string;
-  chunk_id: number;
-  chapter_title?: string | null;
-  rank: number;
-  score?: number | null;
-  score_label?: string | null;
-  previous_rank?: number | null;
-  selected?: boolean;
-}
+export type RetrievalCandidate = Schemas['RetrievalCandidate'];
 
-export interface AgentStep {
-  step: number;
-  reason: string;
-  tool: string;
-  args: Record<string, unknown>;
-  observation: string;
-  source_ids: string[];
-}
+export type AgentStep = Schemas['AgentStep'];
 
-export interface SearchResult extends Source {
-  match_count: number;
-}
+// 命名错位说明：生成物把「单条命中」叫 SearchMatch、「搜索响应信封」叫 SearchResult；
+// 旧手写代码正好相反。别名按旧名字对号入座，调用方零感知。
+export type SearchResult = Schemas['SearchMatch'];
 
-export interface SearchResponse {
-  query: string;
-  total: number;
-  results: SearchResult[];
-}
+export type SearchResponse = Schemas['SearchResult'];
 
+// 索引任务的状态机取值。后端契约里 IndexTaskStatus.status 只是普通 string
+// （schemas.py 写的是 `status: str`），OpenAPI 里没有字面量联合可导入，
+// 所以这个联合保留手写：它描述的是前端真正会遇到的六种状态，
+// 供 UI 判断与文档使用；等后端把它改成 enum/Literal 后再切换到生成物。
 export type IndexTaskState =
   'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
 
-export interface IndexResult {
-  novels: string[];
-  chunk_count: number;
-  added: string[];
-  modified: string[];
-  deleted: string[];
-  unchanged: string[];
-  contextualized: number;
-  relations: number;
-  hierarchy_nodes: number;
-}
+export type IndexResult = Schemas['IndexResult'];
 
-export interface IndexTask {
-  id: string;
-  status: IndexTaskState;
-  stage: string;
-  progress: number;
-  message: string;
-  error?: string | null;
-  force: boolean;
-  retry_of?: string | null;
-  result?: IndexResult | null;
-  created_at: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-}
+export type IndexTask = Schemas['IndexTaskStatus'];
 
-/** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。 */
-export type AnswerMode = 'auto' | 'grounded' | 'free';
+/** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。
+ * 生成物里有同名字面量联合（Schemas['AnswerMode']），直接采用。
+ */
+export type AnswerMode = Schemas['AnswerMode'];
 
 export async function searchBooks(
   query: string,
@@ -179,10 +152,8 @@ export async function retryIndexTask(taskId: string): Promise<IndexTask> {
   return await res.json();
 }
 
-export interface ModelsInfo {
-  models: string[];
-  current: string;
-}
+/** 模型列表接口的响应（生成物里的名字是 ModelList）。 */
+export type ModelsInfo = Schemas['ModelList'];
 
 export async function listModels(): Promise<ModelsInfo> {
   const res = await fetch('/api/models');
@@ -199,6 +170,11 @@ export async function setModel(model: string): Promise<void> {
   if (!res.ok) throw new Error('切换模型失败');
 }
 
+// ── SSE 流式事件类型：刻意保留手写，不走生成流水线 ─────────────────────────
+// OpenAPI 只描述「一问一答」的 REST JSON；/api/ask 与 /api/agent/ask 的响应是
+// text/event-stream，一个连接里推很多个事件，事件协议（step → sources → token*）
+// 是前后端隐式约定，没有 response_model 可导出，自然也不在 api-generated.ts 里。
+// 所以这里的回调签名与事件负载类型保持手写，后端改动时需要同步检查本段。
 export interface AskHandlers {
   /** 检索每完成一步就回调一次，用于把「思考过程」逐条点亮。 */
   onStep?: (step: TraceStep) => void;
@@ -305,17 +281,10 @@ async function consumeEventStream(res: Response, handlers: AskHandlers) {
   }
 }
 
-// 后端存下来的一轮对话（用于刷新页面后恢复）
-export interface StoredTurn {
-  turn_index: number;
-  role: 'user' | 'assistant';
-  content: string;
-  sources: Source[] | null;
-  trace: TraceStep[] | null;
-  // 只有 Agent Lab 那条链路的对话会有这个字段；普通问答模式恒为 null。
-  agent_steps: AgentStep[] | null;
-  status: 'complete' | 'interrupted';
-}
+// 后端存下来的一轮对话（用于刷新页面后恢复）。
+// 注意与旧手写版的差异：生成物里 role / status 是普通 string（后端就是 str），
+// agent_steps 等字段变成可选；消费方（useChatStream）已按可空/宽类型处理。
+export type StoredTurn = Schemas['StoredTurn'];
 
 /** 读回某个会话的历史对话。会话不存在时返回空数组，不算错误。 */
 export async function loadSession(sessionId: string): Promise<StoredTurn[]> {

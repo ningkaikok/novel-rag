@@ -5,3 +5,6 @@ test-results/
 package-lock.json
 .DS_Store
 coverage/
+# 类型契约流水线的生成物：不格式化、不手改
+openapi.json
+src/api-generated.ts
