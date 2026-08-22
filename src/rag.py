@@ -44,6 +44,8 @@ from config import (
     FULL_TEXT_MAX_CHARS,
     HIERARCHY_ENABLED,
     HIERARCHY_TOP_K,
+    QUERY_EXPAND_ENABLED,
+    QUERY_EXPAND_MAX_VARIANTS,
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     RECALL_K,
@@ -57,6 +59,8 @@ from postgres import (
     vector_literal,
 )
 from reranker import rerank_with_scores
+from confidence import compute_confidence
+from query_expander import expand_query_variants
 from chunk_model import SourceChunk, _trace_candidates
 from novel_match import (
     _display_title,
@@ -80,6 +84,11 @@ from generation_mixin import (
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
+    # 自适应查询扩展（M3.4）用的生成函数，由 Web 层注入：本模块刻意不依赖
+    # FastAPI / 云端 SDK，评测脚本和测试里这个属性是 None，扩展自动跳过。
+    # backend/main.py 启动时按 QUERY_EXPAND_MODEL 的前缀路由到 zhipu/claude_cli。
+    expand_generate_fn = None
+
     def __init__(self, embedder: SentenceTransformer | None = None):
         self.embedder = embedder or load_embedder()
         if not has_index():
@@ -243,7 +252,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 sources = payload
         return sources, trace
 
-    def retrieve_hybrid_stream(self, question: str, top_k: int = TOP_K):
+    def retrieve_hybrid_stream(
+        self, question: str, top_k: int = TOP_K, _allow_expand: bool = True
+    ):
         """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
 
         **为什么要做成生成器**：整条流水线要 2 秒左右（交叉编码器重排占大头），
@@ -255,6 +266,10 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         这 2 秒会**阻塞整个事件循环**（其他请求全卡住，连断连检查都跑不了）。
         改成生成器后，接口端可以用 `run_in_threadpool` 逐步取，每取一次就是
         一次让出控制权的机会——和下面消费模型 token 用的是同一套模式。
+
+        ``_allow_expand``：查询扩展（M3.4）的防循环闸门。补救时对每个变体
+        会再次调用本方法，变体的检索**禁止再触发扩展**——否则低置信度问题
+        可能无限递归烧钱。外部调用一律用默认值 True。
 
         yield 的形状：
             ("step",   {"step": 阶段名, "detail": 说明, "ms": 本阶段耗时})
@@ -483,9 +498,13 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         # 注意重排**只能改善排序，救不回没召回到的东西**——如果正确答案根本
         # 不在这 20 个候选里，重排也无能为力。
         candidates = [items[key] for key in ranked_keys[:candidate_k]]
+        # 只有重排真正跑成才有归一化分数可用——低置信度信号绝不用向量/BM25
+        # 原始分凑数（量纲不同，混用必然得出错误阈值，见 confidence.py）。
+        scored_final = None
         if RERANK_ENABLED and len(candidates) > top_k:
             try:
                 scored = rerank_with_scores(question, candidates, len(candidates))
+                scored_final = scored
                 reranked = [source for source, _score in scored]
                 rerank_scores = {
                     (source.novel, source.chunk_id): score for source, score in scored
@@ -527,4 +546,149 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         else:
             result = candidates[:top_k]
 
+        # ---- M3.4 自适应查询扩展：低置信度时的唯一一次补救 ----------------
+        # 挂在重排完成之后：此时才拿得到重排归一化分数，置信度信号才有意义。
+        # 开关关闭（默认）时这段完全不执行，主链路行为与从前逐字节一致。
+        if QUERY_EXPAND_ENABLED and _allow_expand:
+            rescue = self._maybe_expand(
+                question, top_k, candidates, scored_final, took
+            )
+            try:
+                while True:
+                    yield "step", next(rescue)
+            except StopIteration as stop:
+                # 生成器 return 的值放在 StopIteration.value 里——补救成功时
+                # 是重排后的最终结果；没触发/失败时是 None，保持原 result。
+                if stop.value is not None:
+                    result = stop.value
+
         yield "result", result
+
+    def _maybe_expand(
+        self,
+        question: str,
+        top_k: int,
+        candidates: list[SourceChunk],
+        scored_final: list[tuple[SourceChunk, float]] | None,
+        took,
+    ):
+        """低置信度补救：生成变体 → 逐个检索 → 合并去重 → 重排一次。
+
+        写成生成器而不是普通方法：中间要往 trace 里推步骤（触发原因、变体、
+        耗时），而最终结果通过 ``return`` 交给调用方（见上面的 StopIteration
+        消费模式），避免用可变容器在两层之间传来传去。
+
+        **整个问答最多补救一次**由两道闸保证：
+        - 本方法只在 ``_allow_expand=True`` 时被调用；
+        - 变体检索走 retrieve_hybrid_stream(..., _allow_expand=False)，
+          内部不可能再进入本方法。
+        """
+        # 没有重排分数就没有可信信号（重排被关/失败/候选不足时）。宁可放弃
+        # 补救也不用向量/BM25 原始分凑合——错误地触发扩展比不触发更糟。
+        if scored_final is None:
+            return None
+
+        signals = compute_confidence(question, scored_final[:top_k])
+        if not signals["is_low_confidence"]:
+            return None  # 置信度正常：不花一次 LLM 调用，不加任何延迟
+
+        generate_fn = getattr(self, "expand_generate_fn", None)
+        if generate_fn is None:
+            # 开了开关但 Web 层没注入生成函数（比如独立脚本环境）：明确记一条，
+            # 不静默——「为什么开了没生效」这类问题必须能从 trace 里看出来。
+            yield {
+                "step": "查询扩展",
+                "stage_key": "expand",
+                "stage": "expand",
+                "detail": (
+                    f"检测到低置信度（{('、'.join(signals['low_signals']))}），"
+                    "但当前环境没有可用的生成后端，跳过补救"
+                ),
+                "ms": took(),
+                "reasons": signals["low_signals"],
+                "variants": [],
+            }
+            return None
+
+        errors: list[str] = []
+        variants = expand_query_variants(
+            question,
+            generate_fn,
+            max_variants=QUERY_EXPAND_MAX_VARIANTS,
+            errors=errors,
+        )
+        yield {
+            "step": "查询扩展",
+            "stage_key": "expand",
+            "stage": "expand",
+            "detail": (
+                f"低置信度（{'、'.join(signals['low_signals'])}），"
+                + (
+                    f"生成 {len(variants)} 个改写变体补充检索：{'；'.join(variants)}"
+                    if variants
+                    else f"未能生成可用变体（{'; '.join(errors) or '模型输出为空'}）"
+                )
+            ),
+            "ms": took(),
+            "reasons": signals["low_signals"],
+            "variants": variants,
+        }
+        if not variants:
+            return None
+
+        # 对每个变体复用完整混合检索主链路。top_k 取候选池规模而不是最终条数：
+        # 反正后面还要对合并后的池子整体重排一次，多捞几个给重排留挑选余地。
+        merged: dict[tuple[str, int], SourceChunk] = {
+            (c.novel, c.chunk_id): c for c in candidates
+        }
+        for variant in variants:
+            for kind, payload in self.retrieve_hybrid_stream(
+                variant, top_k=RECALL_K, _allow_expand=False
+            ):
+                if kind == "result":
+                    for chunk in payload:
+                        merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
+                    break  # 变体的 trace 步骤不并入主 trace，避免刷屏
+
+        pool = list(merged.values())
+        final_scored: list[tuple[SourceChunk, float]] | None = None
+        detail_extra = ""
+        try:
+            # 合并去重后只重排这一次。原始问题的候选也在池子里，所以坏变体
+            # 顶多稀释候选池，不可能把原始结果挤出最终 top-k 之外。
+            final_scored = rerank_with_scores(question, pool, len(pool))
+            rescued = [chunk for chunk, _score in final_scored[:top_k]]
+            detail_extra = f"合并去重后共 {len(pool)} 个候选，重排取前 {len(rescued)} 段"
+        except Exception as exc:
+            # 补救链路上任何一步失败都退回原始结果——补救不能让回答变得
+            # 比不做补救更差。
+            rescued = None
+            detail_extra = f"补救重排失败，保留原结果（{exc}）"
+
+        still_no_evidence: bool | None = None
+        if final_scored is not None:
+            # 在线没有标准答案，「是否仍无证据」只能近似：补救后信号仍然低
+            # 就如实记录 True，供评测脚本和排查参考。仍无证据时不做任何额外
+            # 动作，与现有的无证据拒答逻辑保持一致。
+            still_no_evidence = compute_confidence(
+                question, final_scored[:top_k]
+            )["is_low_confidence"]
+
+        yield {
+            "step": "扩展重排",
+            "stage_key": "expand_rerank",
+            "stage": "expand",
+            "detail": (
+                detail_extra
+                + (
+                    "；仍未找到可靠证据，按现有拒答逻辑处理"
+                    if still_no_evidence
+                    else ""
+                )
+            ),
+            "ms": took(),
+            "still_no_evidence": still_no_evidence,
+        }
+        if rescued is None:
+            return None
+        return rescued

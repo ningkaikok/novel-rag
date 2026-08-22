@@ -1,0 +1,60 @@
+[
+  {
+    "name": "baseline_chunk500",
+    "env": {},
+    "fingerprint": "de83e267452c",
+    "database": "novel_rag_eval_de83e267452c",
+    "index_seconds": 4.0,
+    "chunk_count": 6,
+    "storage_bytes": 196608,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 68
+    },
+    "case_count": 10
+  },
+  {
+    "name": "chunk300",
+    "env": {
+      "CHUNK_SIZE": "300",
+      "CHUNK_OVERLAP": "50"
+    },
+    "fingerprint": "382e0b191984",
+    "database": "novel_rag_eval_382e0b191984",
+    "index_seconds": 3.5,
+    "chunk_count": 11,
+    "storage_bytes": 245760,
+    "metrics": {
+      "recall@1": 0.6,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.783,
+      "routing_accuracy": 1.0,
+      "avg_ms": 77
+    },
+    "case_count": 10
+  },
+  {
+    "name": "chunk800",
+    "env": {
+      "CHUNK_SIZE": "800",
+      "CHUNK_OVERLAP": "120"
+    },
+    "fingerprint": "5d2104a58ba4",
+    "database": "novel_rag_eval_5d2104a58ba4",
+    "index_seconds": null,
+    "chunk_count": null,
+    "storage_bytes": null,
+    "metrics": {},
+    "case_count": 0,
+    "error": "st.py\", line 615, in build_index\n    assert_embedding_inputs(model, indexed_texts, kind=\"chunk\")\n  File \"/Users/kiki/work/novel-rag/src/index_quality.py\", line 182, in assert_embedding_inputs\n    raise IndexQualityError(\nindex_quality.IndexQualityError: 索引输入质量门禁失败：chunk 有 2 个输入超过 embedding 有效长度 512\n"
+  }
+]

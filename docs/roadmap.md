@@ -129,27 +129,31 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
 设计有边界的补救。向量、BM25、层级导航、RRF 和重排已经是标准主链路，不把它们重复
 包装成“失败后切换”的降级路径。
 
-- [ ] 建立可复现的评测矩阵，对比 embedding 模型、chunk size、overlap 和上下文增强，
+- [x] 建立可复现的评测矩阵，对比 embedding 模型、chunk size、overlap 和上下文增强，
   记录配置指纹、Recall@K、MRR/nDCG、索引耗时、查询延迟、内存与向量存储成本
-- [ ] Contextual Retrieval 改为 `auto` 成本分级，而不是简单改默认开关：实测单条约
+  （`scripts/eval_matrix.py`：隔离临时库 + 配置指纹 + 成本记录；第一轮实验结论见
+  [docs/experiments/m34-retrieval-matrix.md](experiments/m34-retrieval-matrix.md)）
+- [x] Contextual Retrieval 改为 `auto` 成本分级，而不是简单改默认开关：实测单条约
   4.4 秒、超过 2000 片段的书目前直接跳过（见 `src/config.py`）。分级策略——小体量书
   默认后台构建；大部头默认跳过或只处理低上下文质量片段；结果按内容哈希缓存；只有
-  本项目评测集证明 Recall/MRR 明显提升才扩大范围
-- [ ] BGE-M3 对照实验按递进矩阵执行，不做「换模型名」式替换：① 当前
-  bge-small-zh + BM25 + reranker 作为基线；② BGE-M3 dense + BM25 + 现有 reranker；
-  ③ BGE-M3 dense + sparse（`sparsevec`）+ 现有 reranker；④ multi-vector late
-  interaction 单独立项研究。注意 BGE-M3 的多向量检索不等价 Cross-Encoder 重排，
-  不能替代后者
-- [ ] 整章扩展实验：「命中后带入整章替代片段+邻居」必须受 token 预算、章节长度和
-  信噪比约束，作为可配置项在固定评测集上对比，不直接替换现有邻居机制
-- [ ] 实验使用受控样本和临时索引/独立命名空间，不覆盖当前可用索引；报告逐条展示相对
+  本项目评测集证明 Recall/MRR 明显提升才扩大范围。`CONTEXTUAL_MODE=off/auto/on`
+  三档，auto 档还要求生成后端可用，避免制造整页失败日志
+- [ ] BGE-M3 对照实验按递进矩阵执行：① 基线 ✅；② BGE-M3 dense + BM25 + 现有
+  reranker ✅（小语料无质量收益、成本更高，见实验报告）；③ BGE-M3 dense + sparse
+  （需 pgvector `sparsevec` 列与稀疏检索通路）；④ multi-vector late interaction
+  单独立项研究。注意 BGE-M3 的多向量检索不等价 Cross-Encoder 重排，不能替代后者
+- [x] 整章扩展实验：「命中后带入整章」实现为可配置对照项（`CHAPTER_EXPANSION_MODE=
+  off/neighbors/chapter`），受真实 tokenizer 的 token 预算闸门约束（命中片段无条件
+  保留、向两侧对称生长、截断写 trace）；在固定评测集上的大部头对比待跑
+- [x] 实验使用受控样本和临时索引/独立命名空间，不覆盖当前可用索引；报告逐条展示相对
   基线的新增命中和回退案例，而不只给出平均分
-- [ ] 定义可解释的低置信度信号，例如候选分数/排名差距、实体覆盖、跨书分散程度和证据
-  覆盖不足；先通过离线失败集校准，不直接把不同检索器的原始分数混成统一阈值
-- [ ] 自适应查询扩展挂在低置信度信号之后，与现有 query_rewriter 的指代补全区分开：
-  正常问题直接走主链路；置信度不足时生成最多 2～3 个改写再检索一次；仍无证据则请求
+- [x] 定义可解释的低置信度信号：候选分数/排名差距（只用重排器归一化分数）、问题词
+  覆盖率、跨书分散程度；阈值当前为经验起点，用 `scripts/eval_low_confidence.py`
+  在带失败案例的评测集上离线校准后再收紧
+- [x] 自适应查询扩展挂在低置信度信号之后，与现有 query_rewriter 的指代补全区分开：
+  正常问题直接走主链路；置信度不足时生成最多 2~3 个改写再检索一次；仍无证据则请求
   澄清或明确拒答。不对所有问题默认做多查询扩展，避免模型调用、语义漂移和无谓延迟；
-  触发条件、额外耗时和最终路径写入现有检索 trace
+  触发条件、额外耗时和最终路径写入现有检索 trace（`QUERY_EXPAND_ENABLED` 默认关闭）
 
 验收：同一评测配置可重复运行且不污染正式索引；候选在哪一步丢失可以逐条解释；低置信
 度查询最多触发一次补救，仍无可靠证据时不会交给模型自由编造。

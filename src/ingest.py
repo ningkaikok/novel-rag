@@ -11,9 +11,10 @@
 M3 还会在基础片段之上建立“章节摘要 → 全书摘要”导航层。它有独立流水线指纹：
 摘要算法改变时，未变化的书只重算几千个层级节点，不重算几万个基础片段。
 
-开启 Contextual Retrieval 时（CONTEXTUAL_ENABLED=1），还会给"看不出在讲谁"的
+开启 Contextual Retrieval 时（CONTEXTUAL_MODE=auto/on），还会给"看不出在讲谁"的
 片段生成一句上下文说明，**索引「说明 + 原文」但 text 列仍存原文**——
-回答时用原文，不把生成的说明混进正文。
+回答时用原文，不把生成的说明混进正文。auto 档只处理小体量书且要求
+生成后端可用（见 ``_contextual_decision``）。
 
 建议按下面的数据流阅读 ``build_index``：
 
@@ -50,8 +51,8 @@ from config import (
     GRAPH_MIN_NAME_HITS,
     GRAPH_MODEL,
     HIERARCHY_ENABLED,
-    CONTEXTUAL_ENABLED,
     CONTEXTUAL_MAX_CHUNKS_PER_BOOK,
+    CONTEXTUAL_MODE,
     CONTEXTUAL_MODEL,
     CONTEXTUAL_WORKERS,
     NOVELS_DIR,
@@ -149,8 +150,13 @@ def index_pipeline_hash() -> str:
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
         "embedding_model": EMBEDDING_MODEL,
-        "contextual_enabled": CONTEXTUAL_ENABLED,
-        "contextual_model": CONTEXTUAL_MODEL if CONTEXTUAL_ENABLED else None,
+        # 指纹里记录的是模式与上限而不是布尔值：auto 和 on 在同一本书上
+        # 可能产生不同结果，指纹必须能区分它们
+        "contextual_mode": CONTEXTUAL_MODE,
+        "contextual_model": CONTEXTUAL_MODEL if CONTEXTUAL_MODE != "off" else None,
+        "contextual_max_chunks_per_book": (
+            CONTEXTUAL_MAX_CHUNKS_PER_BOOK if CONTEXTUAL_MODE != "off" else None
+        ),
         "graph_enabled": GRAPH_ENABLED,
         "graph_model": GRAPH_MODEL if GRAPH_ENABLED else None,
     }
@@ -247,6 +253,47 @@ def _make_generate_fn(model: str = CONTEXTUAL_MODEL):
     if model.startswith(claude_cli.MODEL_PREFIX):
         return lambda prompt: claude_cli.generate_stream(prompt, model)
     raise RuntimeError(f"{model} 不是支持的模型前缀（需要 glm: 或 claude:）")
+
+
+def _generation_backend_available() -> bool:
+    """检查上下文增强的生成后端当前是否真的可用（auto 档的最后一道闸门）。
+
+    踩过的坑：451 个片段生成"全部失败"却只有一句日志，根因是独立跑 ingest
+    时没有加载 ZHIPU_API_KEY。与其让 auto 档在每次同步时都制造一页失败记录，
+    不如先花几毫秒确认后端存在——glm: 前缀看 key，其他模型名当作 claude CLI。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from backend.dotenv_lite import load_env
+
+    load_env(ROOT / ".env")  # 与 _make_generate_fn 同一套加载顺序，保证判断一致
+    import os
+
+    if CONTEXTUAL_MODEL.startswith("glm:"):
+        return bool(os.environ.get("ZHIPU_API_KEY"))
+    # 其余模型名走 claude --print 子进程
+    import shutil
+
+    return shutil.which("claude") is not None
+
+
+def _contextual_decision(novel: str, chunk_count: int) -> tuple[bool, str]:
+    """决定一本书是否做上下文增强，返回 (是否构建, 跳过原因)。
+
+    三档模式的判定顺序刻意安排成「先看便宜的」：off 直接短路；大书的体积
+    判断不涉及任何 IO；只有前两关都过了才检查生成后端可用性（要读环境变量
+    和 PATH）。返回的 skip_reason 为空字符串表示没有跳过。
+    """
+    if CONTEXTUAL_MODE == "off":
+        return False, ""
+    if chunk_count > CONTEXTUAL_MAX_CHUNKS_PER_BOOK:
+        return False, (
+            f"{chunk_count} 个片段超过上限 {CONTEXTUAL_MAX_CHUNKS_PER_BOOK}"
+            + ("" if CONTEXTUAL_MODE == "auto" else "（on 模式也被上限闸门拦截）")
+        )
+    if CONTEXTUAL_MODE == "auto" and not _generation_backend_available():
+        return False, "auto 模式未检测到可用的生成后端"
+    return True, ""
 
 
 def _build_contexts(chunks: list) -> dict[str, str]:
@@ -546,11 +593,14 @@ def build_index(
             raise RuntimeError(f"《{novel}》没有可索引的文本内容")
 
         contexts: dict[str, str] = {}
-        if CONTEXTUAL_ENABLED:
+        should_build, skip_reason = _contextual_decision(novel, len(chunks))
+        if should_build:
             book_progress("context", 10, f"正在为《{novel}》补充上下文说明")
             contexts = _build_contexts(chunks)
             contextualized += len(contexts)
             check()
+        elif skip_reason:
+            print(f"  跳过《{novel[:16]}》上下文增强：{skip_reason}")
 
         # Contextual Retrieval 的核心约定落地处：索引「生成的说明 + 原文」，
         # 说明按片段内容哈希关联；没生成到说明的片段保持原样。

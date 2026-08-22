@@ -251,12 +251,18 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `HIERARCHY_TOP_K` | `6` | 全局问题最多选择的章节摘要节点数 |
 | `BM25_K1` | `1.2` | BM25 词频饱和速度，越小饱和越快（一般不用动） |
 | `BM25_B` | `0.75` | BM25 文档长度归一化强度，0=不归一化、1=完全按长度惩罚（一般不用动） |
-| `CONTEXTUAL_ENABLED` | `0` | 设成 `1` 开启上下文增强（给缺上下文的片段用 LLM 补一句说明，**会显著拉长变化书的索引时间**） |
+| `CONTEXTUAL_MODE` | `auto` | 上下文增强三档：`off` 关闭 / `auto` 小体量书默认构建、大部头跳过且要求生成后端可用 / `on` 强制（仍受片段数上限拦截） |
+| `CONTEXTUAL_ENABLED` | 空 | 旧开关，兼容保留：设 `1` 等价 `CONTEXTUAL_MODE=on`；设 `0` 且未另设 MODE 时等价 `off` |
 | `CONTEXTUAL_MAX_CHUNKS_PER_BOOK` | `2000` | 成本闸门：超过这个片段数的书直接跳过，不做上下文增强 |
 | `CONTEXTUAL_MODEL` | `glm:glm-4-flash` | 生成上下文说明用的模型（用便宜的小模型就够） |
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
 | `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
+| `QUERY_EXPAND_ENABLED` | `0` | 低置信度自适应查询扩展（M3.4）：信号不足时生成最多 2~3 个改写再补救检索一次；默认关闭 |
+| `QUERY_EXPAND_MODEL` | 同 `QUERY_REWRITE_MODEL` | 扩展变体生成的模型 |
+| `QUERY_EXPAND_MAX_VARIANTS` | `3` | 单次补救最多生成的改写变体数 |
+| `CHAPTER_EXPANSION_MODE` | `off` | 证据带入方式：`off/neighbors` 用现有邻居机制 / `chapter` 命中片段所在整章按原文顺序进入 prompt |
+| `CHAPTER_EXPANSION_MAX_TOKENS` | `3000` | 整章扩展的真实 token 预算闸门，超预算从离命中最远处截断并写 trace |
 | `GRAPH_ENABLED` | `0` | 设成 `1` 建人物关系图，让"某某有哪些伴侣/师父"这类问题能查图而不是靠碰运气 |
 | `GRAPH_MAX_CHUNKS_PER_RELATION` | `80` | 成本闸门：每个「书×关系」最多采样多少片段去抽人名 |
 | `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名用的模型（便宜的小模型就够） |

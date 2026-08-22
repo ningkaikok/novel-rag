@@ -262,8 +262,9 @@ class _FakeRag:
             )()
         ]
 
-    def expand_neighbors(self, sources):
-        return sources
+    def build_answer_context(self, sources):
+        """M3.4 起的上下文组装统一入口；off 档等价旧 expand_neighbors 且无 trace 步骤。"""
+        return sources, None
 
     def build_prompt(self, question, sources):
         return f"问题：{question}"
