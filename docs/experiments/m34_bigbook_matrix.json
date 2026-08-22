@@ -1,0 +1,33 @@
+[
+  {
+    "name": "big_baseline_c500",
+    "env": {},
+    "fingerprint": "1690f98bd4fc",
+    "index_seconds": 260.7,
+    "chunk_count": 19901,
+    "storage_bytes": 199802880,
+    "metrics": {"recall@1": 0.75, "recall@3": 0.75, "recall@5": 0.75, "mrr": 0.768, "routing_accuracy": 1.0, "avg_ms": 2262},
+    "case_count": 8,
+    "_note": "三次运行为独立调用，recall@10/20 未留存于会话输出，故缺省；storage_bytes 由矩阵表格 KB 值换算"
+  },
+  {
+    "name": "big_c300",
+    "env": {"CHUNK_SIZE": "300", "CHUNK_OVERLAP": "50"},
+    "fingerprint": "a56ed7cd0510",
+    "index_seconds": 346.5,
+    "chunk_count": 35108,
+    "storage_bytes": 331423744,
+    "metrics": {"recall@1": 0.625, "recall@3": 0.75, "recall@5": 0.75, "mrr": 0.688, "routing_accuracy": 1.0, "avg_ms": 2602},
+    "case_count": 8
+  },
+  {
+    "name": "big_m3_c500",
+    "env": {"EMBEDDING_MODEL": "BAAI/bge-m3"},
+    "fingerprint": "da82f6e38cf9",
+    "index_seconds": 2906.7,
+    "chunk_count": 19901,
+    "storage_bytes": 471982080,
+    "metrics": {"recall@1": 0.75, "recall@3": 0.75, "recall@5": 0.75, "recall@10": 0.875, "recall@20": 0.875, "mrr": 0.771, "routing_accuracy": 1.0, "avg_ms": 3317},
+    "case_count": 8
+  }
+]

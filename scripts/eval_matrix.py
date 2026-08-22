@@ -234,6 +234,7 @@ def print_matrix(rows: list[dict]) -> None:
 
 
 def main() -> None:
+    global CORPUS_DIR, TEST_SET
     parser = argparse.ArgumentParser(description="检索实验矩阵（隔离临时库）")
     parser.add_argument(
         "--config",
@@ -242,9 +243,29 @@ def main() -> None:
         help="追加一个配置（如 '{\"name\":\"x\",\"env\":{\"CHUNK_SIZE\":\"300\"}}'）；"
         "可重复传多次。不传则使用默认的三档 chunk 对照",
     )
+    parser.add_argument(
+        "--corpus-dir",
+        metavar="DIR",
+        help=f"语料目录（默认 {CORPUS_DIR}）。大部头实验指向本地受控样本目录，"
+        "注意版权文本不得放进仓库",
+    )
+    parser.add_argument(
+        "--test-set",
+        metavar="FILE",
+        help=f"评测集（默认 {TEST_SET}），应与语料配套",
+    )
     parser.add_argument("--output", metavar="FILE", help="把完整结果写成 JSON 文件")
     parser.add_argument("--keep-db", action="store_true", help="保留临时库供调试（默认跑完即删）")
     args = parser.parse_args()
+
+    if args.corpus_dir:
+        CORPUS_DIR = Path(args.corpus_dir).resolve()
+        if not CORPUS_DIR.is_dir():
+            sys.exit(f"语料目录不存在：{CORPUS_DIR}")
+    if args.test_set:
+        TEST_SET = Path(args.test_set).resolve()
+        if not TEST_SET.is_file():
+            sys.exit(f"评测集不存在：{TEST_SET}")
 
     configs = [json.loads(c) for c in args.config] if args.config else DEFAULT_CONFIGS
     rows = []
