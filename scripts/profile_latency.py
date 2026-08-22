@@ -14,6 +14,7 @@
 
 只做只读检索：不连 Ollama、不写任何表。数据库用 DATABASE_URL 指向的真实库。
 """
+
 import argparse
 import json
 import statistics
@@ -75,7 +76,9 @@ def main() -> None:
         print(f"第 {round_no + 1}/{args.rounds} 轮完成", file=sys.stderr)
 
     print()
-    print(f"{'阶段':<14} {'次数':>5} {'P50(ms)':>9} {'P95(ms)':>9} {'均值':>8} {'占总时长%':>9}")
+    print(
+        f"{'阶段':<14} {'次数':>5} {'P50(ms)':>9} {'P95(ms)':>9} {'均值':>8} {'占总时长%':>9}"
+    )
     print("-" * 62)
     total_mean = statistics.mean(totals)
     rows = sorted(stage_ms.items(), key=lambda kv: -statistics.mean(kv[1]))
@@ -97,7 +100,11 @@ def main() -> None:
             {
                 "rounds": args.rounds,
                 "questions": len(QUESTIONS),
-                "totals_ms": {"p50": percentile(totals, 50), "p95": percentile(totals, 95), "mean": total_mean},
+                "totals_ms": {
+                    "p50": percentile(totals, 50),
+                    "p95": percentile(totals, 95),
+                    "mean": total_mean,
+                },
                 "stages": {
                     stage: {
                         "count": len(v),
