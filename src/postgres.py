@@ -27,7 +27,13 @@ import psycopg
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import ConnectionPool
 
-from config import DATABASE_URL, DB_POOL_MAX_SIZE, DB_POOL_MIN_SIZE
+from config import (
+    DATABASE_URL,
+    DB_POOL_MAX_SIZE,
+    DB_POOL_MIN_SIZE,
+    GRAPH_MIN_CONFIDENCE,
+    GRAPH_REQUIRE_EXPLICIT,
+)
 
 # 进程级共享连接池，由 FastAPI 的 lifespan 在启动时调用 init_pool() 初始化。
 # 独立脚本（ingest.py、tests/run_qa_tests.py 等）不会调用 init_pool()，
@@ -91,6 +97,46 @@ def vector_literal(values: Iterable[float]) -> str:
     return "[" + ",".join(str(float(value)) for value in values) + "]"
 
 
+# --- 人物关系图（M4 schema v2）的 DDL 常量 -----------------------------------
+# 抽成常量是因为同一段 DDL 要在两个入口复用：建索引事务（_ensure_index_schema）
+# 和 FastAPI 启动时的独立升级入口（ensure_graph_review_schema）——审核界面
+# 不应该要求用户先重建一次索引才能打开页面。
+_CHARACTER_RELATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS character_relations (
+    novel      TEXT    NOT NULL,
+    person_a   TEXT    NOT NULL,
+    person_b   TEXT    NOT NULL,
+    relation   TEXT    NOT NULL,
+    weight     INTEGER NOT NULL,
+    -- M4 schema v2：以下五列是质量闭环的基础。老库通过幂等 ALTER 补列，
+    -- 新库建表时直接带上，所以这里的形状就是最终形状。
+    direction        TEXT,
+    confidence       REAL,
+    evidence_type    TEXT,
+    source_chunk_ids JSONB,
+    review_status    TEXT NOT NULL DEFAULT 'pending',
+    PRIMARY KEY (novel, person_a, person_b, relation)
+)
+"""
+
+_GRAPH_CHARACTERS_DDL = """
+CREATE TABLE IF NOT EXISTS graph_characters (
+    novel        TEXT NOT NULL,
+    relation     TEXT NOT NULL,
+    sample_hash  TEXT NOT NULL,
+    -- 抽到的人名列表（JSON 数组）。存整个列表而不是一行一个名字：
+    -- 它是「一次抽取的完整结果」，拆开存反而要额外判断是不是抽全了。
+    names        JSONB NOT NULL,
+    -- M4：LLM 抽出的关系记录（含方向/置信度/来源片段）。NULL 表示
+    -- 「还没用 LLM 抽过」，与「抽过了但没抽到」（空数组）区分开：
+    -- 前者下次要重试，后者直接复用。老库经幂等 ALTER 补列。
+    relations    JSONB,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (novel, relation, sample_hash)
+)
+"""
+
+
 def _ensure_index_schema(conn, dimension: int) -> None:
     """在一个现有事务里幂等创建索引相关表。"""
     if dimension <= 0:
@@ -124,20 +170,10 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS character_relations (
-            novel      TEXT    NOT NULL,
-            person_a   TEXT    NOT NULL,
-            person_b   TEXT    NOT NULL,
-            relation   TEXT    NOT NULL,
-            weight     INTEGER NOT NULL,
-            PRIMARY KEY (novel, person_a, person_b, relation)
-        )
-        """
-    )
-    # 文件清单不和某次任务绑定。只有一本书的两套索引在同一事务里完整写入后，
-    # 才更新这里的哈希；任务失败或取消时事务回滚，下次会安全地再次识别为待处理。
+    # character_relations 的建表与补列统一在 _ensure_graph_schema 里做；
+    # index_manifest 是文件清单，不和某次任务绑定。只有一本书的两套索引
+    # 在同一事务里完整写入后，才更新这里的哈希；任务失败或取消时事务回滚，
+    # 下次会安全地再次识别为待处理。
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS index_manifest (
@@ -155,13 +191,13 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         "NOT NULL DEFAULT '{}'::jsonb"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)")
+    # BM25 两阶段聚合（M3.4 性能优化，见 retrieval_mixins.keyword_retrieve）
+    # 的每词 Top-N 依赖这个复合索引：候选子查询的 ORDER BY (tf DESC, novel,
+    # chunk_id) 与索引键序一致，常见词取前 N 行时可以提前终止扫描，而不是
+    # 读完并排序全部命中行。缺了它查询结果不变，只是退化为每词排序。
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
-        "ON character_relations (person_a, relation)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS character_relations_b_idx "
-        "ON character_relations (person_b, relation)"
+        "CREATE INDEX IF NOT EXISTS chunk_terms_term_tf_idx "
+        "ON chunk_terms (term, tf DESC, novel, chunk_id)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS novel_chunks_novel_chunk_idx "
@@ -171,7 +207,65 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         "CREATE INDEX IF NOT EXISTS novel_chunks_embedding_hnsw_idx "
         "ON novel_chunks USING hnsw (embedding vector_cosine_ops)"
     )
+    _ensure_graph_schema(conn)
     _ensure_hierarchy_schema(conn, dimension)
+
+
+def _ensure_graph_schema(conn) -> None:
+    """幂等准备人物关系图两张表的 schema v2（M4 质量闭环）。
+
+    沿用全项目统一的 ``ADD COLUMN IF NOT EXISTS`` 迁移模式：新库由
+    CREATE TABLE 直接带全列（ALTER 全部空跑），老库逐条补列、已有数据
+    不受影响。补列之后做一次**有条件的回填**——把 v1 时代留下的旧行如实
+    标注为共现推断边（它们本来就是共现统计的产物），否则这些行的
+    evidence_type 是 NULL，质量门槛无法区分对待。WHERE 条件保证重复执行
+    是零成本的。
+
+    刻意做成自包含：不依赖 _ensure_index_schema 先建好基础表，这样 FastAPI
+    启动时单独调用它（ensure_graph_review_schema）也不会因为表不存在而失败。
+    """
+    conn.execute(_CHARACTER_RELATIONS_DDL)
+    conn.execute("ALTER TABLE character_relations ADD COLUMN IF NOT EXISTS direction TEXT")
+    conn.execute("ALTER TABLE character_relations ADD COLUMN IF NOT EXISTS confidence REAL")
+    conn.execute("ALTER TABLE character_relations ADD COLUMN IF NOT EXISTS evidence_type TEXT")
+    conn.execute(
+        "ALTER TABLE character_relations ADD COLUMN IF NOT EXISTS source_chunk_ids JSONB"
+    )
+    conn.execute(
+        "ALTER TABLE character_relations ADD COLUMN IF NOT EXISTS "
+        "review_status TEXT NOT NULL DEFAULT 'pending'"
+    )
+    # v1 旧行回填：低置信度的共现推断。只动 evidence_type IS NULL 的行，
+    # 因此幂等且几乎零成本。
+    conn.execute(
+        "UPDATE character_relations SET evidence_type = 'co_occurrence', confidence = 0.3 "
+        "WHERE evidence_type IS NULL"
+    )
+    # 关系边的查询索引放在这里而不是 _ensure_index_schema：建表也在这一个函数里，
+    # 顺序保证了「先表后索引」。此前放在 _ensure_index_schema 时会先于建表执行，
+    # 全新数据库（临时实验库、夜间 CI 库）会直接 UndefinedTable 失败。
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
+        "ON character_relations (person_a, relation)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_b_idx "
+        "ON character_relations (person_b, relation)"
+    )
+    # 人名抽取缓存表：M4 起 LLM 抽出的关系记录一并缓存，否则"人名命中缓存"
+    # 会让抽取静默降级成纯共现，质量悄悄倒退。
+    conn.execute(_GRAPH_CHARACTERS_DDL)
+    conn.execute("ALTER TABLE graph_characters ADD COLUMN IF NOT EXISTS relations JSONB")
+
+
+def ensure_graph_review_schema() -> None:
+    """FastAPI 启动时的独立入口：确保审核端点依赖的表和列存在（幂等）。
+
+    审核界面读写的只是 character_relations / graph_characters 两张表，
+    不应该要求用户先重建一次索引才能打开页面。
+    """
+    with connect() as conn:
+        _ensure_graph_schema(conn)
 
 
 def _ensure_hierarchy_schema(conn, dimension: int) -> None:
@@ -285,7 +379,7 @@ def replace_novel_index(
     per_chunk_terms: list[dict[str, int]],
     source_hash: str,
     pipeline_hash: str,
-    relations: list[tuple[str, str, str, str, int]] | None = None,
+    relations: list[dict] | None = None,
     cancel_check: Callable[[], None] | None = None,
     hierarchy_rows: list[tuple] | None = None,
     hierarchy_hash: str | None = None,
@@ -296,6 +390,10 @@ def replace_novel_index(
     embedding 和分词在进入这里之前已经准备好。删除旧数据、写向量、COPY BM25、
     写关系边和更新 manifest 共享同一事务；任何异常（包括用户取消）都会回滚，
     因此检索永远只会看到旧版或完整新版，不会看到“向量已换、BM25 只写一半”。
+
+    ``relations`` 是 graph.build_edge_records / extract_relations_llm 产出的
+    边记录 dict（含 M4 的方向/置信度/证据类型/来源片段），review_status 入库时
+    统一从 'pending' 起步——重建索引会重置审核结果，因为边本身已经是新抽的了。
     """
     if len(rows) != len(per_chunk_terms):
         raise ValueError("rows and per_chunk_terms must have the same length")
@@ -335,9 +433,26 @@ def replace_novel_index(
             with conn.cursor() as cursor:
                 cursor.executemany(
                     "INSERT INTO character_relations "
-                    "(novel, person_a, person_b, relation, weight) "
-                    "VALUES (%s, %s, %s, %s, %s)",
-                    relations,
+                    "(novel, person_a, person_b, relation, weight, direction, "
+                    "confidence, evidence_type, source_chunk_ids, review_status) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                    [
+                        (
+                            record["novel"],
+                            record["person_a"],
+                            record["person_b"],
+                            record["relation"],
+                            int(record["weight"]),
+                            record.get("direction"),
+                            record.get("confidence"),
+                            record.get("evidence_type"),
+                            json.dumps(
+                                record.get("source_chunk_ids") or [], ensure_ascii=False
+                            ),
+                            "pending",
+                        )
+                        for record in relations
+                    ],
                 )
         if hierarchy_rows is not None:
             with conn.cursor() as cursor:
@@ -512,45 +627,97 @@ def ensure_novel_metadata_schema() -> None:
             )
 
 
+def _relation_visibility_clause(
+    require_explicit: bool | None = None, min_confidence: float | None = None
+) -> tuple[str, list]:
+    """生成在线查询的可见性过滤 SQL 片段和参数（M4 质量门槛）。纯函数便于单测。
+
+    两条规则，按严格程度递进：
+    - **被人工拒绝的边永远不可见**——审核结果是最高优先级，任何开关都不能
+      让 rejected 的边复活；
+    - GRAPH_REQUIRE_EXPLICIT 开启时（默认），只有「明确关系陈述」且置信度
+      达标的边才进入在线结果；co_occurrence 边保留在库里供审核界面处理，
+      只是不再自动展示给问答模型。
+    COALESCE 兜底是为了 v1 旧行：理论上迁移已回填，但防御 NULL 永远不亏。
+    """
+    if require_explicit is None:
+        require_explicit = GRAPH_REQUIRE_EXPLICIT
+    if min_confidence is None:
+        min_confidence = GRAPH_MIN_CONFIDENCE
+    clause = "COALESCE(review_status, 'pending') <> 'rejected'"
+    params: list = []
+    if require_explicit:
+        clause += " AND evidence_type = 'explicit' AND COALESCE(confidence, 0) >= %s"
+        params.append(min_confidence)
+    return clause, params
+
+
 def query_relations(
     person: str, relation: str, limit: int = 8, min_weight: int = 2
 ) -> list[tuple[str, int]]:
-    """查某个人物在某种关系下的所有对手方，按共现次数从高到低。
+    """查某个人物在某种关系下的所有对手方，按权重从高到低。
 
-    min_weight 默认 2：只共现过一次的边大概率是偶然同框（两个人碰巧出现在
+    权重的含义随边的来源不同：共现边是共现次数，LLM 边是来源片段数——
+    都是"支持这条关系的证据量"，排序语义一致。
+
+    min_weight 默认 2：只出现一次的边大概率是偶然同框（两个人碰巧出现在
     同一段提到「师父」的话里），过滤掉能显著降噪。
 
-    人名可能存在于 person_a 或 person_b 任一侧（边是无向的、按字典序存的），
-    所以两侧都要查，用 UNION ALL 合并。
+    人名可能存在于 person_a 或 person_b 任一侧（person_a/person_b 按字典序存，
+    关系方向只写在 direction 里），所以两侧都要查，用 UNION ALL 合并；
+    可见性过滤（审核状态 + M4 质量门槛）对两侧同样生效。
     """
+    clause, gate_params = _relation_visibility_clause()
+    # psycopg 的存根把查询参数声明成 LiteralString，运行时拼好的门槛片段
+    # 过不了静态检查；片段来自上面的纯函数、不含任何外部输入，安全。
+    gated_sql = f"""
+        SELECT other, SUM(weight) AS weight FROM (
+            SELECT person_b AS other, weight FROM character_relations
+            WHERE person_a = %s AND relation = %s AND {clause}
+            UNION ALL
+            SELECT person_a AS other, weight FROM character_relations
+            WHERE person_b = %s AND relation = %s AND {clause}
+        ) AS both_sides
+        GROUP BY other
+        HAVING SUM(weight) >= %s
+        ORDER BY weight DESC
+        LIMIT %s
+        """
     with connect() as conn:
         rows = conn.execute(
-            """
-            SELECT other, SUM(weight) AS weight FROM (
-                SELECT person_b AS other, weight FROM character_relations
-                WHERE person_a = %s AND relation = %s
-                UNION ALL
-                SELECT person_a AS other, weight FROM character_relations
-                WHERE person_b = %s AND relation = %s
-            ) AS both_sides
-            GROUP BY other
-            HAVING SUM(weight) >= %s
-            ORDER BY weight DESC
-            LIMIT %s
-            """,
-            (person, relation, person, relation, min_weight, limit),
+            gated_sql,  # type: ignore[reportArgumentType]
+            (
+                person,
+                relation,
+                *gate_params,
+                person,
+                relation,
+                *gate_params,
+                min_weight,
+                limit,
+            ),
         ).fetchall()
     return [(r["other"], int(r["weight"])) for r in rows]
 
 
 def known_characters(novel: str | None = None) -> list[str]:
-    """图里出现过的所有人物名（用于在问题里识别"用户问的是谁"）。"""
-    scope = "WHERE novel = %s" if novel else ""
+    """图里出现过的所有人物名（用于在问题里识别"用户问的是谁"）。
+
+    只统计未被拒绝的边上的名字：一条边被拒绝后，它两端的人名不应再因为
+    这条死边被当成图检索的查询对象。
+    """
+    not_rejected = "COALESCE(review_status, 'pending') <> 'rejected'"
+    if novel:
+        scope_a = f"WHERE novel = %s AND {not_rejected}"
+        scope_b = f"WHERE novel = %s AND {not_rejected}"
+    else:
+        scope_a = f"WHERE {not_rejected}"
+        scope_b = f"WHERE {not_rejected}"
     params = (novel,) if novel else ()
     with connect() as conn:
         rows = conn.execute(
-            f"SELECT DISTINCT person_a AS name FROM character_relations {scope} "
-            f"UNION SELECT DISTINCT person_b FROM character_relations {scope}",
+            f"SELECT DISTINCT person_a AS name FROM character_relations {scope_a} "
+            f"UNION SELECT DISTINCT person_b FROM character_relations {scope_b}",
             params + params,
         ).fetchall()
     return [r["name"] for r in rows]
@@ -570,48 +737,61 @@ def ensure_graph_cache() -> None:
     - 什么都没改 → 全部命中缓存，零调用
     """
     with connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS graph_characters (
-                novel        TEXT NOT NULL,
-                relation     TEXT NOT NULL,
-                sample_hash  TEXT NOT NULL,
-                -- 抽到的人名列表（JSON 数组）。存整个列表而不是一行一个名字：
-                -- 它是「一次抽取的完整结果」，拆开存反而要额外判断是不是抽全了。
-                names        JSONB NOT NULL,
-                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (novel, relation, sample_hash)
-            )
-            """
-        )
+        conn.execute(_GRAPH_CHARACTERS_DDL)
+        # M4：老库补 relations 列（新库建表语句已带）。DDL 与 _ensure_graph_schema
+        # 共用同一个常量，两处不可能漂移。
+        conn.execute("ALTER TABLE graph_characters ADD COLUMN IF NOT EXISTS relations JSONB")
 
 
-def load_cached_graph_characters(
-    novel: str, relation: str, sample_hash: str
-) -> list[str] | None:
-    """读回缓存的人名列表；没缓存返回 None（注意和"缓存了空列表"区分开）。"""
+def load_cached_graph_characters(novel: str, relation: str, sample_hash: str) -> dict | None:
+    """读回缓存的抽取结果；没缓存返回 None（和"缓存了空结果"区分开）。
+
+    返回 {"names": [...], "relations": [...] | None}：
+    - names 是人名列表；
+    - relations 是 M4 的 LLM 关系记录列表，**None 表示还没用 LLM 抽过**
+      （老缓存行、或上次抽取失败）——调用方据此决定要不要重试抽取，
+      而不是误以为"LLM 确认过没有关系"。
+    """
     with connect() as conn:
         row = conn.execute(
-            "SELECT names FROM graph_characters "
+            "SELECT names, relations FROM graph_characters "
             "WHERE novel = %s AND relation = %s AND sample_hash = %s",
             (novel, relation, sample_hash),
         ).fetchone()
-    return list(row["names"]) if row else None
+    if not row:
+        return None
+    return {
+        "names": list(row["names"]),
+        # psycopg 会把 JSONB 解成 list；显式转一遍让"没抽过"(NULL) 保持 None
+        "relations": list(row["relations"]) if row["relations"] is not None else None,
+    }
 
 
 def save_graph_characters(
-    novel: str, relation: str, sample_hash: str, names: list[str]
+    novel: str,
+    relation: str,
+    sample_hash: str,
+    names: list[str],
+    relations: list[dict] | None = None,
 ) -> None:
-    """写入抽取结果（幂等）。空列表也会写——"这批确实没抽到人名"本身
-    就是有效结果，缓存下来能避免下次重复调用。
+    """写入抽取结果（幂等）。空列表也会写——"这批确实没抽到"本身就是有效结果。
+
+    ``relations`` 只在 LLM 抽取**成功跑完**时传（哪怕空列表，也代表"模型确认过
+    这些片段里没有关系"）；纯共现路径不传，保持 NULL 以便后端可用时重试。
     """
     with connect() as conn:
         conn.execute(
-            "INSERT INTO graph_characters (novel, relation, sample_hash, names) "
-            "VALUES (%s, %s, %s, %s::jsonb) "
+            "INSERT INTO graph_characters (novel, relation, sample_hash, names, relations) "
+            "VALUES (%s, %s, %s, %s::jsonb, %s::jsonb) "
             "ON CONFLICT (novel, relation, sample_hash) "
-            "DO UPDATE SET names = EXCLUDED.names",
-            (novel, relation, sample_hash, json.dumps(names, ensure_ascii=False)),
+            "DO UPDATE SET names = EXCLUDED.names, relations = EXCLUDED.relations",
+            (
+                novel,
+                relation,
+                sample_hash,
+                json.dumps(names, ensure_ascii=False),
+                json.dumps(relations, ensure_ascii=False) if relations is not None else None,
+            ),
         )
 
 
@@ -932,3 +1112,82 @@ def mark_interrupted_index_task_runs() -> int:
             """
         ).fetchall()
     return len(rows)
+
+
+# ------------------------------------------------------- 关系边审核（M4 质量闭环）
+# 共现推断必然产生假边，LLM 抽取也只能降低而不是消灭错误率。与其让门槛"一刀切"，
+# 不如把被门槛挡住的边留在库里、交给人工逐条通过/拒绝——机器判断和人工复核
+# 各管一段，这就是"质量闭环"的含义。
+
+VALID_REVIEW_STATUSES = ("pending", "approved", "rejected")
+
+
+def list_relation_edges(
+    status: str | None = "pending", limit: int = 50, offset: int = 0
+) -> tuple[list[dict], int]:
+    """按审核状态分页列出关系边，附证据摘录；返回 (边列表, 符合条件的总数)。
+
+    这是审核界面的数据源。status=None 列全部状态（默认只看 pending——审核员
+    打开页面最关心的是待处理队列）。v1 旧行的 review_status 经迁移回填不会是
+    NULL，但查询仍用 COALESCE 防御。
+
+    证据摘录取第一个来源片段的原文前 80 字：摘录只是帮审核员快速定位，
+    完整原文永远以 novel_chunks 为准，不在关系表里复制第二份。
+    """
+    where = "WHERE COALESCE(r.review_status, 'pending') = %s" if status else ""
+    params: list = [status] if status else []
+    with connect() as conn:
+        total_row = conn.execute(
+            f"SELECT count(*) AS count FROM character_relations r {where}",
+            params,
+        ).fetchone()
+        rows = conn.execute(
+            f"""
+            SELECT r.novel, r.person_a, r.person_b, r.relation, r.weight,
+                   r.direction, r.confidence, r.evidence_type,
+                   COALESCE(r.source_chunk_ids, '[]'::jsonb) AS source_chunk_ids,
+                   COALESCE(r.review_status, 'pending') AS review_status,
+                   LEFT(nc.text, 81) AS evidence_head
+            FROM character_relations r
+            LEFT JOIN novel_chunks nc
+                ON nc.novel = r.novel
+                AND nc.chunk_id = (COALESCE(r.source_chunk_ids, '[]'::jsonb) ->> 0)::int
+            {where}
+            ORDER BY r.weight DESC, r.novel, r.person_a, r.person_b
+            LIMIT %s OFFSET %s
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+
+    edges = []
+    for row in rows:
+        edge = dict(row)
+        # 摘录截到 80 字（LEFT 取 81 是为了知道"还有更多"时能补省略号）
+        head = edge.pop("evidence_head") or ""
+        edge["evidence_excerpt"] = head[:80] + ("…" if len(head) > 80 else "")
+        ids = edge["source_chunk_ids"]
+        edge["source_chunk_ids"] = [int(i) for i in ids] if isinstance(ids, list) else []
+        edges.append(edge)
+    total = int(total_row["count"]) if total_row else 0
+    return edges, total
+
+
+def set_relation_review(
+    novel: str, person_a: str, person_b: str, relation: str, review_status: str
+) -> int:
+    """写入一条边的审核结论，返回更新的行数（0 = 边不存在）。
+
+    只接受 pending/approved/rejected 三种状态；调用方（端点层）负责校验并把
+    非法值转成 400。写入即生效：rejected 的边在下一个查询里就不可见了。
+    """
+    if review_status not in VALID_REVIEW_STATUSES:
+        raise ValueError(f"非法的审核状态：{review_status!r}")
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE character_relations SET review_status = %s
+            WHERE novel = %s AND person_a = %s AND person_b = %s AND relation = %s
+            """,
+            (review_status, novel, person_a, person_b, relation),
+        )
+        return cursor.rowcount

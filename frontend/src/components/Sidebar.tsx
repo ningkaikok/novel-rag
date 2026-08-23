@@ -1,5 +1,6 @@
 import { Alert, Button, Collapse, List, Progress, Slider, Tag } from 'antd';
 import type { IndexTask } from '../api';
+import GraphReview from './GraphReview';
 
 /**
  * 左侧「我的书架」侧栏，纯展示组件：自己不发请求、不持有任务状态，
@@ -174,6 +175,14 @@ export default function Sidebar({
                 </Button>
               </>
             ),
+          },
+          {
+            // 人物关系审核（M4）：建图的共现/LLM 抽取必然混入假边，
+            // 人工逐条通过/拒绝后，拒绝的边不再进入任何问答结果。
+            // antd Collapse 默认懒渲染：不展开就不挂载 GraphReview、不发请求。
+            key: '2',
+            label: '🔗 人物关系审核',
+            children: <GraphReview />,
           },
         ]}
       />

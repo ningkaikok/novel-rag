@@ -138,6 +138,25 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   默认后台构建；大部头默认跳过或只处理低上下文质量片段；结果按内容哈希缓存；只有
   本项目评测集证明 Recall/MRR 明显提升才扩大范围。`CONTEXTUAL_MODE=off/auto/on`
   三档，auto 档还要求生成后端可用，避免制造整页失败日志
+- [x] **性能预算与延迟排查（P2）**：大部头实测单次混合检索 2.3~3.3s（见
+  [实验报告](experiments/m34-retrieval-matrix.md)）。用 M3.1 trace 的分阶段耗时
+  定位瓶颈占比（embedding 编码 / HNSW 召回 / BM25 / RRF / 重排），产出延迟画像
+  报告；只对"占比最大且修复成本低"的环节做优化，优化前后必须过夜间评测门禁
+  （已完成：精排占 51%、BM25 占 30% 且 EXPLAIN 实锤全量聚合问题，
+  见 [延迟画像](experiments/m34-latency-profile.md)；两条优化项见下）
+- [x] BM25 两阶段聚合改写（2026-08-23）：SQL 内每词按 tf 取 Top-N
+  （LATERAL 子查询 + `(term, tf DESC, novel, chunk_id)` 复合索引提前终止扫描，
+  `BM25_PER_TERM_LIMIT` 可调）、Python 端融合打分，替代「聚合全部命中行再排序」；
+  实测《凡人修仙传》真实库 BM25 阶段 P50 227ms → **46ms**、均值 287ms → 71ms、
+  P95 602ms → 215ms（EXPLAIN：常见词场景从堆扫描 15,636 行排序降到每词 ~0.6ms）；
+  夜间检索门禁指标与基线持平（Recall@1 0.8 / Recall@3 1.0 / MRR 0.9），真实库
+  13 条评测集与旧实现逐用例等价。语义近似 trade-off 与参数化逃生门见
+  `keyword_retrieve` docstring
+- [ ] 重排候选数/批量调优实验：`RERANK_CANDIDATE_MULTIPLIER` 与批大小在
+  eval_matrix 上做质量×延迟对照（精排占端到端 51%）
+- [ ] **普通查询缓存与命中率观测**：对 (问题, 索引指纹) 做查询级缓存并记录命中率，
+  作为「下一问预取」的前置数据。命中率日志证明追问模式可预测之前，预取仍留在
+  暂缓清单
 - [ ] BGE-M3 对照实验按递进矩阵执行：① 基线 ✅；② BGE-M3 dense + BM25 + 现有
   reranker ✅（小语料无质量收益、成本更高，见实验报告）；③ BGE-M3 dense + sparse
   （需 pgvector `sparsevec` 列与稀疏检索通路）；④ multi-vector late interaction
@@ -223,12 +242,30 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 
 ## M4：人物关系图质量闭环（后续阶段）
 
-- [ ] 关系边保存方向、置信度和来源片段
-- [ ] 增加人工审核与修正界面
-- [ ] 区分“同段共现”和“明确关系陈述”
-- [ ] 只有达到质量门槛后才考虑默认开启
+- [x] 关系边保存方向、置信度和来源片段（2026-08-23：`character_relations` schema v2，
+  幂等补列 `direction` / `confidence` / `evidence_type` / `source_chunk_ids` /
+  `review_status`，v1 旧行自动回填为低置信度共现边；LLM 抽取结果连同人名一并进
+  `graph_characters` 缓存，避免"人名命中缓存"导致抽取静默降级）
+- [x] 增加人工审核与修正界面（2026-08-23：侧栏新增「人物关系审核」折叠面板
+  （懒加载），列出人物对/类型/方向/置信度/证据摘录 ≤80 字，逐条 通过/拒绝；
+  后端 `GET /api/graph/edges?status=` 分页端点 + `POST /api/graph/review` 写入结论，
+  rejected 的边在所有查询里立即不可见）
+- [x] 区分“同段共现”和“明确关系陈述”（2026-08-23：有生成后端时用 LLM 逐对判断
+  并输出关系类型/方向/置信度/来源片段编号，解析失败自动降级为共现；
+  `GRAPH_REQUIRE_EXPLICIT=1`（默认）时在线查询只放行 explicit 且置信度 ≥
+  `GRAPH_MIN_CONFIDENCE`（0.7）的边，共现边留库待审。评测集 16 条（原创语料）
+  实测：共现基线 P=50.0% / R=66.7%，LLM 抽取消灭大部分假边（FP 4→1）但小模型对
+  explicit 判定方差大、且受关键词门控的召回上限约束——`scripts/eval_graph.py`
+  默认零成本跑基线，`--model` 可对比 LLM）
+- [x] 只有达到质量门槛后才考虑默认开启（2026-08-23：门槛已落地为查询期过滤 +
+  人工审核闭环；GRAPH_ENABLED 仍默认关闭——评测显示 LLM 抽取在原创短篇上
+  F1≈60%、方差明显，尚不满足"伴侣/师徒不再把同框当确定关系"的稳定验收，
+  保持关闭直到在更大语料上复核。这是本阶段最如实的结论：质量闭环建好了，
+  但质量本身还没到默认开启的线）
 
 验收：伴侣/师徒评测不再把普通同框人物当成确定关系，且每条边可以追溯原文。
+（达成方式说明：在线结果经 explicit+置信度门槛过滤后不再输出纯共现边；每条边
+带 `source_chunk_ids`，审核界面据此展示原文摘录。评测集见 `tests/graph_eval_set.json`。）
 
 ## M5：部署与多用户边界（后续阶段）
 
@@ -251,7 +288,10 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 - [ ] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
   权限、风险等级、超时和启停；运行时只读取经过验证的不可变快照。前置工作：把现有
   `ToolResult`（summary/sources/facts）正式化为 Pydantic/JSON Schema 并增加
-  `schema_version`，为后续 MCP 适配打基础
+  `schema_version`，为后续 MCP 适配打基础。✅ 前置项已落地（2026-08-23）：
+  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与五工具不可变 `TOOL_REGISTRY`
+  （answer_with_citations 结果 schema 单独定义），MCP 服务器已改为从 Registry 生成注册；
+  Registry 落地但 Gateway、权限、启停均未做，待 M6.1/M6.2 正式项
 - [ ] M6.2：增加 Tool Gateway，集中做鉴权、参数校验、出站白名单、Prompt Injection
   隔离、限流、超时、幂等、分类重试、熔断和审计
 - [ ] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录 token/耗时/成本，
@@ -264,7 +304,7 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 - [ ] M6.6：在工具需要跨客户端复用时增加 MCP 适配，不绕过内部权限和审计边界。
   允许的提前项：M3.3.5 完成后可做一个只读、stdio 传输的最小 MCP PoC 作为低成本探针，
   用真实客户端（Claude Code 等）暴露 ToolResult Schema 的设计问题并反哺 M6.1；
-  PoC 不接权限体系、不做发现机制，正式 MCP 仍按 Registry→Gateway→Adapter 的顺序来
+  PoC 不接权限体系、不做发现机制，正式 MCP 仍按 Registry→Gateway→Adapter 的顺序来。✅ PoC 已落地（2026-08-23）：`scripts/mcp_server.py` 四个只读工具经 stdio 通过真实客户端验证（结构化输出 + 80 字摘录红线），发现的 SDK v2 结构化输出需具体返回类型注解等约束已记录在案
 - [ ] M6.7：结合 M5 完成租户隔离、配额、数据保留/删除、备份、结构化日志、监控告警
   和灰度发布；高风险写工具默认需要人工审批
 
@@ -275,6 +315,11 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 时，才把已测试的编排函数迁入 LangGraph。
 
 架构边界和迁移示例见 [Agent 平台化架构](agent-platform-architecture.md)。
+
+## 工程运营（持续）
+
+- **Dependabot 周处理节奏**：每周一集中处理一次——minor/patch 组直接合并
+  （CI 全绿即信任），major 单独评估；积压超过一周说明节奏失效，先清零再继续
 
 ## 暂不进入路线图主干
 

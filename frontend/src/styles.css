@@ -148,6 +148,42 @@ body {
   margin: 0.45rem 0 0.6rem;
   padding: 0.45rem 0.55rem;
 }
+
+/* 人物关系审核面板（M4）：挂在侧栏折叠区里，样式与索引任务卡片同一家族 */
+.graph-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.graph-review-pair {
+  color: var(--text);
+  font-weight: 600;
+}
+.graph-review-arrow {
+  color: var(--muted);
+  font-weight: 400;
+}
+.graph-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.graph-review-meta .ant-tag {
+  margin-inline-end: 0;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.graph-review-evidence {
+  color: var(--muted);
+  font-size: 0.76rem;
+  word-break: break-word;
+}
+.graph-review-pager {
+  margin-top: 0.5rem;
+  text-align: center;
+}
 .index-task .ant-alert-message,
 .index-task .ant-alert-description {
   font-size: 0.76rem;

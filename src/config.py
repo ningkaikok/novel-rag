@@ -127,6 +127,16 @@ BM25_K1 = float(os.environ.get("BM25_K1", 1.2))
 # 的话长片段会系统性占便宜。b=0 完全不归一化，b=1 完全按长度比例惩罚，
 # 0.75 是折中的通用默认值。
 BM25_B = float(os.environ.get("BM25_B", 0.75))
+# BM25 两阶段聚合的「每个查询词最多取多少个候选片段」（M3.4 性能优化，
+# 实现见 retrieval_mixins.keyword_retrieve 的 docstring）。
+#
+# 背景：常见词（如「韩立」命中上万个片段）在旧的单条 SQL 里要先聚合**全部**
+# 命中行再排序取 Top-K，EXPLAIN 实测仅 HashAggregate 就 ~286ms。改写后 SQL 内
+# 每个词只按 tf 取前 N 个候选、Python 端融合打分，聚合行数从上万压到
+# 词数 × N。代价是可能漏掉「在每个命中词上都排不进该词前 N」的片段——
+# 单词条频低但多词合计相关性高的极端片段（语义近似的 trade-off，必须诚实）。
+# 调大本值可逼近旧行为；N ≥ 所有查询词的 df 时与旧逻辑完全等价。
+BM25_PER_TERM_LIMIT = int(os.environ.get("BM25_PER_TERM_LIMIT", 200))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
 
@@ -184,3 +194,11 @@ GRAPH_MODEL = os.environ.get("GRAPH_MODEL", "glm:glm-4-flash")
 # 一个人名要在几个批次里都被认作人名，才算数。降噪用：
 # 单次出现的往往是模型偶然把泛称当成了名字。
 GRAPH_MIN_NAME_HITS = int(os.environ.get("GRAPH_MIN_NAME_HITS", 2))
+# M4 质量门槛：开启后，在线查询（问答时的图线索）只返回「明确关系陈述」
+# （evidence_type='explicit'）且置信度达到 GRAPH_MIN_CONFIDENCE 的边。
+# 共现推断的边仍保留在库里，供审核界面逐条通过/拒绝——门槛只挡"对外展示"，
+# 不销毁数据，这样审核员还能看到全部候选并人工把关。
+GRAPH_REQUIRE_EXPLICIT = os.environ.get("GRAPH_REQUIRE_EXPLICIT", "1") != "0"
+# 边进入在线查询结果的最低置信度（0~1）。与上面的开关配合使用；
+# 关掉 REQUIRE_EXPLICIT 后此阈值不再参与过滤。
+GRAPH_MIN_CONFIDENCE = float(os.environ.get("GRAPH_MIN_CONFIDENCE", 0.7))

@@ -45,12 +45,13 @@
 novel-rag/
 ├── src/           # 核心业务逻辑（切分/入库/检索/重排），不依赖 Web 框架
 ├── backend/       # FastAPI 后端（只做"把 src 包成 HTTP"这一件事）
-├── frontend/      # React + Vite 前端
-├── scripts/       # 独立工具（检索评测等）
-├── docs/          # 学习文档，见下
+├── frontend/      # React + Vite 前端（类型由 OpenAPI 生成，见 api-generated.ts）
+├── scripts/       # 独立工具（检索评测、质量门禁、OpenAPI 导出等）
+├── docs/          # 学习文档与实验报告，见下
 ├── tests/         # pytest + 问答评测集与历史基线
 ├── data/novels/   # 放小说 .txt 文件
-└── chroma_db/     # 旧 Chroma 数据目录（迁移后不再使用）
+├── Dockerfile     # 多阶段构建：前端 dist + Python 运行时，单镜像部署
+└── docker-compose.yml  # 应用 + pgvector 一键起（模型缓存/文本挂载持久化）
 ```
 
 ## 📖 学习路线
@@ -60,7 +61,8 @@ novel-rag/
 
 | 文档 | 讲什么 | 什么时候看 |
 | --- | --- | --- |
-| [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | ⭐ 从这里开始 |
+| [**系统技术架构**](docs/system-architecture.md) | 当前全栈架构图：分层、问答链路、索引流水线、数据模型、工程化设施 | ⭐ 想快速建立全局认识 |
+| [**RAG 学习总览**](docs/rag-overview.md) | 四个杠杆是什么、完整链路、**所有实测数据汇总（含负面结果）**、方法论教训 | 从这里深入 RAG |
 | [**代码导读**](docs/code-walkthrough.md) | 这份代码怎么读、建议的阅读顺序、可直接上手跑的实验 | 第一次接触这个项目 |
 | [**RAG 核心技术**](docs/rag-techniques.md) | 检索评测、BM25、重排、Contextual Retrieval、多轮改写、GraphRAG 的原理与实测 | 想深入某个具体技术 |
 | [**问答模式与自动路由**](docs/answer-routing.md) | 一个输入框如何区分开放问题与小说问题，以及怎样离线评测 | 想理解新增的路由层 |
@@ -178,6 +180,9 @@ npm run dev
 > 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
 > `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
 >
+> **MCP（实验性）**：`uv run python scripts/mcp_server.py` 提供只读 MCP 服务器
+> （stdio），可在 Claude Code 等客户端注册后直接查询书架。详见脚本头部说明。
+>
 > 不用 Docker 的手动路径：`cd frontend && npm run build` 生成静态文件后，
 > FastAPI 会自动检测 `frontend/dist` 并托管（存在即挂载，开发模式不受影响）。
 
@@ -283,7 +288,9 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `CHAPTER_EXPANSION_MAX_TOKENS` | `3000` | 整章扩展的真实 token 预算闸门，超预算从离命中最远处截断并写 trace |
 | `GRAPH_ENABLED` | `0` | 设成 `1` 建人物关系图，让"某某有哪些伴侣/师父"这类问题能查图而不是靠碰运气 |
 | `GRAPH_MAX_CHUNKS_PER_RELATION` | `80` | 成本闸门：每个「书×关系」最多采样多少片段去抽人名 |
-| `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名用的模型（便宜的小模型就够） |
+| `GRAPH_MODEL` | `glm:glm-4-flash` | 抽人名/关系用的模型（便宜的小模型就够） |
+| `GRAPH_REQUIRE_EXPLICIT` | `1` | M4 质量门槛：只把「明确关系陈述」的边放进问答线索；共现边留在库里供审核界面人工把关 |
+| `GRAPH_MIN_CONFIDENCE` | `0.7` | 边进入在线结果的最低置信度（与上一项配合） |
 | `MAX_UPLOAD_BYTES` | `20971520` | 单个上传文件的大小上限（字节），按 1MB 分块流式读取，超限返回 413 |
 | `LOG_LEVEL` | `INFO` | 后端日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `DB_POOL_MIN_SIZE` | `1` | PostgreSQL 连接池最小连接数（只有 FastAPI 后端会用到） |
