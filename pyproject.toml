@@ -16,6 +16,8 @@ dependencies = [
     "jieba==0.42.1",
     # 云端模型客户端
     "requests>=2.33.0",
+    # ToolSpec / ToolResult 模型（src/tool_spec.py，此前只作为 fastapi 的传递依赖）
+    "pydantic>=2",
     # 匿名使用统计（posthog，可整体移除不影响功能）
     "posthog>=3.12",
 ]
@@ -52,7 +54,7 @@ known-first-party = [
     "ingest", "hierarchy", "graph", "contextualizer", "index_quality",
     "query_router", "query_rewriter", "rag", "agent_lab", "citation_eval",
     "chunk_model", "novel_match", "retrieval_mixins", "generation_mixin",
-    "confidence", "query_expander", "backend",
+    "confidence", "query_expander", "tool_spec", "backend",
 ]
 
 # --- Pyright：类型检查 basic 起步（P1 工程化） ---------------------------
