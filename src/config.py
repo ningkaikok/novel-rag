@@ -127,6 +127,16 @@ BM25_K1 = float(os.environ.get("BM25_K1", 1.2))
 # 的话长片段会系统性占便宜。b=0 完全不归一化，b=1 完全按长度比例惩罚，
 # 0.75 是折中的通用默认值。
 BM25_B = float(os.environ.get("BM25_B", 0.75))
+# BM25 两阶段聚合的「每个查询词最多取多少个候选片段」（M3.4 性能优化，
+# 实现见 retrieval_mixins.keyword_retrieve 的 docstring）。
+#
+# 背景：常见词（如「韩立」命中上万个片段）在旧的单条 SQL 里要先聚合**全部**
+# 命中行再排序取 Top-K，EXPLAIN 实测仅 HashAggregate 就 ~286ms。改写后 SQL 内
+# 每个词只按 tf 取前 N 个候选、Python 端融合打分，聚合行数从上万压到
+# 词数 × N。代价是可能漏掉「在每个命中词上都排不进该词前 N」的片段——
+# 单词条频低但多词合计相关性高的极端片段（语义近似的 trade-off，必须诚实）。
+# 调大本值可逼近旧行为；N ≥ 所有查询词的 df 时与旧逻辑完全等价。
+BM25_PER_TERM_LIMIT = int(os.environ.get("BM25_PER_TERM_LIMIT", 200))
 # 命中片段前后额外带入的相邻片段数量。问答上下文更完整，但不会把整本书塞给模型。
 CONTEXT_NEIGHBORS = int(os.environ.get("CONTEXT_NEIGHBORS", 1))
 

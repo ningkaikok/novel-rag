@@ -144,8 +144,14 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   报告；只对"占比最大且修复成本低"的环节做优化，优化前后必须过夜间评测门禁
   （已完成：精排占 51%、BM25 占 30% 且 EXPLAIN 实锤全量聚合问题，
   见 [延迟画像](experiments/m34-latency-profile.md)；两条优化项见下）
-- [ ] BM25 两阶段聚合改写：SQL 内每词按 tf 取 Top-N、Python 端融合，替代
-  「聚合全部命中行再排序」；预计 ~290ms → <50ms，必须过夜间检索门禁验证
+- [x] BM25 两阶段聚合改写（2026-08-23）：SQL 内每词按 tf 取 Top-N
+  （LATERAL 子查询 + `(term, tf DESC, novel, chunk_id)` 复合索引提前终止扫描，
+  `BM25_PER_TERM_LIMIT` 可调）、Python 端融合打分，替代「聚合全部命中行再排序」；
+  实测《凡人修仙传》真实库 BM25 阶段 P50 227ms → **46ms**、均值 287ms → 71ms、
+  P95 602ms → 215ms（EXPLAIN：常见词场景从堆扫描 15,636 行排序降到每词 ~0.6ms）；
+  夜间检索门禁指标与基线持平（Recall@1 0.8 / Recall@3 1.0 / MRR 0.9），真实库
+  13 条评测集与旧实现逐用例等价。语义近似 trade-off 与参数化逃生门见
+  `keyword_retrieve` docstring
 - [ ] 重排候选数/批量调优实验：`RERANK_CANDIDATE_MULTIPLIER` 与批大小在
   eval_matrix 上做质量×延迟对照（精排占端到端 51%）
 - [ ] **普通查询缓存与命中率观测**：对 (问题, 索引指纹) 做查询级缓存并记录命中率，
