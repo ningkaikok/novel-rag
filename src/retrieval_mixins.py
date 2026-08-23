@@ -15,12 +15,14 @@
 书名/意图识别的纯函数在 ``novel_match``，数据类在 ``chunk_model``。
 """
 
+import math
 import time
 
 from chunk_model import SourceChunk
 from config import (
     BM25_B,
     BM25_K1,
+    BM25_PER_TERM_LIMIT,
     CHAPTER_EXPANSION_MAX_TOKENS,
     CHAPTER_EXPANSION_MODE,
     CONTEXT_NEIGHBORS,
@@ -124,16 +126,52 @@ class RetrievalMixin:
         按相关性排好序——等于给 RRF 喂了噪声。
 
         only_novels 非空时把搜索范围限定在这些书内。
+
+        两阶段聚合改写（M3.4 性能优化，2026-08-23）
+        -------------------------------------------
+        旧实现是一条 SQL：把所有查询词命中的**全部** (词, 片段) 行聚合求和、
+        排序后取 Top-K。EXPLAIN 实测（见 docs/experiments/m34-latency-profile.md），
+        常见词（「韩立」命中上万个片段）会让 HashAggregate 处理 15,904 行、
+        耗时 ~286ms——而最终只留下 Top-K。索引扫描本身只要 12ms，瓶颈全在
+        「为注定进不了 Top-K 的行算分」上。
+
+        现在拆成两阶段：
+
+        1. **SQL 内粗筛**：每个查询词用 LATERAL 子查询按 tf 降序取前
+           ``BM25_PER_TERM_LIMIT`` 个候选片段，且候选阶段不携带 text/context
+           宽列，只取打分必需的窄字段（tf / token_count / df / 语料统计）。
+           聚合行数从上万压到 词数 × N；配合 (term, tf DESC, novel,
+           chunk_id) 复合索引（见 postgres._ensure_index_schema），每词的
+           Top-N 走 Index Only Scan 提前终止——EXPLAIN 实测常见词场景从
+           「堆扫描 15,636 行 + 排序」降到每词 ~0.6ms。
+        2. **Python 端精算**：对幸存的每个 (词, 片段) 对用**与 SQL 完全相同**
+           的 BM25 公式计算贡献并按 (novel, chunk_id) 求和，排序取前 K；
+           最后只为这 K 个片段二次取回正文/章节等宽字段。
+
+        语义近似的 trade-off（必须诚实说明）
+        ------------------------------------
+        粗筛按「单词条频」截断，可能漏掉这样的极端片段：它在每个命中词上的
+        tf 都排不进该词的前 N，但多个词合计的相关性本可以挤进最终 Top-K
+        （例如「韩立」只出现 1 次的几万个片段里，「洞府」也出现的那一段）。
+        - 每个查询词的命中数 df ≤ N 时，候选集合与旧的全量聚合**完全一致**，
+          结果严格等价（稀有词几乎总是如此——df 本身就小）；
+        - 只有「多词皆常见且各自 tf 都低」的组合才可能被漏掉，且漏掉的片段
+          单词贡献本来就低，实测对 Recall 影响需过夜间检索门禁验证。
+        参数化方式：调大 ``BM25_PER_TERM_LIMIT``（config.py，环境变量可覆盖）
+        即单调逼近旧行为；N ≥ 所有查询词的 df 时与旧逻辑逐条一致。设为足够大
+        的值（如 10**9）即可完全关闭近似。
         """
         terms = query_terms(question)
         if not terms:
             return []
 
-        # BM25_K1 / BM25_B 是从 config 读出来并经过 float() 转换的数值，
-        # 不是用户输入，直接内联进 SQL 没有注入风险，可读性比 4 个 %s 好很多。
+        # BM25_K1 / BM25_B / BM25_PER_TERM_LIMIT 都是从 config 读出来并经过
+        # float()/int() 转换的数值，不是用户输入，直接内联进 SQL 没有注入风险，
+        # 可读性比一堆 %s 好很多。
         k1, b = float(BM25_K1), float(BM25_B)
+        per_term_limit = int(BM25_PER_TERM_LIMIT)
 
-        # 三处都要按书过滤：语料统计、df 统计、最终打分。范围不一致会让
+        # 三处都要按书过滤：语料统计、df 统计、每词候选粗筛。范围不一致会让
         # IDF 算错——比如按全库算 df 却只在一本书里打分，稀有词的权重会失真。
         scope_sql = "WHERE novel = ANY(%s)" if only_novels else ""
         scope_and = "AND novel = ANY(%s)" if only_novels else ""
@@ -142,6 +180,13 @@ class RetrievalMixin:
         # q(term) 是把查询词做成一张临时表，好跟倒排索引 JOIN
         values_sql = ", ".join(["(%s)"] * len(terms))
 
+        # 阶段一（SQL）：每个查询词按 tf 取前 per_term_limit 个候选片段。
+        # LATERAL 子查询里 ORDER BY 与复合索引 (term, tf DESC, novel,
+        # chunk_id) 的键序一致，PostgreSQL 能逐词提前终止扫描；没有该索引时
+        # 退化为每词排序，结果不变只是慢。WHERE 过滤先于 LIMIT 生效，所以
+        # 「前 N」始终是当前书范围内的前 N。候选行刻意不取 text/context——
+        # 它们只在阶段二为 Top-K 取回，让上万个候选行保持窄小正是本次优化
+        # 收益的一部分。
         sql = f"""
             WITH q(term) AS (VALUES {values_sql}),
             -- 语料级统计：N（总片段数）和 avgdl（平均片段长度）
@@ -159,42 +204,80 @@ class RetrievalMixin:
                 WHERE TRUE {scope_and.replace("novel", "ct.novel")}
                 GROUP BY ct.term
             )
-            SELECT nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context,
-                   SUM(
-                       ln((c.n - d.df + 0.5) / (d.df + 0.5) + 1)
-                       * (ct.tf * ({k1} + 1))
-                       / (ct.tf + {k1} * (1 - {b} + {b} * nc.token_count / c.avgdl))
-                   )::float8 AS score
-            FROM chunk_terms ct
-            JOIN q ON q.term = ct.term
-            JOIN df d ON d.term = ct.term
+            SELECT q.term, l.novel, l.chunk_id, l.tf,
+                   d.df, nc.token_count, c.n, c.avgdl
+            FROM q
+            JOIN df d ON d.term = q.term
+            CROSS JOIN LATERAL (
+                -- 每词 Top-N 候选：tf 相同时按 (novel, chunk_id) 决胜，保证
+                -- 截断结果确定可复现（测试与排查都依赖这一点）
+                SELECT ct.novel, ct.chunk_id, ct.tf
+                FROM chunk_terms ct
+                WHERE ct.term = q.term {scope_and.replace("novel", "ct.novel")}
+                ORDER BY ct.tf DESC, ct.novel, ct.chunk_id
+                LIMIT {per_term_limit}
+            ) l
             JOIN novel_chunks nc
-              ON nc.novel = ct.novel AND nc.chunk_id = ct.chunk_id
+              ON nc.novel = l.novel AND nc.chunk_id = l.chunk_id
             CROSS JOIN corpus c
-            WHERE TRUE {scope_and.replace("novel", "nc.novel")}
-            GROUP BY nc.novel, nc.chunk_id, nc.chapter_title, nc.text, nc.context
-            ORDER BY score DESC
-            LIMIT %s
         """
-        params = [*terms, *scope_param, *scope_param, *scope_param, top_k]
+        params = [*terms, *scope_param, *scope_param, *scope_param]
 
         with connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
+            candidate_rows = conn.execute(sql, params).fetchall()
+            if not candidate_rows:
+                return []
 
-        return [
-            SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                context=row.get("context") or "",
-                chapter_title=row.get("chapter_title"),
-                # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
-                # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
-                # 按同一个字段排序时把最相关的排到最后。
-                distance=-float(row["score"]),
+            # 语料统计经 CROSS JOIN 广播在每一行上，任意取一行即可。
+            n = float(candidate_rows[0]["n"] or 0)
+            avgdl = float(candidate_rows[0]["avgdl"] or 0)
+            if not n or not avgdl:
+                # 空语料或全部 token_count=0 的退化库：旧 SQL 会产出 NULL 分数，
+                # 与其返回无意义的排序不如明确空结果。
+                return []
+
+            # 阶段二（Python）：对幸存的 (词, 片段) 对逐项套用与旧 SQL 完全相同的
+            # BM25 公式（见本函数 docstring 顶部的公式），按片段求和得总分。
+            scores: dict[tuple[str, int], float] = {}
+            for row in candidate_rows:
+                tf = float(row["tf"])
+                df = float(row["df"])
+                idf = math.log((n - df + 0.5) / (df + 0.5) + 1)
+                denom = tf + k1 * (1 - b + b * float(row["token_count"]) / avgdl)
+                key = (row["novel"], int(row["chunk_id"]))
+                scores[key] = scores.get(key, 0.0) + idf * tf * (k1 + 1) / denom
+
+            # 分数相同时按 (novel, chunk_id) 决胜：排序确定，测试可复现。
+            ranked_keys = sorted(scores, key=lambda key: (-scores[key], key))[:top_k]
+
+            # 只为最终 Top-K 取回正文等宽字段（旧实现是聚合全程拖着这些列）。
+            conditions = " OR ".join("(novel = %s AND chunk_id = %s)" for _ in ranked_keys)
+            meta_rows = conn.execute(
+                f"SELECT novel, chunk_id, chapter_title, text, context "
+                f"FROM novel_chunks WHERE {conditions}",
+                [value for key in ranked_keys for value in key],
+            ).fetchall()
+            meta = {(row["novel"], int(row["chunk_id"])): row for row in meta_rows}
+
+        results: list[SourceChunk] = []
+        for key in ranked_keys:
+            row = meta.get(key)
+            if row is None:  # 候选到取回之间数据被删的极端兜底
+                continue
+            results.append(
+                SourceChunk(
+                    novel=row["novel"],
+                    chunk_id=int(row["chunk_id"]),
+                    text=row["text"],
+                    context=row.get("context") or "",
+                    chapter_title=row.get("chapter_title"),
+                    # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
+                    # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
+                    # 按同一个字段排序时把最相关的排到最后。
+                    distance=-scores[key],
+                )
             )
-            for row in rows
-        ]
+        return results
 
     def positional_retrieve(
         self,

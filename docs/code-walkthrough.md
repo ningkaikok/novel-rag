@@ -136,7 +136,7 @@ M3.3.5 之后 rag.py 已按职责拆分：书名识别与意图判断在 `novel_
 | 函数 | 做什么 | 看点 |
 | --- | --- | --- |
 | `retrieve` | 向量检索 | pgvector 的 `<=>` 余弦距离操作符 |
-| `keyword_retrieve` | **BM25** | 公式三项逐项对应写在 SQL 里，注释里拆解了每项解决什么问题 |
+| `keyword_retrieve` | **BM25** | 两阶段聚合：SQL 每词按 tf 取 Top-N 候选、Python 端套公式融合打分（近似语义的 trade-off 写在 docstring 里） |
 | `positional_retrieve` | 结构性检索 | 为什么"结局是什么"这类问题语义检索必然失败 |
 | `hierarchy_retrieve` | 层级检索 | 全书/章节摘要怎样定位后再映射回原文 |
 | `retrieve_hybrid_stream` | 串起 Web 主流程 | 多路召回、RRF、重排，以及 trace 为什么能逐步流出 |

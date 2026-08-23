@@ -191,13 +191,13 @@ def _ensure_index_schema(conn, dimension: int) -> None:
         "NOT NULL DEFAULT '{}'::jsonb"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS chunk_terms_term_idx ON chunk_terms (term)")
+    # BM25 两阶段聚合（M3.4 性能优化，见 retrieval_mixins.keyword_retrieve）
+    # 的每词 Top-N 依赖这个复合索引：候选子查询的 ORDER BY (tf DESC, novel,
+    # chunk_id) 与索引键序一致，常见词取前 N 行时可以提前终止扫描，而不是
+    # 读完并排序全部命中行。缺了它查询结果不变，只是退化为每词排序。
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
-        "ON character_relations (person_a, relation)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS character_relations_b_idx "
-        "ON character_relations (person_b, relation)"
+        "CREATE INDEX IF NOT EXISTS chunk_terms_term_tf_idx "
+        "ON chunk_terms (term, tf DESC, novel, chunk_id)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS novel_chunks_novel_chunk_idx "
@@ -240,6 +240,17 @@ def _ensure_graph_schema(conn) -> None:
     conn.execute(
         "UPDATE character_relations SET evidence_type = 'co_occurrence', confidence = 0.3 "
         "WHERE evidence_type IS NULL"
+    )
+    # 关系边的查询索引放在这里而不是 _ensure_index_schema：建表也在这一个函数里，
+    # 顺序保证了「先表后索引」。此前放在 _ensure_index_schema 时会先于建表执行，
+    # 全新数据库（临时实验库、夜间 CI 库）会直接 UndefinedTable 失败。
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_a_idx "
+        "ON character_relations (person_a, relation)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS character_relations_b_idx "
+        "ON character_relations (person_b, relation)"
     )
     # 人名抽取缓存表：M4 起 LLM 抽出的关系记录一并缓存，否则"人名命中缓存"
     # 会让抽取静默降级成纯共现，质量悄悄倒退。
