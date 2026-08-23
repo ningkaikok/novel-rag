@@ -15,7 +15,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   // 用生产构建 + 静态预览服务器，而不是 dev server：更快启动、更接近真实产物，
-  // 且固定用 4173 端口，不会跟开发者本地正在跑的 `npm run dev`（5173）冲突。
+  // 且固定用 4173 端口，不会跟开发者本地正在跑的 `npm run dev`（45173）冲突。
   webServer: {
     command: 'npm run build && npm run preview -- --port 4173',
     url: 'http://localhost:4173',
