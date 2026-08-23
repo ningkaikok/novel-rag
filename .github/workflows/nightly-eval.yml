@@ -45,13 +45,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      # 与 ci.yml 同款：uv + 锁文件是唯一事实来源（requirements.txt 已随
+      # M3.3.5 工程化移除，此前本步骤还在 pip install 它，导致夜间门禁
+      # 一直起不来）
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
-          cache: pip
+          enable-cache: true
 
-      - name: 安装依赖
-        run: pip install -r requirements.txt
+      - name: 安装依赖（uv sync --frozen）
+        run: uv sync --frozen
 
       - name: 初始化数据库扩展
         run: |
@@ -61,7 +63,7 @@ jobs:
       - name: 建立原创小语料索引
         # 索引质量门禁（硬性错误）会直接抛异常终止本步骤
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import sys
           from pathlib import Path
 
@@ -79,7 +81,7 @@ jobs:
         # 同时把本次结果落盘：--strict 判定回退失败时，报告会作为 artifact 留痕，
         # 方便对照逐条用例看是哪一类问题退化（召回、排序还是跨书路由）。
         run: |
-          python scripts/eval_retrieval.py \
+          uv run python scripts/eval_retrieval.py \
             --test-set tests/ci_eval_test_set.json \
             --compare tests/ci_eval_baseline.json \
             --save /tmp/ci_eval_report.json \
