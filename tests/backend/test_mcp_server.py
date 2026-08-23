@@ -4,8 +4,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 import mcp_server
+
+import tool_spec
 
 
 def test_four_readonly_tools_registered():
@@ -33,7 +36,8 @@ def test_payload_truncates_excerpt_and_marks_schema_version():
         sources = [_Chunk()]
 
     payload = mcp_server._to_payload(_Result())
-    assert payload.schema_version == mcp_server.SCHEMA_VERSION == "1"
+    # 版本常量已迁到 tool_spec（M6.1 前置项），这里验证投影仍带版本号
+    assert payload.schema_version == tool_spec.TOOL_RESULT_SCHEMA_VERSION == "1"
     assert len(payload.sources[0].excerpt) == 80  # 版权红线：摘录截断到 80 字
     assert payload.facts == {"kind": "x"}
 

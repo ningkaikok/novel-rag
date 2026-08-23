@@ -288,7 +288,10 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 - [ ] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
   权限、风险等级、超时和启停；运行时只读取经过验证的不可变快照。前置工作：把现有
   `ToolResult`（summary/sources/facts）正式化为 Pydantic/JSON Schema 并增加
-  `schema_version`，为后续 MCP 适配打基础
+  `schema_version`，为后续 MCP 适配打基础。✅ 前置项已落地（2026-08-23）：
+  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与五工具不可变 `TOOL_REGISTRY`
+  （answer_with_citations 结果 schema 单独定义），MCP 服务器已改为从 Registry 生成注册；
+  Registry 落地但 Gateway、权限、启停均未做，待 M6.1/M6.2 正式项
 - [ ] M6.2：增加 Tool Gateway，集中做鉴权、参数校验、出站白名单、Prompt Injection
   隔离、限流、超时、幂等、分类重试、熔断和审计
 - [ ] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录 token/耗时/成本，
