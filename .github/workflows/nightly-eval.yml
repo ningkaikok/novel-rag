@@ -48,7 +48,7 @@ jobs:
       # 与 ci.yml 同款：uv + 锁文件是唯一事实来源（requirements.txt 已随
       # M3.3.5 工程化移除，此前本步骤还在 pip install 它，导致夜间门禁
       # 一直起不来）
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
