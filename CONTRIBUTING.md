@@ -12,7 +12,7 @@
 source .venv/bin/activate
 uvicorn backend.main:app --port 8000
 
-# 前端（端口 5173，另开一个终端）
+# 前端（端口 45173，另开一个终端）
 cd frontend && npm run dev
 ```
 
