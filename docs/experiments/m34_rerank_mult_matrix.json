@@ -1,0 +1,90 @@
+[
+  {
+    "name": "rerank_mult2",
+    "env": {
+      "RERANK_CANDIDATE_MULTIPLIER": "2"
+    },
+    "fingerprint": "b97effe05749",
+    "database": "novel_rag_eval_b97effe05749",
+    "index_seconds": 10.1,
+    "chunk_count": 6,
+    "storage_bytes": 196608,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 232
+    },
+    "case_count": 10
+  },
+  {
+    "name": "rerank_mult3",
+    "env": {
+      "RERANK_CANDIDATE_MULTIPLIER": "3"
+    },
+    "fingerprint": "88e17c938d98",
+    "database": "novel_rag_eval_88e17c938d98",
+    "index_seconds": 8.6,
+    "chunk_count": 6,
+    "storage_bytes": 196608,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 217
+    },
+    "case_count": 10
+  },
+  {
+    "name": "rerank_mult4",
+    "env": {
+      "RERANK_CANDIDATE_MULTIPLIER": "4"
+    },
+    "fingerprint": "81ee4bc908cd",
+    "database": "novel_rag_eval_81ee4bc908cd",
+    "index_seconds": 6.2,
+    "chunk_count": 6,
+    "storage_bytes": 196608,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 96
+    },
+    "case_count": 10
+  },
+  {
+    "name": "rerank_mult6",
+    "env": {
+      "RERANK_CANDIDATE_MULTIPLIER": "6"
+    },
+    "fingerprint": "7abc66ce8cd0",
+    "database": "novel_rag_eval_7abc66ce8cd0",
+    "index_seconds": 6.1,
+    "chunk_count": 6,
+    "storage_bytes": 196608,
+    "metrics": {
+      "recall@1": 0.8,
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.9,
+      "routing_accuracy": 1.0,
+      "avg_ms": 88
+    },
+    "case_count": 10
+  }
+]

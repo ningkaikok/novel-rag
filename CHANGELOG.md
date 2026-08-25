@@ -36,6 +36,16 @@
 - **修复夜间检索评测门禁无法启动的问题**：工程化切换到 uv 后该 workflow 仍在
   安装已删除的 requirements.txt，现已改为与 CI 一致的 `uv sync --frozen`
 
+### 文档
+
+- **M3.4 重排候选数调优实验报告**：`RERANK_CANDIDATE_MULTIPLIER ∈ {2,3,4,6}` 的
+  质量×延迟对照完成——用 trace 实证生产路径（TOP_K=3）下四档全被 `RECALL_K=20`
+  兜底成同一个候选池、行为完全一致，确认默认值 3 无需调整；multiplier 实际生效的
+  大部头评测路径上质量非单调（更大的候选池反而出现 recall@1 回退）而耗时线性上涨，
+  批大小探针证明默认 batch_size 已近最优。详见
+  [docs/experiments/m34-rerank-tuning.md](docs/experiments/m34-rerank-tuning.md)，
+  同步修正了延迟画像报告中重排候选数的笔误（60 → 20）
+
 ## [0.8.0] - 2026-08-23
 
 ### 新增

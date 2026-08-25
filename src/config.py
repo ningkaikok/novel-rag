@@ -27,6 +27,12 @@ RERANK_ENABLED = os.environ.get("RERANK_ENABLED", "1") != "0"
 # 送进重排的候选数 = 最终要的条数 × 这个倍数。重排要有东西可挑，候选池必须
 # 明显大于最终结果——业界经验是「召回 20 → 重排到 5」这个量级，即 3~4 倍。
 # 倍数太小重排没得挑，太大则交叉编码器要算的对数线性增加、变慢。
+#
+# 注意它和 RECALL_K 共用一个公式（见 rag.retrieve_hybrid_stream）：
+#     实际候选数 = max(top_k × 本倍数, RECALL_K)
+# 默认 TOP_K=3 时 2~6 档全被 RECALL_K=20 兜底成同一个池——multiplier 要到
+# TOP_K ≥ 7 才重新生效（2026-08-25 四档对照实测确认，安全区间 2~3，
+# 见 docs/experiments/m34-rerank-tuning.md）。
 RERANK_CANDIDATE_MULTIPLIER = int(os.environ.get("RERANK_CANDIDATE_MULTIPLIER", 3))
 
 # --- Contextual Retrieval（给缺上下文的片段补一句说明，见 src/contextualizer.py）---
