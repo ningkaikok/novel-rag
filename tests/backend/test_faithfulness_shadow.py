@@ -77,6 +77,49 @@ def test_binary_pr_zero_denominator_returns_none():
     assert precision is None and recall is None
 
 
+def test_per_label_agreement_breaks_out_partial_column():
+    """逐标签一致率：partial 列是两步走实验的核心观察点，必须单独可见。"""
+    rows = [
+        ("supported", "supported"),
+        ("supported", "partial"),  # 单步 Judge 的典型误判：把半真半假判成全对
+        ("partial", "partial"),  # 两步走聚合才能产出的预测
+        ("unsupported", "unsupported"),
+        ("uncertain", "unsupported"),
+    ]
+    stats = shadow.per_label_agreement(rows)
+    assert stats["supported"] == (1, 1)
+    assert stats["partial"] == (1, 2)
+    assert stats["unsupported"] == (1, 2)
+
+
+# ---------------------------------------------------------------- 方法描述符解析
+
+
+def test_parse_method_spec_two_prefix_routes_to_two_step():
+    display, base, two = shadow.parse_method_spec("two:glm:glm-4-flash")
+    assert (display, base, two) == ("two:glm:glm-4-flash", "glm:glm-4-flash", True)
+
+
+def test_parse_method_spec_plain_spec_follows_env_switch(monkeypatch):
+    monkeypatch.delenv("FAITHFULNESS_JUDGE_MODE", raising=False)
+    _, _, two_off = shadow.parse_method_spec("glm:glm-4.5-air")
+    assert two_off is False
+    monkeypatch.setenv("FAITHFULNESS_JUDGE_MODE", "two_step")
+    _, base, two_on = shadow.parse_method_spec("glm:glm-4.5-air")
+    assert (base, two_on) == ("glm:glm-4.5-air", True)
+
+
+def test_parse_method_spec_rejects_rule_and_unknown_prefix():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        shadow.parse_method_spec("two:rule")  # 规则基线没有两步走的形态
+    with pytest.raises(SystemExit):
+        shadow.parse_method_spec("two:openai:gpt-x")  # 只支持 glm:/claude: 路由
+    with pytest.raises(SystemExit):
+        shadow.parse_method_spec("openai:gpt-x")
+
+
 class _FlakyJudge:
     """前 n 次调用抛异常，之后正常输出 JSON 的 mock 生成函数。"""
 
@@ -99,16 +142,16 @@ def _retry_case():
 def test_judge_with_retry_recovers_after_transient_failure(monkeypatch):
     monkeypatch.setattr(shadow, "_MIN_CALL_INTERVAL_S", 0)
     judge = _FlakyJudge(fail_times=1)
-    label, reason, failed = shadow.judge_with_retry(_retry_case(), judge)
-    assert (label, failed) == ("supported", False)
+    result, failed = shadow.judge_with_retry(_retry_case(), judge)
+    assert result["label"] == "supported" and not failed
     assert judge.calls == 2
 
 
 def test_judge_with_retry_degrades_to_uncertain_after_exhaustion(monkeypatch):
     monkeypatch.setattr(shadow, "_MIN_CALL_INTERVAL_S", 0)
     judge = _FlakyJudge(fail_times=99)  # 永远失败
-    label, _, failed = shadow.judge_with_retry(_retry_case(), judge)
-    assert (label, failed) == ("uncertain", True)
+    result, failed = shadow.judge_with_retry(_retry_case(), judge)
+    assert result["label"] == "uncertain" and failed
     assert judge.calls == 1 + shadow._MAX_RETRIES
 
 
@@ -119,8 +162,8 @@ def test_judge_with_retry_does_not_retry_model_uncertainty(monkeypatch):
     def stable_uncertain(prompt):
         return iter('{"label": "uncertain", "reason": "拿不准"}')
 
-    label, _, failed = shadow.judge_with_retry(_retry_case(), stable_uncertain)
-    assert (label, failed) == ("uncertain", False)
+    result, failed = shadow.judge_with_retry(_retry_case(), stable_uncertain)
+    assert result["label"] == "uncertain" and not failed
 
 
 # ---------------------------------------------------------------- 标注集本身
