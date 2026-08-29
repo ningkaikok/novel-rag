@@ -13,6 +13,7 @@ Key 只从环境变量 ZHIPU_API_KEY 读取，**绝不硬编码到代码里**：
 
 import json
 import os
+import threading
 from collections.abc import Iterator
 
 import requests
@@ -54,6 +55,16 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
     if key is None:
         raise RuntimeError("未设置环境变量 ZHIPU_API_KEY，无法调用智谱 GLM")
 
+    # 流级墙钟上限（秒）：requests 的读超时只约束相邻数据块的间隔——本机代理
+    # （Surge/Clash fake-ip）的隧道卡死时仍会间歇喂入 TLS 心跳，把 SSE 流挂成
+    # 「永远读不完也永不超时」的僵尸连接。这里用后台线程定时器到点强制关闭
+    # 响应对象：阻塞中的 SSL read 会立刻抛错，不依赖信号能否打断 C 层 poll
+    # 循环（实测 SIGALRM 打不断 macOS 的 _ssl select 重试）。默认关闭，由
+    # 调用方按需设置（如影子评测脚本设 120s）。
+    deadline_raw = os.environ.get("ZHIPU_STREAM_DEADLINE", "").strip()
+    deadline_s = float(deadline_raw) if deadline_raw else None
+    watchdog: threading.Timer | None = None
+
     body = {
         "model": model_name.removeprefix(MODEL_PREFIX),
         "stream": True,
@@ -62,41 +73,49 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
             {"role": "user", "content": prompt},
         ],
     }
-    with requests.post(
-        API_URL,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json=body,
-        stream=True,
-        timeout=_TIMEOUT,
-    ) as resp:
-        if resp.status_code != 200:
-            # 不回显 key，只透出服务端的错误说明
-            raise RuntimeError(
-                f"智谱 GLM 调用失败（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
-        # SSE 解析：每条事件形如 "data: {...}"，事件之间以空行分隔。
-        # iter_lines 会按行切好，空行和 "data:" 以外的行（如注释/心跳）直接跳过。
-        # 新版 requests 的类型存根把 iter_lines 标成 bytes|str 联合
-        # （decode_unicode 的重载没体现），显式归一成 str 让类型与运行时一致。
-        for raw in resp.iter_lines(decode_unicode=True):
-            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[len("data:") :].strip()
-            # "[DONE]" 是 OpenAI 兼容流式协议的结束哨兵，各家实现一致
-            if data == "[DONE]":
-                break
-            try:
-                event = json.loads(data)
-            except json.JSONDecodeError:
-                # 单条坏数据只丢弃这一段，不让整个回答前功尽弃——流式场景下
-                # 中途断流的代价比"宁可错杀整条流"小得多
-                continue
-            # choices 理论上恒为 1 个元素；防御式遍历而非取 [0]，避免服务端
-            # 返回空数组时 IndexError 把已经生成了一半的回答打断
-            for choice in event.get("choices", []):
-                delta = choice.get("delta") or {}
-                # 只取最终答案；GLM 的推理过程在 reasoning_content 里，跳过
-                text = delta.get("content")
-                if text:
-                    yield text
+    try:
+        with requests.post(
+            API_URL,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=body,
+            stream=True,
+            timeout=_TIMEOUT,
+        ) as resp:
+            if deadline_s is not None:
+                watchdog = threading.Timer(deadline_s, resp.close)
+                watchdog.daemon = True
+                watchdog.start()
+            if resp.status_code != 200:
+                # 不回显 key，只透出服务端的错误说明
+                raise RuntimeError(
+                    f"智谱 GLM 调用失败（HTTP {resp.status_code}）：{resp.text[:300]}"
+                )
+            # SSE 解析：每条事件形如 "data: {...}"，事件之间以空行分隔。
+            # iter_lines 会按行切好，空行和 "data:" 以外的行（如注释/心跳）直接跳过。
+            # 新版 requests 的类型存根把 iter_lines 标成 bytes|str 联合
+            # （decode_unicode 的重载没体现），显式归一成 str 让类型与运行时一致。
+            for raw in resp.iter_lines(decode_unicode=True):
+                line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                # "[DONE]" 是 OpenAI 兼容流式协议的结束哨兵，各家实现一致
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    # 单条坏数据只丢弃这一段，不让整个回答前功尽弃——流式场景下
+                    # 中途断流的代价比"宁可错杀整条流"小得多
+                    continue
+                # choices 理论上恒为 1 个元素；防御式遍历而非取 [0]，避免服务端
+                # 返回空数组时 IndexError 把已经生成了一半的回答打断
+                for choice in event.get("choices", []):
+                    delta = choice.get("delta") or {}
+                    # 只取最终答案；GLM 的推理过程在 reasoning_content 里，跳过
+                    text = delta.get("content")
+                    if text:
+                        yield text
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()

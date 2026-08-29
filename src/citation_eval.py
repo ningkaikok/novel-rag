@@ -17,6 +17,7 @@
 
 import json
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 
 _CITATION_RE = re.compile(r"\[(\d+)]")
@@ -141,6 +142,323 @@ def judge_support(
             errors.append(reason)
         return {"label": "uncertain", "reason": f"Judge 输出解析失败：{reason}"}
     return {"label": label, "reason": str(data.get("reason", "")).strip()}
+
+
+# ---------------------------------------------------------------- 两步走 Judge
+#
+# 第二阶段校准（docs/experiments/m35-faithfulness-calibration.md）的结论：单步
+# Judge 全部退化成二分类器，对「半真半假」系统性失明。两步走把判断拆成
+# 「抽取可核对断言 → 逐条对照证据 → 聚合」，让 partial 从"模型愿不愿意说"
+# 变成"聚合规则的机械结果"。
+#
+# 与 judge_support 并存：调用方显式选择走哪条路径（评测脚本 --two-step /
+# two: 前缀 / FAITHFULNESS_JUDGE_MODE 环境变量切换），默认行为不变，
+# 同样只在影子评测里被调用。
+
+_CLAIM_EXTRACT_PROMPT = """你是一个严格的核验员。请把下面的【陈述】拆成若干条**可独立核对**
+的原子断言：每条只包含一个事实点（人物、动作、数字、时间、因果、范围等），
+去掉修辞和语气词。
+
+【陈述】
+{statement}
+
+要求：
+- 每条断言都必须是能到证据里找到依据或反证的客观陈述，保留原文的否定词和量词；
+- 数字/单位、时间顺序、因果关系、"都/所有"这类全称量词要单独拆出来，不要合并；
+- 最多 6 条；陈述本身已是单一事实时输出 1 条。
+
+只输出一个 JSON 对象（不要输出其他任何文字）：
+{{"claims": ["断言一", "断言二"]}}"""
+
+_CLAIM_JUDGE_PROMPT = """你是一个严格的核验员。请判断下面的【断言】与【证据】的关系，三选一：
+- supported：证据能直接推出该断言（允许同义改写、代词指代、比喻语境）；
+- contradicted：证据里有与断言明确相反的内容；
+- not_found：证据既推不出也没有反证，断言内容在证据里找不到着落。
+
+【断言】
+{claim}
+
+【证据】
+{evidence}
+
+注意：证据是小说原文，比喻、绰号和代词指代应视为有效支撑；时间顺序颠倒、
+数字/单位篡改、张冠李戴属于 contradicted；不要因为断言"听起来合理"就判 supported。
+
+只输出一个 JSON 对象（不要输出其他任何文字）：
+{{"label": "supported|contradicted|not_found", "reason": "一句话理由"}}"""
+
+_CLAIM_VERDICTS = ("supported", "contradicted", "not_found")
+
+# 抽取出的原子断言数量上限：防止模型把一条陈述碎成几十条断言烧钱
+_MAX_CLAIMS = 6
+
+
+def extract_claims(
+    statement: str, generate_fn, errors: list | None = None
+) -> tuple[list[str], str | None]:
+    """两步走第一步：从陈述中抽取可独立核对的原子断言列表。
+
+    返回 ``(claims, fail_reason)``：成功时 fail_reason 为 None；任何失败
+    （生成异常、输出不含 JSON、claims 结构非法）返回空列表并给出原因——
+    调用方应降级为 uncertain，而不是拿空列表冒充"无断言可核"。
+    """
+    prompt = _CLAIM_EXTRACT_PROMPT.format(statement=statement)
+    try:
+        raw = "".join(generate_fn(prompt)).strip()
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        if errors is not None:
+            errors.append(f"Judge 调用失败：{reason}")
+        return [], f"Judge 调用失败：{reason}"
+    try:
+        data = _extract_json_object(_strip_code_fence(raw))
+        if data is None:
+            raise ValueError("输出中找不到 JSON 对象")
+        claims_raw = data.get("claims")
+        if not isinstance(claims_raw, list):
+            raise ValueError(f"claims 不是数组：{type(claims_raw).__name__}")
+        claims = [str(claim).strip() for claim in claims_raw if str(claim).strip()]
+        if not claims:
+            raise ValueError("claims 是空数组")
+        if len(claims) > _MAX_CLAIMS:
+            claims = claims[:_MAX_CLAIMS]
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}；原始输出前 200 字：" + raw[:200].replace(
+            "\n", "\\n"
+        )
+        if errors is not None:
+            errors.append(f"Judge 输出解析失败：{reason}")
+        return [], f"Judge 输出解析失败：{reason}"
+    return claims, None
+
+
+def judge_claim(
+    claim: str, evidence_texts: Sequence[str], generate_fn, errors: list | None = None
+) -> dict:
+    """两步走第二步：判定单条断言与证据的关系。
+
+    返回 ``{"label": "supported|contradicted|not_found", "reason": str}``；
+    调用或解析失败降级为 ``{"label": "uncertain", ...}``，理由带与
+    judge_support 相同的可重试前缀，让上层重试逻辑统一处理。
+    """
+    evidence = "\n".join(f"- {text}" for text in evidence_texts)
+    prompt = _CLAIM_JUDGE_PROMPT.format(claim=claim, evidence=evidence)
+    try:
+        raw = "".join(generate_fn(prompt)).strip()
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        if errors is not None:
+            errors.append(f"Judge 调用失败：{reason}")
+        return {"label": "uncertain", "reason": f"Judge 调用失败：{reason}"}
+    try:
+        data = _extract_json_object(_strip_code_fence(raw))
+        if data is None:
+            raise ValueError("输出中找不到 JSON 对象")
+        label = str(data.get("label", "")).strip().lower()
+        if label not in _CLAIM_VERDICTS:
+            raise ValueError(f"label 非法：{label!r}")
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}；原始输出前 200 字：" + raw[:200].replace(
+            "\n", "\\n"
+        )
+        if errors is not None:
+            errors.append(f"Judge 输出解析失败：{reason}")
+        return {"label": "uncertain", "reason": f"Judge 输出解析失败：{reason}"}
+    return {"label": label, "reason": str(data.get("reason", "")).strip()}
+
+
+_CLAIM_BATCH_PROMPT = """你是一个严格的核验员。下面有 {count} 条编号断言，请**逐条**判断每条
+与【证据】的关系，三选一：supported（证据能直接推出）/ contradicted（证据有明确反证）/
+not_found（证据里找不到着落也没有反证）。
+
+【证据】
+{evidence}
+
+【断言】
+{claims}
+
+要求：
+- 证据是小说原文，比喻、绰号和代词指代应视为有效支撑；时间顺序颠倒、数字/单位篡改、
+  张冠李戴属于 contradicted；
+- 每条独立判断，不要因为其他断言的结论而互相影响；
+- 输出的 verdicts 数组必须恰好包含全部 {count} 条，index 从 0 开始按输入顺序排列。
+
+只输出一个 JSON 对象（不要输出其他任何文字）：
+{{"verdicts": [{{"index": 0, "label": "supported|contradicted|not_found", "reason": "一句话理由"}}, ...]}}"""
+
+
+def judge_claims_batch(
+    claims: Sequence[str],
+    evidence_texts: Sequence[str],
+    generate_fn,
+    errors: list | None = None,
+) -> list[dict] | None:
+    """两步走第二步的**批量**版本：一次调用判定全部断言。
+
+    与逐条循环等价的判定语义，但把 N 次 LLM 调用压成 1 次——两步走总成本从
+    N+1 次降到固定 2 次。返回与 ``claims`` 等长的 ``[{"label", "reason"}, ...]``
+    （顺序对齐）；任何失败返回 None 并向 errors 追加原因，由调用方降级。
+    """
+    if not claims:
+        return None
+    if len(claims) == 1:
+        # 单断言短路：批量 prompt 的协议开销不划算，直接走单条路径
+        result = judge_claim(claims[0], evidence_texts, generate_fn, errors)
+        return None if result["label"] == "uncertain" else [result]
+    evidence = "\n".join(f"- {text}" for text in evidence_texts)
+    numbered = "\n".join(f"{i}. {claim}" for i, claim in enumerate(claims))
+    prompt = _CLAIM_BATCH_PROMPT.format(count=len(claims), evidence=evidence, claims=numbered)
+    try:
+        raw = "".join(generate_fn(prompt)).strip()
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        if errors is not None:
+            errors.append(f"Judge 调用失败：{reason}")
+        return None
+    try:
+        data = _extract_json_object(_strip_code_fence(raw))
+        if data is None:
+            raise ValueError("输出中找不到 JSON 对象")
+        raw_verdicts = data.get("verdicts")
+        if not isinstance(raw_verdicts, list):
+            raise ValueError("verdicts 不是数组")
+        by_index: dict[int, dict] = {}
+        for item in raw_verdicts:
+            if not isinstance(item, dict):
+                continue
+            try:
+                # 默认给 -1 而不是 None：字段缺失时 -1 必然落在 range(len(claims))
+                # 之外，效果和"跳过这条"完全一样，同时满足 int() 的类型签名。
+                index = int(item.get("index", -1))
+            except (TypeError, ValueError):
+                continue
+            label = str(item.get("label", "")).strip().lower()
+            if (
+                index in range(len(claims))
+                and label in _CLAIM_VERDICTS
+                and index not in by_index
+            ):
+                by_index[index] = {
+                    "label": label,
+                    "reason": str(item.get("reason", "")).strip(),
+                }
+        if len(by_index) != len(claims):
+            missing = sorted(set(range(len(claims))) - set(by_index))
+            raise ValueError(f"缺少或非法的断言判定：index={missing}")
+        return [by_index[i] for i in range(len(claims))]
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}；原始输出前 200 字：" + raw[:200].replace(
+            "\n", "\\n"
+        )
+        if errors is not None:
+            errors.append(f"Judge 输出解析失败：{reason}")
+        return None
+
+
+def aggregate_claim_verdicts(verdict_labels: Sequence[str]) -> dict:
+    """把逐条断言判定聚合成 supported/partial/unsupported 最终标签（纯函数）。
+
+    规则刻意机械化，让 partial 不再依赖模型"愿意说半真半假"：
+    - 全部 supported → supported；
+    - 有 supported 且同时存在 contradicted/not_found → partial（部分有据 +
+      部分被反证或无据，正是第二阶段所有 Judge 的盲区形态）；
+    - 其余（全部 not_found，或存在 contradicted 且没有任何 supported）→
+      unsupported——没有任何断言立得住，或有断言被证据直接反驳；
+    - 出现未知标签或空列表 → uncertain（宁可不确定也不编造）。
+    """
+    known = [label for label in verdict_labels if label in _CLAIM_VERDICTS]
+    if not verdict_labels or len(known) != len(verdict_labels):
+        return {
+            "label": "uncertain",
+            "reason": f"断言判定不完整或不合法：{list(verdict_labels)}",
+        }
+    counts = Counter(known)
+    total = len(known)
+    supported = counts["supported"]
+    detail = (
+        f"{total} 条断言：supported {supported} / "
+        f"contradicted {counts['contradicted']} / not_found {counts['not_found']}"
+    )
+    if supported == total:
+        return {"label": "supported", "reason": f"全部断言有据（{detail}）"}
+    if supported > 0:
+        return {"label": "partial", "reason": f"部分断言有据、其余不成立（{detail}）"}
+    if counts["contradicted"] == 0:
+        return {"label": "unsupported", "reason": f"全部断言在证据中无据（{detail}）"}
+    return {"label": "unsupported", "reason": f"存在被证据直接反驳的断言（{detail}）"}
+
+
+def judge_support_two_step(
+    statement: str,
+    evidence_texts: Sequence[str],
+    generate_fn,
+    errors: list | None = None,
+    batch_verdicts: bool = False,
+) -> dict:
+    """忠实度影子接口的两步走版本：抽取断言 → 逐条核对 → 机械聚合。
+
+    返回与 judge_support 同形的 ``{"label", "reason"}``（标签空间一致，
+    评测脚本无需区分两种方法），另附 ``claims`` / ``verdicts`` 供误判分析。
+    任一环节失败整体降级为 uncertain，理由沿用「Judge 调用失败：/
+    Judge 输出解析失败：」前缀，脚本层重试逻辑因此可以原样复用。
+
+    ``batch_verdicts``：第二步改用批量 prompt（一次调用判定全部断言），
+    判定语义与逐条循环一致、聚合规则共用，只是把 N+1 次 LLM 调用压成
+    固定 2 次——批量模式是成本优化，不改变实验方法论。
+    """
+    local_errors: list = []
+    claims, fail_reason = extract_claims(statement, generate_fn, local_errors)
+    if not claims:
+        if errors is not None:
+            errors.extend(local_errors)
+        return {
+            "label": "uncertain",
+            "reason": fail_reason or "未能抽取任何可核对断言",
+            "claims": [],
+            "verdicts": [],
+        }
+    evidence = list(evidence_texts)
+    if batch_verdicts:
+        batch = judge_claims_batch(claims, evidence, generate_fn, local_errors)
+        if batch is None:
+            reason = local_errors[-1] if local_errors else "批量判定失败"
+            if errors is not None:
+                errors.extend(local_errors)
+            return {
+                "label": "uncertain",
+                "reason": reason,
+                "claims": claims,
+                "verdicts": [],
+            }
+        verdicts = [
+            {"claim": claim, **result} for claim, result in zip(claims, batch, strict=True)
+        ]
+    else:
+        verdicts = []
+        for claim in claims:
+            result = judge_claim(claim, evidence, generate_fn, local_errors)
+            if result["label"] == "uncertain":
+                # 单条断言核对失败会让聚合结果不可信：整条降级 uncertain，
+                # 前缀保持可重试语义，由脚本层决定是否重跑整个 case
+                reason = result["reason"]
+                if errors is not None:
+                    errors.extend(local_errors)
+                return {
+                    "label": "uncertain",
+                    "reason": reason,
+                    "claims": claims,
+                    "verdicts": verdicts,
+                }
+            verdicts.append({"claim": claim, **result})
+    aggregated = aggregate_claim_verdicts([v["label"] for v in verdicts])
+    if errors is not None and local_errors:
+        errors.extend(local_errors)
+    return {
+        "label": aggregated["label"],
+        "reason": aggregated["reason"],
+        "claims": claims,
+        "verdicts": verdicts,
+    }
 
 
 def rule_support(statement: str, evidence_texts: Sequence[str]) -> dict:
