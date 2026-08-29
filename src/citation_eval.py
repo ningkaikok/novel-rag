@@ -288,7 +288,10 @@ not_found（证据里找不到着落也没有反证）。
 
 
 def judge_claims_batch(
-    claims: Sequence[str], evidence_texts: Sequence[str], generate_fn, errors: list | None = None
+    claims: Sequence[str],
+    evidence_texts: Sequence[str],
+    generate_fn,
+    errors: list | None = None,
 ) -> list[dict] | None:
     """两步走第二步的**批量**版本：一次调用判定全部断言。
 
@@ -304,9 +307,7 @@ def judge_claims_batch(
         return None if result["label"] == "uncertain" else [result]
     evidence = "\n".join(f"- {text}" for text in evidence_texts)
     numbered = "\n".join(f"{i}. {claim}" for i, claim in enumerate(claims))
-    prompt = _CLAIM_BATCH_PROMPT.format(
-        count=len(claims), evidence=evidence, claims=numbered
-    )
+    prompt = _CLAIM_BATCH_PROMPT.format(count=len(claims), evidence=evidence, claims=numbered)
     try:
         raw = "".join(generate_fn(prompt)).strip()
     except Exception as exc:
@@ -326,11 +327,17 @@ def judge_claims_batch(
             if not isinstance(item, dict):
                 continue
             try:
-                index = int(item.get("index"))
+                # 默认给 -1 而不是 None：字段缺失时 -1 必然落在 range(len(claims))
+                # 之外，效果和"跳过这条"完全一样，同时满足 int() 的类型签名。
+                index = int(item.get("index", -1))
             except (TypeError, ValueError):
                 continue
             label = str(item.get("label", "")).strip().lower()
-            if index in range(len(claims)) and label in _CLAIM_VERDICTS and index not in by_index:
+            if (
+                index in range(len(claims))
+                and label in _CLAIM_VERDICTS
+                and index not in by_index
+            ):
                 by_index[index] = {
                     "label": label,
                     "reason": str(item.get("reason", "")).strip(),
@@ -423,7 +430,9 @@ def judge_support_two_step(
                 "claims": claims,
                 "verdicts": [],
             }
-        verdicts = [{"claim": claim, **result} for claim, result in zip(claims, batch)]
+        verdicts = [
+            {"claim": claim, **result} for claim, result in zip(claims, batch, strict=True)
+        ]
     else:
         verdicts = []
         for claim in claims:

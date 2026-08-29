@@ -383,7 +383,7 @@ def main() -> int:
         results_by_spec[display] = {}
         for index, case in enumerate(cases, start=1):
             result, failed = judge_with_retry(
-                case, generate_fn, two_step=two, batch_verdicts=batch_env
+                case, generate_fn, two_step=two, batch_verdicts=False
             )
             label = result["label"]
             if failed:
