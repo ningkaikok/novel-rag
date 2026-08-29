@@ -24,6 +24,14 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7 目前装不上：openapi-typescript@7.13.0 和
+      # typescript-eslint@8.67.0 的 peerDependencies 都还卡在 TS ^5.x /
+      # >=4.8.4 <6.1.0，不是本仓库能单方面解决的（见 #73 的排查记录）。
+      # 忽略 major 版本，5.x 的 minor/patch 仍走上面的分组正常升级；
+      # 等这两个上游包发新版支持 TS7 后，手动删掉这条规则再评估。
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # CI 用的 actions 版本跟进
   - package-ecosystem: github-actions
