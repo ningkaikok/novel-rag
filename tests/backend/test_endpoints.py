@@ -351,7 +351,7 @@ class _FakeRag:
         """M3.4 起的上下文组装统一入口；off 档等价旧 expand_neighbors 且无 trace 步骤。"""
         return sources, None
 
-    def build_prompt(self, question, sources, history=None):
+    def build_prompt(self, question, sources, history=None, summary=None):
         return f"问题：{question}"
 
 
@@ -406,7 +406,7 @@ def test_ask_passes_session_history_into_answer_prompt(client, monkeypatch):
     seen: dict = {}
 
     class _HistoryRag(_FakeRag):
-        def build_prompt(self, question, sources, history=None):
+        def build_prompt(self, question, sources, history=None, summary=None):
             seen["history"] = history
             return f"问题：{question}"
 
@@ -440,7 +440,7 @@ def test_ask_without_session_sends_no_history(client, monkeypatch):
     seen: dict = {}
 
     class _HistoryRag(_FakeRag):
-        def build_prompt(self, question, sources, history=None):
+        def build_prompt(self, question, sources, history=None, summary=None):
             seen["history"] = history
             return f"问题：{question}"
 

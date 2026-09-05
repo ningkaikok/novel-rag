@@ -89,6 +89,25 @@ HISTORY_MAX_CHARS = int(os.environ.get("HISTORY_MAX_CHARS", 1200))
 # 理解"上一轮在聊什么"通常开头几句就够。
 HISTORY_PER_TURN_CHARS = int(os.environ.get("HISTORY_PER_TURN_CHARS", 220))
 
+# --- 滚动会话摘要（M3.6，见 src/session_summary.py）---
+# 逐字历史只保留最近几轮，更早的内容会被整轮丢掉。滚动摘要接住掉出窗口的那部分，
+# 让长会话仍然记得"我们在聊哪本书、这个人是谁、之前确认过什么"。
+#
+# **默认关闭**，与 GraphRAG、查询扩展、忠实度 Judge 的处理一致：路线图对本阶段
+# 写死了"未经评测不得默认影响回答"，而现有多轮评测集最长只有三四轮，根本触发
+# 不到摘要，也就无从证明它没有引入摘要漂移或事实丢失。要打开它，先按
+# docs/experiments/m36-session-summary.md 里写的条件补齐长会话评测。
+HISTORY_SUMMARY_ENABLED = os.environ.get("HISTORY_SUMMARY_ENABLED", "0") == "1"
+# 摘要用的模型。和查询改写同理：这是压缩任务不是推理任务，用便宜快速的小模型；
+# 更重要的是它跑在提问的关键路径上，用大模型会让用户白等好几秒。
+HISTORY_SUMMARY_MODEL = os.environ.get("HISTORY_SUMMARY_MODEL", QUERY_REWRITE_MODEL)
+# 攒够多少轮掉出窗口的对话才更新一次摘要。"只在超过阈值时更新"是路线图的原话，
+# 目的就是不让每一轮追问都多付一次模型调用：设成 4，长会话里大约每四轮才更新一次。
+HISTORY_SUMMARY_EVERY = int(os.environ.get("HISTORY_SUMMARY_EVERY", 4))
+# 摘要自身的字数上限。它是滚动累积的，不设上限会随会话长度无限膨胀，
+# 最后反过来把证据挤出 prompt——那正是引入预算想避免的事。
+HISTORY_SUMMARY_MAX_CHARS = int(os.environ.get("HISTORY_SUMMARY_MAX_CHARS", 400))
+
 # --- 自适应查询扩展（低置信度补救，见 src/query_expander.py / src/confidence.py）---
 # 默认关闭：每个变体都要完整跑一遍混合检索+重排，再加一次 LLM 调用，成本是
 # 主链路的好几倍；且改写可能引入语义漂移。只对「重排后信号显示置信度很低」

@@ -14,6 +14,7 @@
 """
 
 import json
+import re
 from collections.abc import Iterator
 
 import requests
@@ -69,6 +70,7 @@ PROMPT_TEMPLATE_WITH_HISTORY = """你是一个小说问答助手。请仅根据�
 - 背景和原文片段冲突时，一律以原文片段为准
 - 用户如果在追问"再展开讲讲""你刚才说的第二点"，从背景里找出他指的是什么，
   然后仍然回到下面的原文片段去组织答案
+- 标着「（更早对话的摘要）」的那一行是压缩过的，可能不准确，可信度比逐字对话更低
 
 对话背景：
 {history}
@@ -108,11 +110,25 @@ def generate_ollama_prompt_stream(prompt: str, model: str = OLLAMA_MODEL) -> Ite
                 yield chunk
 
 
+# 上一轮回答里的引用编号，进背景段之前必须抹掉。
+#
+# 这是「跨轮引用错误」的根源：编号是**每一轮独立重编**的——上一轮的 [1] 是那一轮
+# 检索到的片段，这一轮的 [1] 完全是另一段原文。把带编号的旧回答原样放进背景里，
+# 等于给了模型一个看起来合法、实际指向别处的编号，它很可能直接复用。
+# 编号本身对"理解用户在问什么"没有任何帮助，抹掉零损失。
+_CITATION_MARK = re.compile(r"\[\d+\]")
+
+
+def _strip_citations(text: str) -> str:
+    return _CITATION_MARK.sub("", text)
+
+
 def build_history_block(
     turns: list[dict],
     max_turns: int = HISTORY_MAX_TURNS,
     max_chars: int = HISTORY_MAX_CHARS,
     per_turn_chars: int = HISTORY_PER_TURN_CHARS,
+    summary: str | None = None,
 ) -> tuple[str, dict]:
     """把对话历史压成一段有预算上限的背景文本（M3.6）。
 
@@ -127,6 +143,12 @@ def build_history_block(
 
     为什么牺牲最旧的：指代对象几乎总落在紧邻的一两轮里。隔了七八轮的"他"，
     就算解析对了也未必是用户想要的。
+
+    ``summary`` 是滚动会话摘要（M3.6，见 session_summary.py），用来接住那些
+    已经被丢掉的更早对话。它排在逐字历史**前面**并单独标注，因为两者可信度
+    不同：逐字历史是原话，摘要是模型压缩的产物，可能已经漂移。摘要**不占**
+    ``max_chars`` 预算——它自己有独立上限（HISTORY_SUMMARY_MAX_CHARS），
+    要是让它和逐字历史抢同一份预算，摘要一长就会把最近几轮原话挤掉，那是本末倒置。
     """
     recent = [t for t in turns if t.get("content")][-max_turns:]
     dropped_by_turn_limit = max(0, len([t for t in turns if t.get("content")]) - len(recent))
@@ -135,7 +157,7 @@ def build_history_block(
     truncated_turns = 0
     for turn in recent:
         role = "用户" if turn.get("role") == "user" else "助手"
-        content = str(turn["content"]).strip()
+        content = _strip_citations(str(turn["content"])).strip()
         if len(content) > per_turn_chars:
             content = content[:per_turn_chars] + "…（略）"
             truncated_turns += 1
@@ -148,6 +170,14 @@ def build_history_block(
         dropped_by_budget += 1
 
     text = "\n".join(lines)
+    summary_text = _strip_citations(summary or "").strip()
+    if summary_text:
+        text = (
+            f"（更早对话的摘要）{summary_text}\n{text}"
+            if text
+            else f"（更早对话的摘要）{summary_text}"
+        )
+
     reasons = []
     if dropped_by_turn_limit:
         reasons.append(f"超过 {max_turns} 轮上限，丢弃最旧 {dropped_by_turn_limit} 轮")
@@ -156,10 +186,14 @@ def build_history_block(
     if truncated_turns:
         reasons.append(f"{truncated_turns} 轮的内容按 {per_turn_chars} 字截断")
 
+    if summary_text:
+        reasons.append(f"更早的对话已压缩成 {len(summary_text)} 字摘要")
+
     return text, {
         "turns_used": len(lines),
         "turns_available": len([t for t in turns if t.get("content")]),
         "chars": len(text),
+        "summary_used": bool(summary_text),
         "truncated": bool(reasons),
         "reason": "；".join(reasons) or "未截断",
     }
@@ -171,6 +205,7 @@ class GenerationMixin:
         question: str,
         sources: list[SourceChunk],
         history: list[dict] | None = None,
+        summary: str | None = None,
     ) -> str:
         """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。
 
@@ -179,7 +214,8 @@ class GenerationMixin:
         线索明确标注了"是统计推断不是确定事实"，让模型拿它当线索去核对原文，
         而不是直接照抄。
 
-        ``history`` 非空时改用带「对话背景」段的模板（M3.6）。历史是**可选参数**：
+        ``history`` 非空时改用带「对话背景」段的模板（M3.6）；``summary`` 是可选的
+        滚动会话摘要，用来补上已经掉出历史窗口的更早对话。两者都是**可选参数**：
         自由问答、Agent Lab、评测脚本都不传，行为与以前完全一致。
         """
         blocks = []
@@ -193,8 +229,8 @@ class GenerationMixin:
         hint = self._graph_hint(question)
         if hint:
             context = f"{hint}\n\n---\n\n{context}"
-        if history:
-            history_text, _ = build_history_block(history)
+        if history or summary:
+            history_text, _ = build_history_block(history or [], summary=summary)
             if history_text:
                 return PROMPT_TEMPLATE_WITH_HISTORY.format(
                     history=history_text, context=context, question=question

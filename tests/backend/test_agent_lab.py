@@ -16,7 +16,7 @@ class _FakeRag:
     def __init__(self):
         self.prompt = ""
 
-    def build_prompt(self, question, sources, history=None):
+    def build_prompt(self, question, sources, history=None, summary=None):
         self.prompt = f"{question}|" + ",".join(str(source.chunk_id) for source in sources)
         return self.prompt
 
