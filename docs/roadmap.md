@@ -296,8 +296,11 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
 - [x] 增加 token 预算与可观测字段，记录历史长度、改写耗时、摘要耗时和截断原因
       （2026-09-05：历史长度、带入轮数、截断原因和摘要耗时都写进 trace 的「对话背景」步骤）
 - [x] 引入滚动会话摘要，只在超过阈值时更新；摘要失败时保留最近原文，不阻塞回答
-      （2026-09-05：`src/session_summary.py`，**默认关闭**——长会话评测补齐前不默认
-      影响回答，理由与开启条件见 [滚动会话摘要](experiments/m36-session-summary.md)）
+      （2026-09-05：`src/session_summary.py`；长会话评测集已补齐——
+      `tests/session_summary_test_set.json`（6 条）+ `scripts/eval_session_summary.py`，
+      两个模型（`glm:glm-4-flash`/`claude:haiku`）均 6/6 通过、零摘要漂移，达到
+      开启标准，但样本量有限（仅 3 篇短篇原创语料），**默认值是否改为开启留给
+      维护者结合样本量局限自行判断**，详见 [滚动会话摘要](experiments/m36-session-summary.md)）
 - [x] 保留最近 4～6 轮原文，并增加结构化事实记忆（人物、书名、用户已确认结论）
       （2026-09-05：`HISTORY_MAX_TURNS` 默认 6；结构化事实记忆见
       `src/session_facts.py`——**只覆盖书名 + 人物，不做"用户已确认结论"**：

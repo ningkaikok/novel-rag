@@ -78,3 +78,50 @@ turn_index:  0  1  2  3  4  5 │ 6  7  8  9 10 11
 ```bash
 HISTORY_SUMMARY_ENABLED=1 uv run uvicorn backend.main:app --port 8000
 ```
+
+## 评测结果（2026-09-05）
+
+`tests/session_summary_test_set.json`（6 条，覆盖《雾隐山庄》《沙海航灯》
+《青梧镇异闻》三本原创语料，每条 early_turns 之后接 6 轮无关追问）+
+`scripts/eval_session_summary.py`。
+
+**第一层：结构性证明（零成本，不调模型）**
+
+```bash
+uv run python scripts/eval_session_summary.py
+```
+
+6/6 条确认：不开摘要时，早期事实在 `build_history_block` 组装出的背景文本里
+**必然不存在**——这不是概率性的，是窗口截断逻辑决定的必然结果，证明"没有
+摘要 = 事实必然丢失"这件事本身是真实存在的问题，不是假想的。
+
+**第二层：真实摘要评测（需要模型）**
+
+```bash
+uv run python scripts/eval_session_summary.py --model glm:glm-4-flash  # 生产默认模型
+uv run python scripts/eval_session_summary.py --model claude:haiku     # 交叉验证
+```
+
+| 模型 | 通过率 | expect_contains 违反 | expect_absent 违反（摘要漂移） |
+| --- | --- | --- | --- |
+| `glm:glm-4-flash`（`HISTORY_SUMMARY_MODEL` 生产默认） | 6/6 = 100% | 0 | 0 |
+| `claude:haiku` | 6/6 = 100% | 0 | 0 |
+
+两个模型上**收益为正、漂移为零**：6 条用例里，早期事实（病名、人物关系、
+动物脾性、身份背景、宠物、偷窃动机）全部被摘要记住，且没有一条摘要编出
+early_turns 里没说过的情节（如"顾长风已经痊愈""小顺被送去坐牢"）。
+
+**样本量的局限**：6 条用例来自 3 篇短篇（原创语料本身只有这些），覆盖的
+"漂移"场景主要是"续写未发生的情节"这一类，没有覆盖摘要在**多轮滚动更新**
+（同一个摘要被反复覆写多次）下是否会累积错误——那需要真正跑满 20+ 轮的会话，
+现有语料的篇幅不足以支撑。这一层留给上线后的真实使用数据。
+
+**引用正确性**：未单独评测，因为它由代码机械保证——`build_history_block` 在
+拼接前无条件调用 `_strip_citations` 抹掉背景段里的所有 `[n]`（见
+`test_citation_numbers_are_stripped_from_the_summary_too`），不存在"大概率
+正确"的中间态，重复用实验验证一个已经由代码保证的性质没有意义。
+
+按第 57 节的标准（收益为正、漂移不显著），这批证据已经达标。是否把
+`HISTORY_SUMMARY_ENABLED` 的默认值改成 `1`，留给维护者结合上面"样本量局限"
+一节自行判断——这是一次面向所有用户的默认行为变更（长会话会多一次可见的模型
+调用和相应耗时），不是纯代码层面的正确性问题，值得单独确认。
