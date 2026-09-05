@@ -561,18 +561,60 @@ def _facts_prompt(facts: list[dict[str, object]]) -> str:
     )
 
 
-def _parse_action(raw: str) -> dict:
-    """容忍模型带 Markdown 围栏，但最终必须得到白名单 action 对象。"""
-    text = raw.strip().replace("```json", "").replace("```", "").strip()
+class ActionParseError(ValueError):
+    """动作解析失败，带一个可聚合的失败类别（见 _parse_action 的埋点说明）。"""
+
+    def __init__(self, category: str, message: str):
+        super().__init__(message)
+        self.category = category
+
+
+def _parse_action(raw: str) -> tuple[dict, str]:
+    """容忍模型带 Markdown 围栏，但最终必须得到白名单 action 对象。
+
+    返回 ``(action, parse_mode)``。``parse_mode`` 就是路线图 M3.2.1 要求的那条
+    「动作解析失败 / 走正则兜底」埋点：
+
+        strict  裸 JSON，一次解析成功——这是理想情况
+        fenced  剥掉 ```json 围栏之后才成功
+        regex   连剥围栏都不行，靠正则抓第一个 {...} 兜底
+        failed  彻底失败（category 记录失败类型）
+
+    **为什么先埋点而不是直接改协议**：M3.2.1 想把 JSON 动作换成首行标签协议，
+    理由是"JSON 收完才能解析、正则兜底是猜、解析失败没有回路"。这三条在道理上
+    都成立，但「在自家模型上到底多久出一次」从来没测过。路线图对此写得很明白：
+    先用真实失败率决定这件事的排期，不要凭"这个设计更好"就抢跑。
+
+    regex 这一档是最关键的信号：它意味着**解析成功了，但成功得很可疑**——正则
+    抓的是第一个花括号，模型在 JSON 前后多写一句带花括号的话就可能抓错对象，
+    而且抓错了不会报错，会安安静静地执行一个错误的动作。它的占比比 failed 更
+    值得看：failed 至少还会走降级并在界面上写明原因。
+
+    聚合方式见 scripts/agent_parse_stats.py（读 chat_turns.agent_steps）。
+    """
+    text = raw.strip()
+    stripped = text.replace("```json", "").replace("```", "").strip()
+    for mode, candidate in (("strict", text), ("fenced", stripped)):
+        try:
+            return _validated(json.loads(candidate)), mode
+        except json.JSONDecodeError:
+            continue
+        except ActionParseError:
+            raise  # JSON 合法但形状不对：换个剥法也不会变对，别掩盖它
+
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if not match:
+        raise ActionParseError("no_json", "规划器没有返回 JSON")
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            raise ValueError("规划器没有返回 JSON") from None
         data = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise ActionParseError("invalid_json", f"正则兜底仍不是合法 JSON：{exc}") from None
+    return _validated(data), "regex"
+
+
+def _validated(data: object) -> dict:
     if not isinstance(data, dict) or not isinstance(data.get("args", {}), dict):
-        raise ValueError("规划器 action 形状不正确")
+        raise ActionParseError("bad_shape", "规划器 action 形状不正确")
     return data
 
 
@@ -616,6 +658,9 @@ def run_agent(
     tool_failure_streak: dict[str, int] = {}
 
     for step in range(1, max_steps + 1):
+        # 这一步的动作是怎么来的（M3.2.1 埋点）。规划器没有参与的步骤（强制收尾、
+        # 目录门禁、重复动作拦截）保持 None——把它们算进失败率会把统计冲淡。
+        parse_mode: str | None = None
         if step == max_steps and source_registry:
             action = {
                 "reason": "已到最大步骤，使用现有证据回答",
@@ -628,8 +673,9 @@ def run_agent(
                 observations=_observation_text(observations),
             )
             try:
-                action = _parse_action(planner(prompt))
+                action, parse_mode = _parse_action(planner(prompt))
             except Exception as exc:
+                parse_mode = f"failed:{getattr(exc, 'category', 'unknown')}"
                 # 规划输出偶尔不是合法 JSON。无证据先走搜索，有证据就结束回答，
                 # 让教学 demo 可用，同时在 reason 中如实显示降级原因。
                 action = (
@@ -692,6 +738,7 @@ def run_agent(
                         "args": {"source_ids": requested or list(source_registry)},
                         "observation": f"使用 {len(selected)} 个原文片段生成带引用答案",
                         "source_ids": requested or list(source_registry),
+                        "parse_mode": parse_mode,
                     },
                 )
                 yield "sources", selected
@@ -743,6 +790,7 @@ def run_agent(
             "args": args,
             "observation": observation,
             "source_ids": source_ids,
+            "parse_mode": parse_mode,
         }
         observations.append(event)
         yield "agent_step", event

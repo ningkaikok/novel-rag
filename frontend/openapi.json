@@ -45,6 +45,17 @@
       "title": "Observation",
       "type": "string"
      },
+     "parse_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parse Mode"
+     },
      "reason": {
       "title": "Reason",
       "type": "string"
