@@ -715,6 +715,10 @@ body {
 }
 .source-card {
   display: flex;
+  /* 允许换行：核实按钮/结果是 flex-basis:100% 的整行元素，需要落到第二行。
+     不加这条的话它会被挤进同一行，把原文预览压成一列竖排的字。
+     其余子项都是小块内联内容，开了 wrap 也仍然排在第一行，观感不变。 */
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.55rem;
   border: 1px solid var(--border);
@@ -886,4 +890,55 @@ body {
   .hero-title {
     font-size: 2rem;
   }
+}
+
+/* ── 按需核实引用 ──────────────────────────────────────────────────────────
+   刻意做得很轻：Judge 的实测一致率只有 67.9%，达不到自动标注的门槛（详见
+   docs/experiments/m35-faithfulness-calibration.md），所以这里既不抢视觉重心，
+   也不用"已验证/未验证"这种像是系统盖章的说法——它只是一次用户主动发起的
+   参考判断。整行宽度独占，避免和上面的原文预览挤在一行。 */
+.verify-row,
+.verify-result {
+  flex-basis: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+}
+
+.verify-row .ant-btn {
+  padding: 0;
+  height: auto;
+  font-size: 0.78rem;
+}
+
+.verify-verdict {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.verify-supported .verify-verdict {
+  color: #3f8f5f;
+}
+
+.verify-unsupported .verify-verdict {
+  color: #b4553f;
+}
+
+.verify-uncertain .verify-verdict {
+  color: var(--muted);
+}
+
+/* 判定理由和错误信息都用弱化色：它们是参考，不是结论 */
+.verify-reason,
+.verify-error {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verify-error {
+  color: #b4553f;
 }

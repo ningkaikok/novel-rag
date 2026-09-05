@@ -293,6 +293,27 @@ export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
   return (await res.json()).turns ?? [];
 }
 
+export type VerifyCitationResult = Schemas['VerifyCitationResult'];
+
+/** 按需核实某一条 `[n]` 引用是否真的被它指向的原文支持。
+ *
+ * 刻意做成用户点了才发请求：判定要跑一次模型调用（实测 10~60s、云端模型要花钱），
+ * 而且自动全局标注的准确率还不达标（见后端 verify_citation 的说明）。
+ */
+export async function verifyCitation(
+  answer: string,
+  citation: number,
+  evidence: string[],
+): Promise<VerifyCitationResult> {
+  const res = await fetch('/api/citations/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answer, citation, evidence }),
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '核实失败'));
+  return res.json();
+}
+
 // ── 人物关系审核（M4 质量闭环）──────────────────────────────────────────────
 // 关系边 = 建图时抽出的人物对（含证据类型/置信度/来源定位），共现推断必然
 // 产生假边，所以每条边都要经过人工通过/拒绝。这里的两个接口就是审核面板的

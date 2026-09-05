@@ -5,6 +5,8 @@
 主要验证这一批 response_model 改造之后，真实返回值仍然符合声明的形状。
 """
 
+import pytest
+
 import backend.main as main
 
 
@@ -241,6 +243,85 @@ def test_get_session_shape(client, monkeypatch):
     assert body["session_id"] == "some-session-id"
     assert len(body["turns"]) == 2
     assert body["turns"][1]["content"] == "顾长风。"
+
+
+def _agent_turn(agent_steps):
+    """一条 Agent Lab 的历史记录（结构化字段由参数决定合法与否）。"""
+    return {
+        "turn_index": 1,
+        "role": "assistant",
+        "content": "顾长风[1]。",
+        "sources": None,
+        "trace": None,
+        "agent_steps": agent_steps,
+        "status": "complete",
+    }
+
+
+def test_get_session_restores_agent_lab_steps(client, monkeypatch):
+    """Agent Lab 的历史轮次要能原样读回，步骤卡片才能在刷新后恢复。"""
+    steps = [
+        {
+            "step": 1,
+            "reason": "先搜索",
+            "tool": "search_novels",
+            "args": {"query": "庄主"},
+            "observation": "找到 3 段",
+            "source_ids": ["S1"],
+        }
+    ]
+    monkeypatch.setattr(main, "load_turns", lambda _sid: [_agent_turn(steps)])
+
+    body = client.get("/api/sessions/s1").json()
+
+    assert body["turns"][0]["agent_steps"][0]["tool"] == "search_novels"
+
+
+def test_broken_structured_payload_degrades_that_turn_not_the_whole_session(
+    client, monkeypatch
+):
+    """一条坏记录只丢自己的结构化字段，不能让整段对话都读不出来。
+
+    `sources`/`trace`/`agent_steps` 是 jsonb 列，形状随代码版本演进（TraceStep
+    先后加过 ms/stage_key/candidates，chat_turns 后来才加 agent_steps）。旧记录
+    一旦不满足新模型，整个会话历史就会 500——用户丢的不是某一轮的步骤卡片，
+    而是**整段对话**。这里固定住"降级而不是全灭"的行为。
+    """
+    good = {
+        "turn_index": 0,
+        "role": "user",
+        "content": "庄主是谁",
+        "sources": None,
+        "trace": None,
+        "agent_steps": None,
+        "status": "complete",
+    }
+    # 缺 reason/observation/source_ids，模拟"字段后来才加上"的旧记录
+    broken = _agent_turn([{"step": 1, "tool": "search_novels"}])
+    monkeypatch.setattr(main, "load_turns", lambda _sid: [good, broken])
+
+    resp = client.get("/api/sessions/s1")
+
+    assert resp.status_code == 200, "坏掉的结构化字段不该让整个会话读不出来"
+    turns = resp.json()["turns"]
+    assert len(turns) == 2
+    assert turns[0]["content"] == "庄主是谁"
+    # 正文保住了，只有解析不了的结构化字段被丢弃
+    assert turns[1]["content"] == "顾长风[1]。"
+    assert turns[1]["agent_steps"] is None
+
+
+def test_unparseable_core_fields_still_surface_as_error():
+    """正文本身坏掉（不是结构化字段的形状演进）时不能静默吞掉，仍要抛出。
+
+    直接测 `_restore_turn` 而不走 HTTP：这条路径的正确行为是让异常冒泡给全局
+    异常处理器转成 500，而 TestClient 默认会把服务端异常重新抛出、不返回响应，
+    从端点层断言反而测不出意图。
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        main._restore_turn({"turn_index": "not-an-int", "role": "user"})
 
 
 class _FakeRag:
@@ -512,3 +593,75 @@ def test_agent_lab_skips_history_without_session_id(client, monkeypatch):
 
     assert resp.status_code == 200
     assert 'data: "答案"' in resp.text
+
+
+# ---------------------------------------------------------------- 按需核实引用
+
+
+def test_verify_citation_only_judges_sentences_that_cite_that_source(client, monkeypatch):
+    """只把"真正引用了这条出处的句子"送给 Judge。
+
+    把整段回答一起塞过去，Judge 多半会因为无关句子判 unsupported——那不是引用
+    错了，是我们问错了问题。
+    """
+    main.state["model"] = "fake-model"
+    seen = {}
+
+    def fake_judge(statement, evidence, _generate_fn, *args, **kwargs):
+        seen["statement"] = statement
+        seen["evidence"] = list(evidence)
+        return {"label": "supported", "reason": "证据直接支持"}
+
+    monkeypatch.setattr(main, "judge_support", fake_judge)
+
+    resp = client.post(
+        "/api/citations/verify",
+        json={
+            "answer": "顾长风中了蚀骨散[1]。沈砚之是江南来的郎中[2]。",
+            "citation": 1,
+            "evidence": ["顾长风所患并非寻常旧疾，而是蚀骨散之毒"],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "supported"
+    assert body["model"] == "fake-model", "必须回传判定用的模型——准确率是模型相关的"
+    # 只核实引用了 [1] 的那句，不含 [2] 那句
+    assert "蚀骨散[1]" in seen["statement"]
+    assert "沈砚之" not in seen["statement"]
+
+
+def test_verify_citation_rejects_a_number_the_answer_never_cites(client, monkeypatch):
+    """回答里没有 [n] 时直接报错，而不是把空字符串送去判定。"""
+    main.state["model"] = "fake-model"
+    monkeypatch.setattr(
+        main,
+        "judge_support",
+        lambda *a, **k: pytest.fail("不该在没有对应引用时调用 Judge"),
+    )
+
+    resp = client.post(
+        "/api/citations/verify",
+        json={"answer": "顾长风中了蚀骨散[1]。", "citation": 3, "evidence": ["原文"]},
+    )
+
+    assert resp.status_code == 400
+
+
+def test_verify_citation_passes_through_uncertain_verdict(client, monkeypatch):
+    """Judge 说不准时如实返回 uncertain，不擅自转成"有据"或"无据"。"""
+    main.state["model"] = "glm:glm-4-flash"
+    monkeypatch.setattr(
+        main,
+        "judge_support",
+        lambda *a, **k: {"label": "uncertain", "reason": "Judge 调用失败：超时"},
+    )
+
+    body = client.post(
+        "/api/citations/verify",
+        json={"answer": "顾长风中了蚀骨散[1]。", "citation": 1, "evidence": ["原文"]},
+    ).json()
+
+    assert body["label"] == "uncertain"
+    assert "超时" in body["reason"]

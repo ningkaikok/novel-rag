@@ -181,6 +181,11 @@ npm run dev
 > 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
 > `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
 >
+> ⚠️ **端口只绑定在本机**（compose 里写的是 `127.0.0.1:8000:8000`）。本项目所有
+> 接口都没有鉴权、也没有限流，如果改成 `8000:8000` 发布到所有网卡，同网段的任何人
+> 都能读你的书架和聊天记录、并无上限地消耗你配置的 Claude/GLM 额度。确需局域网
+> 访问时，请自己补上防火墙或反向代理鉴权。
+>
 > **MCP（实验性）**：`uv run python scripts/mcp_server.py` 提供只读 MCP 服务器
 > （stdio），可在 Claude Code 等客户端注册后直接查询书架。详见脚本头部说明。
 >

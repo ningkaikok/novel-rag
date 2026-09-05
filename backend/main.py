@@ -62,6 +62,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 # 让后端能 import src 下的业务逻辑（完全复用，不改动）
 ROOT = Path(__file__).resolve().parent.parent
@@ -112,7 +113,10 @@ from backend.schemas import (  # noqa: E402
     StoredTurn,
     TraceStep,
     UploadResult,
+    VerifyCitationRequest,
+    VerifyCitationResult,
 )
+from citation_eval import judge_support, statements_citing  # noqa: E402
 from config import (  # noqa: E402
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
@@ -824,6 +828,47 @@ async def agent_ask(req: AgentAskRequest, request: Request):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+# ----------------------------------------------------------------- 按需核实引用
+@app.post("/api/citations/verify", response_model=VerifyCitationResult)
+async def verify_citation(req: VerifyCitationRequest):
+    """核实某一条 ``[n]`` 引用是否真的被它指向的原文支持。
+
+    **为什么做成用户点一下才跑，而不是每次回答自动核实**：
+
+    `docs/experiments/m35-faithfulness-calibration.md` 给忠实度判定定了两档启用
+    门槛，最轻的一档（UI 显示"忠实度不确定"提示）要求一致率 ≥80%，而实测最好的
+    配置只有 67.9%，所以自动、全局地给回答打忠实度标记目前不达标——尤其是
+    "反对"方向的精确率只有 50%，自动告警每两次就有一次冤枉，比不提示更糟。
+
+    按需核实绕开的正是这个问题：判定由用户主动发起、只作用于他指定的那一条引用，
+    返回的是**原始判定和理由**（连同判定用的模型名），而不是系统给整段回答盖章。
+    用户自己能看着理由决定信不信，这和那张阈值表管的"自动标注"是两回事。
+
+    成本也因此可控：不点不花钱、不增加任何一次回答的延迟。
+    """
+    statements = statements_citing(req.answer, req.citation)
+    if not statements:
+        raise APIError(
+            400,
+            ErrorCode.validation_error,
+            f"回答里没有引用 [{req.citation}]，无法核实",
+        )
+    model = state["model"]
+    # 判定本身是同步阻塞的模型调用（实测单次 10~60s），放线程池避免卡住事件循环
+    result = await run_in_threadpool(
+        judge_support,
+        "".join(statements),
+        req.evidence,
+        lambda prompt: _generate_for_model(prompt, model),
+    )
+    return VerifyCitationResult(
+        label=result["label"],
+        reason=result["reason"],
+        statement="".join(statements),
+        model=model,
+    )
+
+
 # ----------------------------------------------------------------- 会话历史
 @app.get("/api/sessions/{session_id}", response_model=SessionHistory)
 def get_session(session_id: str):
@@ -832,10 +877,42 @@ def get_session(session_id: str):
         rows = load_turns(session_id)
     except Exception as exc:
         raise APIError(500, ErrorCode.session_read_failed, f"读取会话失败：{exc}") from exc
-    # 数据库行是原始 dict，显式过一遍 Pydantic 校验：字段缺失/类型漂移在这里
-    # 报 500 并带清晰原因，而不是等 response_model 序列化时才炸。
-    turns = [StoredTurn.model_validate(row) for row in rows]
-    return SessionHistory(session_id=session_id, turns=turns)
+    return SessionHistory(session_id=session_id, turns=[_restore_turn(row) for row in rows])
+
+
+# 结构化附加字段：校验失败时可以单独丢掉而不影响这一轮的正文内容
+_OPTIONAL_TURN_PAYLOADS = ("agent_steps", "trace", "sources")
+
+
+def _restore_turn(row: dict) -> StoredTurn:
+    """把一行历史记录还原成 StoredTurn，结构化字段坏掉时降级而不是整体失败。
+
+    为什么需要降级：``sources``/``trace``/``agent_steps`` 是 jsonb 列，形状由写入
+    当时的代码版本决定，而这些形状**一直在演进**（TraceStep 先后加过 ms /
+    stage_key / candidates；chat_turns 后来才加 agent_steps）。一旦某次改动让旧
+    记录不再满足新模型，`[StoredTurn.model_validate(row) for row in rows]` 会在
+    第一条坏行上抛异常，导致整个会话的历史全部读不出来——**用户丢掉的不是那
+    一轮的步骤卡片，而是整段对话**。
+
+    正文（role/content/status）才是用户真正在乎的东西，且形状稳定。所以坏掉的
+    只丢结构化附加字段：对话仍然完整可读，只是那一轮不再显示出处或步骤轨迹。
+    """
+    try:
+        return StoredTurn.model_validate(row)
+    except ValidationError:
+        degraded = {**row, **dict.fromkeys(_OPTIONAL_TURN_PAYLOADS)}
+        try:
+            turn = StoredTurn.model_validate(degraded)
+        except ValidationError:
+            # 连正文都不合法（role/content/status 缺失或类型不对）说明这行是真的
+            # 坏了，不是形状演进问题——此时才让它冒泡成 500，不静默吞掉。
+            raise
+        logger.warning(
+            "会话 %s 第 %s 轮的结构化字段无法解析，已降级为纯文本恢复",
+            row.get("session_id", "?"),
+            row.get("turn_index", "?"),
+        )
+        return turn
 
 
 # ----------------------------------------------------------------- 关系边审核（M4）
