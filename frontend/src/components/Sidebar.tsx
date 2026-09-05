@@ -23,7 +23,7 @@ interface Props {
   onReindex: () => void;
   onCancelIndex: () => void;
   onRetryIndex: () => void;
-  onClear: () => void;
+  onClear: () => void | Promise<void>;
   setTopK: (n: number) => void;
 }
 

@@ -970,6 +970,20 @@ def load_turns(session_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def clear_session(session_id: str) -> int:
+    """删除一个会话的全部对话和滚动摘要，并返回删除的轮次数。
+
+    两张表必须在同一个事务里清理：摘要是对话的派生数据，不能留下一个
+    「对话已清空但旧摘要仍会带入下一轮 Prompt」的半清空状态。这个操作只
+    触碰 chat_turns / chat_session_summaries，不会影响小说索引。
+    """
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM chat_turns WHERE session_id = %s", (session_id,))
+        deleted_turns = cursor.rowcount
+        conn.execute("DELETE FROM chat_session_summaries WHERE session_id = %s", (session_id,))
+    return max(0, int(deleted_turns))
+
+
 def load_session_summary(session_id: str) -> dict | None:
     """读这个会话的滚动摘要；没有就返回 None（第一次或还没到阈值）。"""
     with connect() as conn:

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   askAgentStream,
   askStream,
+  clearSession,
   loadSession,
   type AgentStep,
   type AnswerMode,
@@ -42,6 +43,10 @@ const JUMP_THRESHOLD = 200;
 // 会话 ID 存在 localStorage：刷新页面后还能拿同一个 ID 把历史捞回来。
 // 用 sessionStorage 会在关标签页时丢失，用 localStorage 更符合"我的阅读记录"的预期。
 const SESSION_KEY = 'novel-rag-session-id';
+
+function createSessionId(): string {
+  return crypto.randomUUID();
+}
 
 function getOrCreateSessionId(): string {
   try {
@@ -84,6 +89,8 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
   // 用户主动中断的标记：用来区分「点了停止」和「真的出错了」，两者提示文案不同
   const userStoppedRef = useRef(false);
   const sessionIdRef = useRef<string>(getOrCreateSessionId());
+  // 每次新请求递增；清空会话时也递增，使旧 SSE 的迟到事件无法写进新会话。
+  const requestVersionRef = useRef(0);
   // 历史恢复那一次 setMessages 不算"新内容"：只是刷新页面后把旧对话摆出来，
   // 用户还没来得及滚下去而已，不该被当成"有新回复"提示。只需要跳过紧接着的那一次
   // messages 变化检查，不用担心时序——这次赋值和下面 effect 之间没有其他会改 messages
@@ -248,8 +255,10 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
   //    React 对旧气泡的 props 浅比较直接命中，历史消息完全不重渲染。
   // 2. **为什么只动最后一项**：SSE 的 token/step/sources 只会作用于
   //    刚追加的那条 assistant 消息；前面的轮次已经定型，永远不需要再变。
-  function patchLast(fn: (m: ChatMessage) => ChatMessage) {
+  function patchLast(fn: (m: ChatMessage) => ChatMessage, requestVersion?: number) {
+    if (requestVersion !== undefined && requestVersion !== requestVersionRef.current) return;
     setMessages((prev) => {
+      if (prev.length === 0) return prev;
       const copy = [...prev];
       copy[copy.length - 1] = fn(copy[copy.length - 1]);
       return copy;
@@ -318,6 +327,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
       { role: 'assistant', content: '', streaming: true },
     ]);
     setBusy(true);
+    const requestVersion = ++requestVersionRef.current;
     queueRef.current = '';
     streamEndedRef.current = false;
     userStoppedRef.current = false;
@@ -327,23 +337,29 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
 
     const handlers: AskHandlers = {
       // 检索每完成一步就追加一条，思考过程逐条点亮（不是等 2 秒后一次性弹出）
-      onStep: (s) => patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] })),
-      onTrace: (t) => patchLast((m) => ({ ...m, trace: t })),
+      onStep: (s) => patchLast((m) => ({ ...m, trace: [...(m.trace ?? []), s] }), requestVersion),
+      onTrace: (t) => patchLast((m) => ({ ...m, trace: t }), requestVersion),
       onAgentStep: (step: AgentStep) =>
-        patchLast((m) => ({
-          ...m,
-          agentSteps: [...(m.agentSteps ?? []), step],
-        })),
-      onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s })),
+        patchLast(
+          (m) => ({
+            ...m,
+            agentSteps: [...(m.agentSteps ?? []), step],
+          }),
+          requestVersion,
+        ),
+      onSources: (s: Source[]) => patchLast((m) => ({ ...m, sources: s }), requestVersion),
       // 不直接落到界面上，先进队列，由定时器按字吐出
       onToken: (t) => {
+        if (requestVersion !== requestVersionRef.current) return;
         queueRef.current += t;
         ensureTyping();
       },
       onDone: () => {
+        if (requestVersion !== requestVersionRef.current) return;
         streamEndedRef.current = true; // 队列吐完后由定时器收尾
       },
       onError: (e) => {
+        if (requestVersion !== requestVersionRef.current) return;
         // 不再慢慢打了，把已收到的内容一次补齐
         streamEndedRef.current = true;
         stopTyping();
@@ -371,6 +387,39 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
     }
   }
 
+  /** 清空当前会话：先让旧请求失效，再删除服务端历史，成功后换一个全新的 session_id。 */
+  async function clearConversation() {
+    requestVersionRef.current += 1;
+    if (busy) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      stopTyping();
+      queueRef.current = '';
+      streamEndedRef.current = true;
+      setBusy(false);
+    }
+    const oldSessionId = sessionIdRef.current;
+    setBusy(true);
+    try {
+      await clearSession(oldSessionId);
+      const freshSessionId = createSessionId();
+      sessionIdRef.current = freshSessionId;
+      try {
+        localStorage.setItem(SESSION_KEY, freshSessionId);
+      } catch {
+        // storage 被禁用时仍可使用内存中的新 session_id。
+      }
+      setMessages([]);
+      setInput('');
+      setShowJumpToLatest(false);
+      setHasNewBelow(false);
+      pinnedRef.current = true;
+      skipNextNewBelowRef.current = false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return {
     messages,
     setMessages,
@@ -378,6 +427,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
     setInput,
     busy,
     ask,
+    clearConversation,
     stopGenerating,
     scrollRef,
     showJumpToLatest,

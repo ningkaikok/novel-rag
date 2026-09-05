@@ -108,6 +108,7 @@ from backend.schemas import (  # noqa: E402
     ModelList,
     SearchMatch,
     SearchResult,
+    SessionClearResult,
     SessionHistory,
     SetModelRequest,
     SourceItem,
@@ -139,6 +140,7 @@ from embedder import load_embedder  # noqa: E402
 from generation_mixin import build_history_block  # noqa: E402
 from postgres import (  # noqa: E402
     VALID_REVIEW_STATUSES,
+    clear_session,
     close_pool,
     connect,
     ensure_chat_schema,
@@ -1002,6 +1004,16 @@ def get_session(session_id: str):
     except Exception as exc:
         raise APIError(500, ErrorCode.session_read_failed, f"读取会话失败：{exc}") from exc
     return SessionHistory(session_id=session_id, turns=[_restore_turn(row) for row in rows])
+
+
+@app.delete("/api/sessions/{session_id}", response_model=SessionClearResult)
+def delete_session(session_id: str):
+    """清空一个会话的持久化历史；不会删除书架、小说或检索索引。"""
+    try:
+        deleted_turns = clear_session(session_id)
+    except Exception as exc:
+        raise APIError(500, ErrorCode.session_clear_failed, f"清空会话失败：{exc}") from exc
+    return SessionClearResult(session_id=session_id, deleted_turns=deleted_turns)
 
 
 # 结构化附加字段：校验失败时可以单独丢掉而不影响这一轮的正文内容

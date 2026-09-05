@@ -337,7 +337,11 @@ export interface paths {
         get: operations["get_session_api_sessions__session_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Session
+         * @description 清空一个会话的持久化历史；不会删除书架、小说或检索索引。
+         */
+        delete: operations["delete_session_api_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -596,6 +600,16 @@ export interface components {
             results: components["schemas"]["SearchMatch"][];
             /** Total */
             total: number;
+        };
+        /**
+         * SessionClearResult
+         * @description 清空会话后的结果；删除的是对话及其滚动摘要，不影响书架索引。
+         */
+        SessionClearResult: {
+            /** Deleted Turns */
+            deleted_turns: number;
+            /** Session Id */
+            session_id: string;
         };
         /** SessionHistory */
         SessionHistory: {
@@ -1247,6 +1261,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_api_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionClearResult"];
                 };
             };
             /** @description Validation Error */

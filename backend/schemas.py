@@ -204,6 +204,13 @@ class SessionHistory(BaseModel):
     turns: list[StoredTurn]
 
 
+class SessionClearResult(BaseModel):
+    """清空会话后的结果；删除的是对话及其滚动摘要，不影响书架索引。"""
+
+    session_id: str
+    deleted_turns: int
+
+
 # ----------------------------------------------------------------- 模型切换
 class ModelList(BaseModel):
     models: list[str]

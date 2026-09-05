@@ -122,4 +122,40 @@ test.describe('会话历史恢复', () => {
     await expect(page.getByText('想聊聊哪本书？')).toBeVisible();
     await expect(page.locator('.row')).toHaveCount(0);
   });
+
+  test('清空对话会删除持久化会话并回到欢迎页', async ({ page }) => {
+    await mockApi(page, {
+      sessionTurns: [
+        {
+          turn_index: 0,
+          role: 'user',
+          content: '雾隐山庄的庄主是谁',
+          sources: null,
+          trace: null,
+          status: 'complete',
+        },
+        {
+          turn_index: 1,
+          role: 'assistant',
+          content: '顾长风。',
+          sources: null,
+          trace: null,
+          status: 'complete',
+        },
+      ],
+    });
+    await page.goto('/');
+    await expect(page.locator('.row')).toHaveCount(2);
+
+    await page.getByText('⚙️ 更多设置').click();
+    const clearRequest = page.waitForRequest(
+      (request) => request.url().includes('/api/sessions/') && request.method() === 'DELETE',
+    );
+    await page.getByRole('button', { name: /清空对话/ }).click();
+    await clearRequest;
+
+    await expect(page.locator('.row')).toHaveCount(0);
+    await expect(page.getByText('想聊聊哪本书？')).toBeVisible();
+    await expect(page.getByText('对话已清空')).toBeVisible();
+  });
 });
