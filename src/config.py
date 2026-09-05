@@ -108,6 +108,17 @@ HISTORY_SUMMARY_EVERY = int(os.environ.get("HISTORY_SUMMARY_EVERY", 4))
 # 最后反过来把证据挤出 prompt——那正是引入预算想避免的事。
 HISTORY_SUMMARY_MAX_CHARS = int(os.environ.get("HISTORY_SUMMARY_MAX_CHARS", 400))
 
+# --- Agent Lab 工具输出的体积闸门（M3.6，见 src/agent_lab.py）---
+# 步数上限拦不住体积：read_neighbors / get_chapter 一次就能返回一整章，大部头的
+# 一章本身就可能撑爆 prompt。参数上限（radius≤3、limit≤12）是**读取之前**的第一道
+# 闸，它限制的是"取几段"；这里是**读到内容之后**的第二道闸，限制的是"多少字"——
+# 片段长度本身是变量，只限条数并不能限住体积。
+#
+# 用字数而不是 token：这份预算保护的是**生成** prompt，而生成后端有三个
+# （Ollama / Claude / GLM），各有各的 tokenizer，没有一个通用计数器可用。
+# 中文大致 1 token ≈ 1~1.5 字，字数是够用且零依赖的近似（同 HISTORY_MAX_CHARS）。
+AGENT_TOOL_MAX_CHARS = int(os.environ.get("AGENT_TOOL_MAX_CHARS", 6000))
+
 # --- 自适应查询扩展（低置信度补救，见 src/query_expander.py / src/confidence.py）---
 # 默认关闭：每个变体都要完整跑一遍混合检索+重排，再加一次 LLM 调用，成本是
 # 主链路的好几倍；且改写可能引入语义漂移。只对「重排后信号显示置信度很低」

@@ -25,6 +25,13 @@
   默认关着，因为现有多轮评测集最长只有三四轮、根本触发不到摘要，也就无从证明它
   没引入摘要漂移；开启条件写在 docs/experiments/m36-session-summary.md 里。
 
+- **Agent Lab 的单步工具输出不会再撑爆 prompt**：以前只有「最多跑几步」的限制，
+  但一步之内能读多少并没有上限——`read_neighbors` / `get_chapter` 一次就能返回
+  一整章，大部头的一章本身就可能把 prompt 挤满。现在读到内容之后还有一道字数闸
+  （`AGENT_TOOL_MAX_CHARS`，默认 6000）：`read_neighbors` 无条件保住你点名的那
+  一段再向两侧生长，`get_chapter` 从末尾开始丢，被截断的事实会写在过程面板里那
+  一步的观察结果上，不会悄悄少给证据。
+
 - **多轮追问有评测集了**：`tests/multiturn_test_set.json`（22 条，覆盖指代 /
   否定 / 时间顺序 / 跨书切换 / 纠正上一轮 / 不该改写）配 `scripts/eval_multiturn.py`。
   它一上来就测出一个比"没有记忆"更严重的存量 bug：改写会把你亲口写出的人名换成
