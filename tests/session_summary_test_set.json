@@ -1,0 +1,444 @@
+{
+  "_readme": "M3.6 滚动会话摘要的长会话评测集（docs/experiments/m36-session-summary.md 要求的证据）。语料全部来自 tests/ci_corpus/*.txt 与 data/novels/雾隐山庄.txt（仓库原创，不含版权小说原文）。每条用例模拟一次长会话：early_turns 是一个只在对话早期出现过一次的事实，recent_turns 是与该事实无关的若干轮追问（数量 ≥ HISTORY_MAX_TURNS，确保 early_turns 一定被逐字历史窗口丢弃）。跑法见 scripts/eval_session_summary.py。",
+  "cases": [
+    {
+      "id": "ss_01",
+      "book": "雾隐山庄",
+      "note": "早期确诊的病名（蚀骨散）会被 6 轮无关追问挤出逐字窗口，只有摘要能接住。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "沈砚之给顾长风诊脉之后发现了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "顾长风所患的并非寻常旧疾，而是十几年前中的一种罕见奇毒“蚀骨散”，毒性极深，寻常药石根本无法根治[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "雾隐山庄在什么地方？"
+        },
+        {
+          "role": "assistant",
+          "content": "在青石镇北面三十里的山坳里，常年云雾缭绕，寻常人根本找不到入口[1]。"
+        },
+        {
+          "role": "user",
+          "content": "沈砚之是做什么营生的？"
+        },
+        {
+          "role": "assistant",
+          "content": "他自称是从江南来的游方郎中[1]。"
+        },
+        {
+          "role": "user",
+          "content": "顾青黛是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "顾青黛是顾长风的孙女，一位穿着素色布裙的少女[1]。"
+        },
+        {
+          "role": "user",
+          "content": "沈砚之上山时带了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "他带着一只旧药箱，箱子里除了银针药材，还藏着一封师父临终前交给他的信[1]。"
+        },
+        {
+          "role": "user",
+          "content": "那封信是写给谁的？"
+        },
+        {
+          "role": "assistant",
+          "content": "信封上只写着“转交顾长风亲启”六个字[1]。"
+        },
+        {
+          "role": "user",
+          "content": "顾长风的病拖了多久了？"
+        },
+        {
+          "role": "assistant",
+          "content": "三个月前旧疾复发，卧床不起[1]。"
+        }
+      ],
+      "expect_contains": [
+        "蚀骨散"
+      ],
+      "expect_absent": [
+        "解药已经找到",
+        "顾长风已经痊愈",
+        "长期慢性病"
+      ]
+    },
+    {
+      "id": "ss_02",
+      "book": "雾隐山庄",
+      "note": "早期提到的师兄弟恩怨会被挤出窗口；不能让摘要脑补出\"和解\"以外没说过的情节。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "顾长风看完信为什么老泪纵横？"
+        },
+        {
+          "role": "assistant",
+          "content": "三十年前他与沈砚之的师父曾是过命的师兄弟，因为一次追查江湖上贩卖蚀骨散的黑市而反目，各自远走他乡，从此再未相见[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "沈砚之用什么方子给顾长风治病？"
+        },
+        {
+          "role": "assistant",
+          "content": "他按信中所述，连夜在庄后的药圃里采集了三味罕见草药[1]。"
+        },
+        {
+          "role": "user",
+          "content": "还用了什么办法？"
+        },
+        {
+          "role": "assistant",
+          "content": "又用银针为顾长风打通经脉，忙活了整整三天三夜[1]。"
+        },
+        {
+          "role": "user",
+          "content": "青黛在旁边做了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "青黛在一旁照看，见沈砚之几乎不眠不休，心中十分感激[1]。"
+        },
+        {
+          "role": "user",
+          "content": "顾长风多久之后能下床？"
+        },
+        {
+          "role": "assistant",
+          "content": "半月之后，顾长风终于能下床行走[1]。"
+        },
+        {
+          "role": "user",
+          "content": "顾长风把什么信物传给了沈砚之？"
+        },
+        {
+          "role": "assistant",
+          "content": "他将自己毕生所学的医术连同一枚刻着“长风”二字的玉佩都传给了沈砚之[1]。"
+        },
+        {
+          "role": "user",
+          "content": "雨停之后山庄是什么样子？"
+        },
+        {
+          "role": "assistant",
+          "content": "山间的雾气渐渐散去，露出庄子四周种满的成片药田[1]。"
+        }
+      ],
+      "expect_contains": [
+        "师兄弟"
+      ],
+      "expect_absent": [
+        "两人从未见过面",
+        "顾长风不认识沈砚之的师父",
+        "后来又反目了"
+      ]
+    },
+    {
+      "id": "ss_03",
+      "book": "沙海航灯",
+      "note": "骆驼老白\"只认陆知微\"是后面否定类追问依赖的关键设定，必须扛过 6 轮无关追问。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "骆驼老白脾气怎么样，谁牵得动它？"
+        },
+        {
+          "role": "assistant",
+          "content": "老白脾气不小，除了陆知微谁牵它都要挨一口[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "队长跑了多少年沙漠？"
+        },
+        {
+          "role": "assistant",
+          "content": "队长今年三十九岁，跑了十二年沙漠[1]。"
+        },
+        {
+          "role": "user",
+          "content": "队里的司机是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "司机兼机械师是巴特尔，一个蒙古族壮汉[1]。"
+        },
+        {
+          "role": "user",
+          "content": "这次任务是勘察什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "勘察七号井位，判断那里到底能不能打井[1]。"
+        },
+        {
+          "role": "user",
+          "content": "卡车是怎么陷进沙子里的？"
+        },
+        {
+          "role": "assistant",
+          "content": "在一片起伏的沙梁上陷了轮子，巴特尔垫了三块石板才把车倒出来[1]。"
+        },
+        {
+          "role": "user",
+          "content": "实习生遇到了什么麻烦？"
+        },
+        {
+          "role": "assistant",
+          "content": "第三天中午，实习生的水壶见了底，配给的两升水提前喝完了[1]。"
+        },
+        {
+          "role": "user",
+          "content": "队伍怎么判断出承压水的位置？"
+        },
+        {
+          "role": "assistant",
+          "content": "抓了一把土捻了捻，又让骆驼闻了闻，判断芦苇根下面两米就是湿沙层[1]。"
+        }
+      ],
+      "expect_contains": [
+        "陆知微"
+      ],
+      "expect_absent": [
+        "巴特尔也能随便牵老白",
+        "老白后来性情变好了",
+        "谁都能牵老白"
+      ]
+    },
+    {
+      "id": "ss_04",
+      "book": "沙海航灯",
+      "note": "实习生小何的身份信息在早期一带而过，不能被摘要泛化成\"老队员\"。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "队伍里的实习生是什么来历？"
+        },
+        {
+          "role": "assistant",
+          "content": "实习生小何刚从北京的研究所分来，第一次进沙漠[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "骆驼老白驮的是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "老白驮的是全队的水和仪器[1]。"
+        },
+        {
+          "role": "user",
+          "content": "上级要求这次任务做什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "重新测定七号井位的坐标，并判断那里能不能打井[1]。"
+        },
+        {
+          "role": "user",
+          "content": "队长为什么决定改用骆驼步行？"
+        },
+        {
+          "role": "assistant",
+          "content": "因为这地方是流沙，跟老图上画的不一样[1]。"
+        },
+        {
+          "role": "user",
+          "content": "队长教了新人什么沙漠里的规矩？"
+        },
+        {
+          "role": "assistant",
+          "content": "日头最毒的时候不要走，把嘴闭紧用鼻子呼吸，省水也省力气[1]。"
+        },
+        {
+          "role": "user",
+          "content": "回程路上遇到了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "遭遇了一场沙暴，全队靠骆驼的直觉抢在风暴前进到岩石背风面[1]。"
+        },
+        {
+          "role": "user",
+          "content": "最后那口井叫什么名字？"
+        },
+        {
+          "role": "assistant",
+          "content": "当地牧民给那口井起名叫“知微井”[1]。"
+        }
+      ],
+      "expect_contains": [
+        "小何",
+        "北京"
+      ],
+      "expect_absent": [
+        "小何是老队员",
+        "小何以前来过沙漠",
+        "小何经验丰富"
+      ]
+    },
+    {
+      "id": "ss_05",
+      "book": "青梧镇异闻",
+      "note": "沈砚秋的猫墨团只在故事开头出现过一次，后面的追问全在讲丢表案，摘要必须记住它。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "沈砚秋养了什么宠物？"
+        },
+        {
+          "role": "assistant",
+          "content": "他养了一只通体乌黑的猫，因为总爱蜷成一团，取名墨团[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "沈砚秋的手艺是跟谁学的？"
+        },
+        {
+          "role": "assistant",
+          "content": "手艺是师父顾长风一手带出来的[1]。"
+        },
+        {
+          "role": "user",
+          "content": "镇上丢了几块表？"
+        },
+        {
+          "role": "assistant",
+          "content": "镇上接连丢了三块老怀表[1]。"
+        },
+        {
+          "role": "user",
+          "content": "丢表的都是什么人？"
+        },
+        {
+          "role": "assistant",
+          "content": "分别是开茶馆的周掌柜、教书的白先生和渡口的艄公陈伯[1]。"
+        },
+        {
+          "role": "user",
+          "content": "沈砚秋是怎么发现线索的？"
+        },
+        {
+          "role": "assistant",
+          "content": "他在柜台缝里发现了一缕颜色发红的铜屑，不是新铜[1]。"
+        },
+        {
+          "role": "user",
+          "content": "雨簿上写了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "写着“夜半闻钟楼有声，如有人力撞钟”[1]。"
+        },
+        {
+          "role": "user",
+          "content": "钟楼里的人影是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "是镇上杂货铺的伙计小顺[1]。"
+        }
+      ],
+      "expect_contains": [
+        "墨团"
+      ],
+      "expect_absent": [
+        "墨团后来走丢了",
+        "沈砚秋把猫送人了",
+        "墨团咬伤了小顺"
+      ]
+    },
+    {
+      "id": "ss_06",
+      "book": "青梧镇异闻",
+      "note": "小顺偷表的动机（赎回祖传工具）是早期就该记住的关键背景，不能被后续的\"怎么处理\"追问挤没。",
+      "early_turns": [
+        {
+          "role": "user",
+          "content": "小顺为什么要偷这三块怀表？"
+        },
+        {
+          "role": "assistant",
+          "content": "小顺不是为了钱，是想拆出机芯，学着父亲的样子重新装一块表，好把当年押出去的祖传制表工具赎回来[1]。"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "user",
+          "content": "沈砚秋最后怎么处理这件事？"
+        },
+        {
+          "role": "assistant",
+          "content": "他没有报官，让小顺明天来铺子里扫地，工钱抵欠下的账[1]。"
+        },
+        {
+          "role": "user",
+          "content": "三块表最后怎么样了？"
+        },
+        {
+          "role": "assistant",
+          "content": "沈砚秋连夜修好，一一送还给了三位失主[1]。"
+        },
+        {
+          "role": "user",
+          "content": "白先生给了什么谢礼？"
+        },
+        {
+          "role": "assistant",
+          "content": "白先生送了他一方砚台[1]。"
+        },
+        {
+          "role": "user",
+          "content": "墨团在这件事里起了什么作用？"
+        },
+        {
+          "role": "assistant",
+          "content": "正是它半夜追老鼠爬上钟楼，沈砚秋才发现钟楼的门锁被撬开了[1]。"
+        },
+        {
+          "role": "user",
+          "content": "怀表背面刻着什么字？"
+        },
+        {
+          "role": "assistant",
+          "content": "刻着“赠长风，愿岁月恒准”[1]。"
+        },
+        {
+          "role": "user",
+          "content": "小顺秋天做成了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "小顺装好了平生第一块表[1]。"
+        }
+      ],
+      "expect_contains": [
+        "工具"
+      ],
+      "expect_absent": [
+        "小顺被送去坐牢",
+        "沈砚秋报了官",
+        "小顺是为了钱才偷表"
+      ]
+    }
+  ]
+}
