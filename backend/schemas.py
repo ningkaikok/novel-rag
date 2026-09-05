@@ -34,6 +34,16 @@ class AgentAskRequest(BaseModel):
     session_id: str | None = None
 
 
+class VerifyCitationRequest(BaseModel):
+    """按需核实单条引用（用户主动点击才触发，见 /api/citations/verify）。"""
+
+    answer: str = Field(min_length=1, max_length=20000)
+    # 要核实第几条出处（对应回答里的 [n] 和出处卡片的序号，从 1 开始）
+    citation: int = Field(ge=1, le=50)
+    # 该出处的原文文本；由前端回传，核实是无状态的，不依赖这轮是否已落库
+    evidence: list[str] = Field(min_length=1, max_length=10)
+
+
 class SetModelRequest(BaseModel):
     model: str
 
@@ -108,6 +118,21 @@ class RetrievalCandidate(BaseModel):
     score_label: str | None = None
     previous_rank: int | None = None
     selected: bool = False
+
+
+class VerifyCitationResult(BaseModel):
+    """按需核实的结果。
+
+    刻意把 `statement`（到底核实了哪句话）和 `model`（谁判的）一起返回：
+    Judge 的准确率是模型相关的（见 docs/experiments/m35-faithfulness-calibration.md，
+    最好的配置一致率也只有 67.9%），界面必须让用户看到判定依据和判定者，
+    而不是把它当成系统给出的结论。
+    """
+
+    label: str  # supported | unsupported | uncertain
+    reason: str
+    statement: str
+    model: str
 
 
 class AgentStep(BaseModel):

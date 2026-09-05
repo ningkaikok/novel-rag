@@ -494,6 +494,20 @@ def split_statements(answer: str) -> list[str]:
     return [part.strip() for part in _SENTENCE_SPLIT_RE.split(answer.strip()) if part.strip()]
 
 
+def statements_citing(answer: str, citation: int) -> list[str]:
+    """挑出回答里引用了 ``[citation]`` 的那些句子。
+
+    按需核实（用户点某条出处的「核实」）只该核实**真正引用了这条出处的句子**，
+    而不是整段回答：把无关句子一起塞给 Judge，它多半会判 unsupported——那不是
+    引用错了，是我们问错了问题。
+    """
+    return [
+        sentence
+        for sentence in split_statements(answer)
+        if citation in {int(n) for n in _CITATION_RE.findall(sentence)}
+    ]
+
+
 def evaluate_completeness(answer: str, exempt_phrases: Sequence[str] | None = None) -> dict:
     """完整性指标：事实性陈述里有多大比例缺少任何 ``[n]`` 引用。
 

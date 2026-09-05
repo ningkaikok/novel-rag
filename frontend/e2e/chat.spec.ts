@@ -114,3 +114,46 @@ test.describe('提问与流式回答', () => {
     await expect(page.locator('.composer input')).toBeEnabled();
   });
 });
+
+test.describe('按需核实引用', () => {
+  test('只有被引用的出处才有核实按钮，点击后展示判定和理由', async ({ page }) => {
+    await mockApi(page);
+    let requestBody: unknown = null;
+    await page.route('**/api/citations/verify', async (route) => {
+      requestBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          label: 'supported',
+          reason: '证据里写明庄主是顾长风',
+          statement: '雾隐山庄的庄主是顾长风[1]。',
+          model: 'glm:glm-4-flash',
+        }),
+      });
+    });
+
+    await page.goto('/');
+    await page.locator('.examples .ant-btn').first().click();
+    await expect(page.locator('.row-bot .content')).toHaveText('雾隐山庄的庄主是顾长风[1]。', {
+      timeout: 10_000,
+    });
+
+    // mock 回答只引用了 [1]，所以两张出处卡片里只有第一张能核实——
+    // 没被引用的出处没有可核实的句子，显示按钮只会误导。
+    const sources = page.locator('.source-card');
+    await expect(sources.nth(0).getByRole('button', { name: '核实这条' })).toBeVisible();
+    await expect(sources.nth(1).getByRole('button', { name: '核实这条' })).toHaveCount(0);
+
+    await sources.nth(0).getByRole('button', { name: '核实这条' }).click();
+
+    const result = sources.nth(0).locator('.verify-result');
+    await expect(result).toHaveClass(/verify-supported/);
+    await expect(result).toContainText('原文支持这句话');
+    // 理由必须展示出来：判定本身准确率有限，用户要能看着理由自己判断
+    await expect(result).toContainText('证据里写明庄主是顾长风');
+
+    // 请求里带的是这条出处的原文，且指明核实第几条引用
+    expect(requestBody).toMatchObject({ citation: 1 });
+  });
+});

@@ -113,7 +113,10 @@ from backend.schemas import (  # noqa: E402
     StoredTurn,
     TraceStep,
     UploadResult,
+    VerifyCitationRequest,
+    VerifyCitationResult,
 )
+from citation_eval import judge_support, statements_citing  # noqa: E402
 from config import (  # noqa: E402
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
@@ -823,6 +826,47 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                     logger.warning(f"保存回答失败（忽略）：{exc}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ----------------------------------------------------------------- 按需核实引用
+@app.post("/api/citations/verify", response_model=VerifyCitationResult)
+async def verify_citation(req: VerifyCitationRequest):
+    """核实某一条 ``[n]`` 引用是否真的被它指向的原文支持。
+
+    **为什么做成用户点一下才跑，而不是每次回答自动核实**：
+
+    `docs/experiments/m35-faithfulness-calibration.md` 给忠实度判定定了两档启用
+    门槛，最轻的一档（UI 显示"忠实度不确定"提示）要求一致率 ≥80%，而实测最好的
+    配置只有 67.9%，所以自动、全局地给回答打忠实度标记目前不达标——尤其是
+    "反对"方向的精确率只有 50%，自动告警每两次就有一次冤枉，比不提示更糟。
+
+    按需核实绕开的正是这个问题：判定由用户主动发起、只作用于他指定的那一条引用，
+    返回的是**原始判定和理由**（连同判定用的模型名），而不是系统给整段回答盖章。
+    用户自己能看着理由决定信不信，这和那张阈值表管的"自动标注"是两回事。
+
+    成本也因此可控：不点不花钱、不增加任何一次回答的延迟。
+    """
+    statements = statements_citing(req.answer, req.citation)
+    if not statements:
+        raise APIError(
+            400,
+            ErrorCode.validation_error,
+            f"回答里没有引用 [{req.citation}]，无法核实",
+        )
+    model = state["model"]
+    # 判定本身是同步阻塞的模型调用（实测单次 10~60s），放线程池避免卡住事件循环
+    result = await run_in_threadpool(
+        judge_support,
+        "".join(statements),
+        req.evidence,
+        lambda prompt: _generate_for_model(prompt, model),
+    )
+    return VerifyCitationResult(
+        label=result["label"],
+        reason=result["reason"],
+        statement="".join(statements),
+        model=model,
+    )
 
 
 # ----------------------------------------------------------------- 会话历史

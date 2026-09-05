@@ -1,6 +1,13 @@
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Avatar, Collapse, Typography } from 'antd';
-import type { AgentStep, RetrievalCandidate, Source, TraceStep } from '../api';
+import { Avatar, Button, Collapse, Tooltip, Typography } from 'antd';
+import {
+  verifyCitation,
+  type AgentStep,
+  type RetrievalCandidate,
+  type Source,
+  type TraceStep,
+  type VerifyCitationResult,
+} from '../api';
 
 /** 毫秒转成人读的时长：1200 → "1.2s"，340 → "340ms" */
 function humanMs(ms: number): string {
@@ -221,10 +228,12 @@ const Sources = memo(function Sources({
   sources,
   groupId,
   activeIndex,
+  answer,
 }: {
   sources: Source[];
   groupId: string;
   activeIndex: number | null;
+  answer: string;
 }) {
   return (
     <div className="sources-list">
@@ -249,11 +258,75 @@ const Sources = memo(function Sources({
           >
             {s.text}
           </Typography.Paragraph>
+          <VerifyCitation answer={answer} citation={i + 1} evidence={s.text} />
         </div>
       ))}
     </div>
   );
 });
+
+const VERDICT_LABELS: Record<string, { text: string; className: string }> = {
+  supported: { text: '✓ 原文支持这句话', className: 'verify-supported' },
+  unsupported: { text: '✗ 原文不支持这句话', className: 'verify-unsupported' },
+  uncertain: { text: '? 判定不了', className: 'verify-uncertain' },
+};
+
+/** 单条引用的「按需核实」按钮和结果。
+ *
+ * 为什么是点一下才跑、而且结果说得这么克制：忠实度 Judge 的实测一致率最高
+ * 只有 67.9%（docs/experiments/m35-faithfulness-calibration.md），达不到项目
+ * 自己定的自动标注门槛，尤其"说没依据"的精确率只有 50%。所以这里既不自动跑、
+ * 也不把结论说成定论——把判定理由和判定模型一并摆出来，让人自己看着定。
+ */
+function VerifyCitation({
+  answer,
+  citation,
+  evidence,
+}: {
+  answer: string;
+  citation: number;
+  evidence: string;
+}) {
+  const [result, setResult] = useState<VerifyCitationResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  // 回答里没引用这条出处时，核实无从谈起（后端也会拒绝），直接不显示按钮
+  if (!new RegExp(`\\[${citation}]`).test(answer)) return null;
+
+  async function run() {
+    setRunning(true);
+    setError('');
+    try {
+      setResult(await verifyCitation(answer, citation, [evidence]));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  if (result) {
+    const verdict = VERDICT_LABELS[result.label] ?? VERDICT_LABELS.uncertain;
+    return (
+      <div className={`verify-result ${verdict.className}`}>
+        <span className="verify-verdict">{verdict.text}</span>
+        <Tooltip title={`判定模型：${result.model}。仅供参考，请自行核对原文。`}>
+          <span className="verify-reason">{result.reason}</span>
+        </Tooltip>
+      </div>
+    );
+  }
+
+  return (
+    <div className="verify-row">
+      <Button size="small" type="link" loading={running} onClick={run}>
+        {running ? '核实中…' : '核实这条'}
+      </Button>
+      {error && <span className="verify-error">{error}</span>}
+    </div>
+  );
+}
 
 // 把回答正文里的 [1] [2] 引用替换成可点击按钮，其余文本原样保留。
 //
@@ -361,7 +434,12 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         )}
 
         {msg.sources && msg.sources.length > 0 && (
-          <Sources sources={msg.sources} groupId={groupId} activeIndex={activeSource} />
+          <Sources
+            sources={msg.sources}
+            groupId={groupId}
+            activeIndex={activeSource}
+            answer={msg.content}
+          />
         )}
       </div>
     </div>

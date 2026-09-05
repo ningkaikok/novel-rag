@@ -84,6 +84,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/citations/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Citation
+         * @description 核实某一条 ``[n]`` 引用是否真的被它指向的原文支持。
+         *
+         *     **为什么做成用户点一下才跑，而不是每次回答自动核实**：
+         *
+         *     `docs/experiments/m35-faithfulness-calibration.md` 给忠实度判定定了两档启用
+         *     门槛，最轻的一档（UI 显示"忠实度不确定"提示）要求一致率 ≥80%，而实测最好的
+         *     配置只有 67.9%，所以自动、全局地给回答打忠实度标记目前不达标——尤其是
+         *     "反对"方向的精确率只有 50%，自动告警每两次就有一次冤枉，比不提示更糟。
+         *
+         *     按需核实绕开的正是这个问题：判定由用户主动发起、只作用于他指定的那一条引用，
+         *     返回的是**原始判定和理由**（连同判定用的模型名），而不是系统给整段回答盖章。
+         *     用户自己能看着理由决定信不信，这和那张阈值表管的"自动标注"是两回事。
+         *
+         *     成本也因此可控：不点不花钱、不增加任何一次回答的延迟。
+         */
+        post: operations["verify_citation_api_citations_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/graph/edges": {
         parameters: {
             query?: never;
@@ -654,6 +687,37 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * VerifyCitationRequest
+         * @description 按需核实单条引用（用户主动点击才触发，见 /api/citations/verify）。
+         */
+        VerifyCitationRequest: {
+            /** Answer */
+            answer: string;
+            /** Citation */
+            citation: number;
+            /** Evidence */
+            evidence: string[];
+        };
+        /**
+         * VerifyCitationResult
+         * @description 按需核实的结果。
+         *
+         *     刻意把 `statement`（到底核实了哪句话）和 `model`（谁判的）一起返回：
+         *     Judge 的准确率是模型相关的（见 docs/experiments/m35-faithfulness-calibration.md，
+         *     最好的配置一致率也只有 67.9%），界面必须让用户看到判定依据和判定者，
+         *     而不是把它当成系统给出的结论。
+         */
+        VerifyCitationResult: {
+            /** Label */
+            label: string;
+            /** Model */
+            model: string;
+            /** Reason */
+            reason: string;
+            /** Statement */
+            statement: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -800,6 +864,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_citation_api_citations_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyCitationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyCitationResult"];
                 };
             };
             /** @description Validation Error */
