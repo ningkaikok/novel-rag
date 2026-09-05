@@ -718,6 +718,25 @@
     "title": "SearchResult",
     "type": "object"
    },
+   "SessionClearResult": {
+    "description": "清空会话后的结果；删除的是对话及其滚动摘要，不影响书架索引。",
+    "properties": {
+     "deleted_turns": {
+      "title": "Deleted Turns",
+      "type": "integer"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "deleted_turns"
+    ],
+    "title": "SessionClearResult",
+    "type": "object"
+   },
    "SessionHistory": {
     "properties": {
      "session_id": {
@@ -1779,6 +1798,44 @@
    }
   },
   "/api/sessions/{session_id}": {
+   "delete": {
+    "description": "清空一个会话的持久化历史；不会删除书架、小说或检索索引。",
+    "operationId": "delete_session_api_sessions__session_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionClearResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Session"
+   },
    "get": {
     "description": "读回某个会话的全部对话，用于刷新页面后恢复界面。",
     "operationId": "get_session_api_sessions__session_id__get",

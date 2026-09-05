@@ -157,11 +157,11 @@ function Main() {
   // 组件内部，trace 数据随消息数组由该 hook 维护。
   const {
     messages,
-    setMessages,
     input,
     setInput,
     busy,
     ask,
+    clearConversation,
     stopGenerating,
     scrollRef,
     showJumpToLatest,
@@ -218,7 +218,14 @@ function Main() {
           onReindex={() => startShelfTask(() => reindex(), '正在检查书架变化')}
           onCancelIndex={cancelCurrentIndex}
           onRetryIndex={retryCurrentIndex}
-          onClear={() => setMessages([])}
+          onClear={async () => {
+            try {
+              await clearConversation();
+              message.success('对话已清空');
+            } catch (e) {
+              message.error((e as Error).message || '清空对话失败');
+            }
+          }}
           setTopK={setTopK}
         />
       </Layout.Sider>

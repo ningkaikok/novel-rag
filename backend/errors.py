@@ -41,6 +41,7 @@ class ErrorCode(StrEnum):
     index_task_not_retryable = "index_task_not_retryable"
     model_unavailable = "model_unavailable"
     session_read_failed = "session_read_failed"
+    session_clear_failed = "session_clear_failed"
     validation_error = "validation_error"
     internal_error = "internal_error"
 

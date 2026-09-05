@@ -293,6 +293,15 @@ export async function loadSession(sessionId: string): Promise<StoredTurn[]> {
   return (await res.json()).turns ?? [];
 }
 
+/** 删除服务端会话历史和滚动摘要；书架索引不受影响。 */
+export async function clearSession(sessionId: string): Promise<Schemas['SessionClearResult']> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '清空会话失败'));
+  return res.json();
+}
+
 export type VerifyCitationResult = Schemas['VerifyCitationResult'];
 
 /** 按需核实某一条 `[n]` 引用是否真的被它指向的原文支持。

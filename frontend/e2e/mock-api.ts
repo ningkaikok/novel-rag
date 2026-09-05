@@ -215,7 +215,11 @@ export async function mockApi(
   const models = opts.models ?? MOCK_MODELS;
 
   await page.route('**/api/sessions/**', async (route) => {
-    await route.fulfill({ json: { turns: opts.sessionTurns ?? [] } });
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ json: { session_id: 'mock-session', deleted_turns: 2 } });
+    } else {
+      await route.fulfill({ json: { turns: opts.sessionTurns ?? [] } });
+    }
   });
 
   await page.route('**/api/books', async (route) => {

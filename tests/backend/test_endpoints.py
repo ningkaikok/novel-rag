@@ -245,6 +245,15 @@ def test_get_session_shape(client, monkeypatch):
     assert body["turns"][1]["content"] == "顾长风。"
 
 
+def test_clear_session_deletes_persisted_history(client, monkeypatch):
+    monkeypatch.setattr(main, "clear_session", lambda session_id: 4)
+
+    resp = client.delete("/api/sessions/some-session-id")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"session_id": "some-session-id", "deleted_turns": 4}
+
+
 def _agent_turn(agent_steps):
     """一条 Agent Lab 的历史记录（结构化字段由参数决定合法与否）。"""
     return {
