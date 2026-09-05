@@ -63,7 +63,7 @@ class _CatalogToolbox:
 
 
 class _FakeRag:
-    def build_prompt(self, question, sources, history=None, summary=None):
+    def build_prompt(self, question, sources, history=None, summary=None, facts_text=None):
         return f"问题：{question}"
 
 

@@ -136,3 +136,39 @@ def test_history_template_declares_evidence_precedence():
     """模板文本本身要写死"冲突时以原文为准"，防止后续编辑顺手删掉。"""
     assert "以原文片段为准" in PROMPT_TEMPLATE_WITH_HISTORY
     assert "只有编号原文片段才是可引用的证据" in PROMPT_TEMPLATE_WITH_HISTORY
+
+
+def test_facts_text_alone_triggers_the_history_template():
+    """结构化事实不需要逐字历史陪衬——只有它，也该走带「对话背景」段的模板。
+
+    真实场景：摘要/事实按阈值触发时，可能只有 facts_text 没有 history。
+    """
+    prompt = _Rag().build_prompt("他后来呢", _sources(), facts_text="当前小说：《雾隐山庄》")
+
+    assert "对话背景" in prompt
+    assert "当前小说：《雾隐山庄》" in prompt
+
+
+def test_facts_text_is_labeled_separately_from_verbatim_history():
+    """三种背景来源要分开标注：逐字历史最可信，摘要次之，结构化事实是另一种
+    可信度（查库/精确匹配得到，不会漂移，但仍不是可引用证据）。"""
+    history = [{"role": "user", "content": "顾长风得了什么病？"}]
+    prompt = _Rag().build_prompt(
+        "再展开讲讲", _sources(), history=history, facts_text="提到过的人物：顾长风"
+    )
+
+    assert "（已知信息）提到过的人物：顾长风" in prompt
+    assert "顾长风得了什么病？" in prompt, "逐字历史不能被结构化事实顶掉"
+
+
+def test_facts_text_does_not_count_toward_the_char_budget():
+    """和摘要一样，结构化事实不占 max_chars 预算——它很短，抢预算没有意义，
+    反而可能把最近几轮原话挤掉。"""
+    turns = [{"role": "user", "content": "问" * 100} for _ in range(3)]
+    text, trace = build_history_block(
+        turns, max_chars=310, facts_text="当前小说：《雾隐山庄》；提到过的人物：顾长风、沈砚之"
+    )
+
+    assert "当前小说" in text
+    assert trace["facts_used"] is True
+    assert "结构化已知信息" in trace["reason"]

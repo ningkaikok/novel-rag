@@ -108,6 +108,21 @@ HISTORY_SUMMARY_EVERY = int(os.environ.get("HISTORY_SUMMARY_EVERY", 4))
 # 最后反过来把证据挤出 prompt——那正是引入预算想避免的事。
 HISTORY_SUMMARY_MAX_CHARS = int(os.environ.get("HISTORY_SUMMARY_MAX_CHARS", 400))
 
+# --- 结构化会话事实：书名 + 人物（M3.6，见 src/session_facts.py）---
+# 和滚动摘要（HISTORY_SUMMARY_*）不是一回事：摘要是模型压缩的产物、可能漂移，
+# 默认关闭；这里的书名/人物**不调用任何模型**——书名来自这一轮真实检索到的
+# 证据本身，人物名来自人物关系图里已经确认存在的人名反查，要么查得到、要么
+# 精确匹配到，没有"大概对"的中间态，因此不需要摘要那样的开关，默认随对话
+# 背景一起生效（零 LLM 成本，一次轻量 SQL 查询）。
+#
+# 只覆盖"书名 + 人物"。"用户已确认结论"暂不做：目前唯一能确定信号强度的确认
+# 渠道是引用核实功能（点击"核实这条"），覆盖面太窄；用聊天里的"对/确认了"之类
+# 关键词判断确认信号本身就很模糊，容易把反驳误判成确认，比不做还危险。
+#
+# 人物列表容量上限。会话越长，提到的人物本该越多，但这是**结构化背景**，
+# 不该无限增长——超出时丢最旧提到的（同 HISTORY_MAX_TURNS 的"牺牲最旧"原则）。
+SESSION_FACTS_MAX_CHARACTERS = int(os.environ.get("SESSION_FACTS_MAX_CHARACTERS", 8))
+
 # --- Agent Lab 工具输出的体积闸门（M3.6，见 src/agent_lab.py）---
 # 步数上限拦不住体积：read_neighbors / get_chapter 一次就能返回一整章，大部头的
 # 一章本身就可能撑爆 prompt。参数上限（radius≤3、limit≤12）是**读取之前**的第一道

@@ -225,7 +225,7 @@ def test_ask_carries_the_summary_into_the_prompt_when_enabled(client, monkeypatc
     from tests.backend.test_endpoints import _FakeRag
 
     class _Rag(_FakeRag):
-        def build_prompt(self, question, sources, history=None, summary=None):
+        def build_prompt(self, question, sources, history=None, summary=None, facts_text=None):
             seen["summary"] = summary
             return f"问题：{question}"
 
