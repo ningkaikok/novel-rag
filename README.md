@@ -293,7 +293,7 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `HISTORY_PER_TURN_CHARS` | `220` | 单轮最多保留多少字，超出截断（助手回答动辄上千字，整段塞进去会把证据挤没） |
 | `SESSION_FACTS_MAX_CHARACTERS` | `8` | 结构化会话事实（M3.6）里最多记住多少个提到过的人物，超出丢最旧提到的。不调用模型，随对话背景默认生效，无开关 |
 | `AGENT_TOOL_MAX_CHARS` | `6000` | Agent Lab 单次工具输出的字数上限（M3.6）：条数上限拦不住体积，超出按「离中心最远 / 末尾」丢弃并写进 observation |
-| `HISTORY_SUMMARY_ENABLED` | `0` | 滚动会话摘要（M3.6）：把掉出历史窗口的更早对话压成一段摘要。**默认关闭**，长会话评测补齐前不默认影响回答，见 docs/experiments/m36-session-summary.md |
+| `HISTORY_SUMMARY_ENABLED` | `1` | 滚动会话摘要（M3.6）：把掉出历史窗口的更早对话压成一段摘要。长会话评测已跑过两个模型均零摘要漂移，默认开启；设成 `0` 关闭，见 docs/experiments/m36-session-summary.md |
 | `HISTORY_SUMMARY_MODEL` | 同 `QUERY_REWRITE_MODEL` | 生成摘要的模型（压缩任务，用便宜快速的小模型） |
 | `HISTORY_SUMMARY_EVERY` | `4` | 攒够多少轮掉出窗口的对话才更新一次摘要；短会话一次都不触发 |
 | `HISTORY_SUMMARY_MAX_CHARS` | `400` | 摘要自身的字数上限，超出硬截断（它是每轮都要付的固定开销） |

@@ -93,11 +93,12 @@ HISTORY_PER_TURN_CHARS = int(os.environ.get("HISTORY_PER_TURN_CHARS", 220))
 # 逐字历史只保留最近几轮，更早的内容会被整轮丢掉。滚动摘要接住掉出窗口的那部分，
 # 让长会话仍然记得"我们在聊哪本书、这个人是谁、之前确认过什么"。
 #
-# **默认关闭**，与 GraphRAG、查询扩展、忠实度 Judge 的处理一致：路线图对本阶段
-# 写死了"未经评测不得默认影响回答"，而现有多轮评测集最长只有三四轮，根本触发
-# 不到摘要，也就无从证明它没有引入摘要漂移或事实丢失。要打开它，先按
-# docs/experiments/m36-session-summary.md 里写的条件补齐长会话评测。
-HISTORY_SUMMARY_ENABLED = os.environ.get("HISTORY_SUMMARY_ENABLED", "0") == "1"
+# 默认开启（2026-09-05 起）：长会话评测集已跑过两个模型（glm:glm-4-flash 生产
+# 默认摘要模型、claude:haiku 交叉验证），均 6/6 记住早期事实且零摘要漂移，达到
+# docs/experiments/m36-session-summary.md 里写好的开启标准。样本量仍有限（只有
+# 3 篇短篇原创语料，未覆盖多轮滚动更新下的累积误差），该文档如实记录了这个局限，
+# 需要更保守可以设 HISTORY_SUMMARY_ENABLED=0 关掉，行为退回改造前一致。
+HISTORY_SUMMARY_ENABLED = os.environ.get("HISTORY_SUMMARY_ENABLED", "1") == "1"
 # 摘要用的模型。和查询改写同理：这是压缩任务不是推理任务，用便宜快速的小模型；
 # 更重要的是它跑在提问的关键路径上，用大模型会让用户白等好几秒。
 HISTORY_SUMMARY_MODEL = os.environ.get("HISTORY_SUMMARY_MODEL", QUERY_REWRITE_MODEL)

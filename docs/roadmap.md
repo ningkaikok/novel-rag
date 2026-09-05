@@ -299,8 +299,9 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
       （2026-09-05：`src/session_summary.py`；长会话评测集已补齐——
       `tests/session_summary_test_set.json`（6 条）+ `scripts/eval_session_summary.py`，
       两个模型（`glm:glm-4-flash`/`claude:haiku`）均 6/6 通过、零摘要漂移，达到
-      开启标准，但样本量有限（仅 3 篇短篇原创语料），**默认值是否改为开启留给
-      维护者结合样本量局限自行判断**，详见 [滚动会话摘要](experiments/m36-session-summary.md)）
+      开启标准，**`HISTORY_SUMMARY_ENABLED` 默认值已改为 `1`**（样本量仍有限，
+      仅 3 篇短篇原创语料，未覆盖多轮滚动更新下的累积误差，详见
+      [滚动会话摘要](experiments/m36-session-summary.md)）
 - [x] 保留最近 4～6 轮原文，并增加结构化事实记忆（人物、书名、用户已确认结论）
       （2026-09-05：`HISTORY_MAX_TURNS` 默认 6；结构化事实记忆见
       `src/session_facts.py`——**只覆盖书名 + 人物，不做"用户已确认结论"**：

@@ -7,12 +7,14 @@
 
 ### 新增
 
-- **滚动会话摘要补上了长会话评测集**：新增 `tests/session_summary_test_set.json`
-  （6 条，覆盖三篇原创短篇）+ `scripts/eval_session_summary.py`。两层证据：不开
-  摘要时早期事实必然从背景里消失（零成本结构性证明）；开摘要后用两个模型
-  （`glm:glm-4-flash`/`claude:haiku`）实测，6/6 全部记住了早期事实且零摘要漂移。
-  已达到 `docs/experiments/m36-session-summary.md` 里写好的开启标准，但样本只有
-  3 篇短篇原创语料，默认值是否改为开启留给维护者自行判断。
+- **长会话不会再"忘掉开头"了（滚动会话摘要默认开启）**：新增长会话评测集
+  `tests/session_summary_test_set.json`（6 条，覆盖三篇原创短篇）+
+  `scripts/eval_session_summary.py`。两层证据：不开摘要时早期事实必然从背景里
+  消失（零成本结构性证明）；开摘要后用两个模型（`glm:glm-4-flash`/`claude:haiku`）
+  实测，6/6 全部记住了早期事实且零摘要漂移，达到
+  `docs/experiments/m36-session-summary.md` 里写好的开启标准，`HISTORY_SUMMARY_ENABLED`
+  默认值已改为 `1`（设成 `0` 可关闭）。样本量仍有限（只有 3 篇短篇原创语料，
+  未覆盖多轮滚动更新下的累积误差），文档里如实记录了这个局限。
 
 ## [0.9.0] - 2026-09-05
 
