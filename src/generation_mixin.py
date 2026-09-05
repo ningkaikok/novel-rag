@@ -71,6 +71,8 @@ PROMPT_TEMPLATE_WITH_HISTORY = """你是一个小说问答助手。请仅根据�
 - 用户如果在追问"再展开讲讲""你刚才说的第二点"，从背景里找出他指的是什么，
   然后仍然回到下面的原文片段去组织答案
 - 标着「（更早对话的摘要）」的那一行是压缩过的，可能不准确，可信度比逐字对话更低
+- 标着「（已知信息）」的那一行是书名/人物这类结构化事实，可信度和原文片段一样高，
+  但它仍然只是背景，不是可引用的证据——引用编号只能来自下面的原文片段
 
 对话背景：
 {history}
@@ -129,6 +131,7 @@ def build_history_block(
     max_chars: int = HISTORY_MAX_CHARS,
     per_turn_chars: int = HISTORY_PER_TURN_CHARS,
     summary: str | None = None,
+    facts_text: str | None = None,
 ) -> tuple[str, dict]:
     """把对话历史压成一段有预算上限的背景文本（M3.6）。
 
@@ -149,6 +152,11 @@ def build_history_block(
     不同：逐字历史是原话，摘要是模型压缩的产物，可能已经漂移。摘要**不占**
     ``max_chars`` 预算——它自己有独立上限（HISTORY_SUMMARY_MAX_CHARS），
     要是让它和逐字历史抢同一份预算，摘要一长就会把最近几轮原话挤掉，那是本末倒置。
+
+    ``facts_text`` 是结构化会话事实（M3.6，见 session_facts.py）：书名和人物，
+    不调用模型、不会漂移，排在最前面。它和摘要同样**不占** ``max_chars`` 预算，
+    理由相同；只是格式不同——一个是模型压缩的自由文本，一个是查库/精确匹配
+    得到的结构化短语。
     """
     recent = [t for t in turns if t.get("content")][-max_turns:]
     dropped_by_turn_limit = max(0, len([t for t in turns if t.get("content")]) - len(recent))
@@ -177,6 +185,9 @@ def build_history_block(
             if text
             else f"（更早对话的摘要）{summary_text}"
         )
+    facts_line = _strip_citations(facts_text or "").strip()
+    if facts_line:
+        text = f"（已知信息）{facts_line}\n{text}" if text else f"（已知信息）{facts_line}"
 
     reasons = []
     if dropped_by_turn_limit:
@@ -188,12 +199,15 @@ def build_history_block(
 
     if summary_text:
         reasons.append(f"更早的对话已压缩成 {len(summary_text)} 字摘要")
+    if facts_line:
+        reasons.append("补充了当前小说/人物等结构化已知信息")
 
     return text, {
         "turns_used": len(lines),
         "turns_available": len([t for t in turns if t.get("content")]),
         "chars": len(text),
         "summary_used": bool(summary_text),
+        "facts_used": bool(facts_line),
         "truncated": bool(reasons),
         "reason": "；".join(reasons) or "未截断",
     }
@@ -206,6 +220,7 @@ class GenerationMixin:
         sources: list[SourceChunk],
         history: list[dict] | None = None,
         summary: str | None = None,
+        facts_text: str | None = None,
     ) -> str:
         """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。
 
@@ -215,8 +230,10 @@ class GenerationMixin:
         而不是直接照抄。
 
         ``history`` 非空时改用带「对话背景」段的模板（M3.6）；``summary`` 是可选的
-        滚动会话摘要，用来补上已经掉出历史窗口的更早对话。两者都是**可选参数**：
-        自由问答、Agent Lab、评测脚本都不传，行为与以前完全一致。
+        滚动会话摘要，用来补上已经掉出历史窗口的更早对话；``facts_text`` 是可选的
+        结构化会话事实（书名/人物，见 session_facts.py），不调用模型也不会漂移。
+        三者都是**可选参数**：自由问答、Agent Lab、评测脚本都不传，行为与以前
+        完全一致。
         """
         blocks = []
         for index, source in enumerate(sources, start=1):
@@ -229,8 +246,10 @@ class GenerationMixin:
         hint = self._graph_hint(question)
         if hint:
             context = f"{hint}\n\n---\n\n{context}"
-        if history or summary:
-            history_text, _ = build_history_block(history or [], summary=summary)
+        if history or summary or facts_text:
+            history_text, _ = build_history_block(
+                history or [], summary=summary, facts_text=facts_text
+            )
             if history_text:
                 return PROMPT_TEMPLATE_WITH_HISTORY.format(
                     history=history_text, context=context, question=question

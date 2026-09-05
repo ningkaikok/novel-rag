@@ -39,7 +39,7 @@ class _FakeRag:
     def build_answer_context(self, sources):
         return sources, None
 
-    def build_prompt(self, question, sources, history=None, summary=None):
+    def build_prompt(self, question, sources, history=None, summary=None, facts_text=None):
         return f"[证据] 顾长风所患的是奇毒蚀骨散，毒性极深\n问题：{question}"
 
 

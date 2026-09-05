@@ -162,6 +162,7 @@ from rag import (  # noqa: E402
     NovelRAG,
     generate_ollama_prompt_stream,
 )
+from session_facts import extract_session_facts, format_facts_line  # noqa: E402
 from session_summary import (  # noqa: E402
     build_summary,
     should_update,
@@ -663,6 +664,17 @@ async def ask(req: AskRequest, request: Request):
             trace_payload.append(first)
             yield f"event: step\ndata: {json.dumps(first, ensure_ascii=False)}\n\n"
 
+        facts_text: str | None = None
+        if HISTORY_IN_PROMPT and history:
+            # 不调用模型、只是一次轻量 SQL 查询，直接同步做即可——和 _load_history
+            # 同一个模式，不需要像下面的摘要那样进线程池。session_facts 内部已经
+            # 兜底了"图未启用/库不可用"，这里再包一层是防御性的：这是纯增强信息，
+            # 任何未预见的失败都不该让回答本身跟着失败。
+            try:
+                facts_text = format_facts_line(extract_session_facts(history))
+            except Exception as exc:
+                logger.warning(f"提取会话结构化事实失败（不影响回答）：{exc}")
+
         session_summary: str | None = None
         summary_ms: int | None = None
         if HISTORY_IN_PROMPT and HISTORY_SUMMARY_ENABLED and req.session_id and history:
@@ -680,10 +692,12 @@ async def ask(req: AskRequest, request: Request):
             for reason in summary_errors:
                 logger.warning(f"会话摘要降级（不影响回答）：{reason}")
 
-        if HISTORY_IN_PROMPT and (history or session_summary):
+        if HISTORY_IN_PROMPT and (history or session_summary or facts_text):
             # 「每次压缩都能在 trace 中解释」是 M3.6 的验收要求之一：带了几轮、
             # 丢了什么、为什么丢，都要能在界面上看到，而不是变成一个黑箱。
-            _, history_trace = build_history_block(history, summary=session_summary)
+            _, history_trace = build_history_block(
+                history, summary=session_summary, facts_text=facts_text
+            )
             history_step = TraceStep(
                 ms=summary_ms,
                 step="对话背景",
@@ -772,6 +786,7 @@ async def ask(req: AskRequest, request: Request):
                     context_sources,
                     history=history if HISTORY_IN_PROMPT else None,
                     summary=session_summary,
+                    facts_text=facts_text,
                 )
                 if decision.route is AnswerMode.grounded and rag is not None
                 else build_free_prompt(req.question)
