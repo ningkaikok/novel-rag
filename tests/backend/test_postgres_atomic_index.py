@@ -92,3 +92,30 @@ def test_quality_report_is_written_in_same_transaction(monkeypatch):
     manifest_sql = [sql for sql in connection.sql if "INSERT INTO index_manifest" in sql]
     assert manifest_sql
     assert "quality_report" in manifest_sql[0]
+
+
+def test_row_and_term_length_mismatch_is_rejected_before_touching_the_database(
+    monkeypatch,
+):
+    """rows 和 per_chunk_terms 必须等长，且要在连数据库之前就拦住。
+
+    这两个列表是按下标一一对应的（第 i 个片段的向量行 ↔ 第 i 个片段的词频）。
+    长度不一致意味着上游生成逻辑已经错位，此时若照常写库，向量和 BM25 会
+    对不上号——检索结果会静默错乱，而不是报错。所以这里必须是"提前失败"，
+    而且不能已经把旧数据 DELETE 掉了才发现。
+    """
+    touched = []
+    monkeypatch.setattr(
+        postgres, "connect", lambda: touched.append("connected") or _Connection()
+    )
+
+    with pytest.raises(ValueError):
+        postgres.replace_novel_index(
+            "雾隐山庄",
+            rows=[("雾隐山庄", 0, None, "正文", "[0.1]", 2, "")],
+            per_chunk_terms=[{"正文": 1}, {"多出来的": 1}],
+            source_hash="h",
+            pipeline_hash="p",
+        )
+
+    assert touched == [], "长度校验必须发生在连接数据库之前，不能先删旧数据再报错"

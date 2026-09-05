@@ -243,6 +243,86 @@ def test_get_session_shape(client, monkeypatch):
     assert body["turns"][1]["content"] == "顾长风。"
 
 
+def _agent_turn(agent_steps):
+    """一条 Agent Lab 的历史记录（结构化字段由参数决定合法与否）。"""
+    return {
+        "turn_index": 1,
+        "role": "assistant",
+        "content": "顾长风[1]。",
+        "sources": None,
+        "trace": None,
+        "agent_steps": agent_steps,
+        "status": "complete",
+    }
+
+
+def test_get_session_restores_agent_lab_steps(client, monkeypatch):
+    """Agent Lab 的历史轮次要能原样读回，步骤卡片才能在刷新后恢复。"""
+    steps = [
+        {
+            "step": 1,
+            "reason": "先搜索",
+            "tool": "search_novels",
+            "args": {"query": "庄主"},
+            "observation": "找到 3 段",
+            "source_ids": ["S1"],
+        }
+    ]
+    monkeypatch.setattr(main, "load_turns", lambda _sid: [_agent_turn(steps)])
+
+    body = client.get("/api/sessions/s1").json()
+
+    assert body["turns"][0]["agent_steps"][0]["tool"] == "search_novels"
+
+
+def test_broken_structured_payload_degrades_that_turn_not_the_whole_session(
+    client, monkeypatch
+):
+    """一条坏记录只丢自己的结构化字段，不能让整段对话都读不出来。
+
+    `sources`/`trace`/`agent_steps` 是 jsonb 列，形状随代码版本演进（TraceStep
+    先后加过 ms/stage_key/candidates，chat_turns 后来才加 agent_steps）。旧记录
+    一旦不满足新模型，整个会话历史就会 500——用户丢的不是某一轮的步骤卡片，
+    而是**整段对话**。这里固定住"降级而不是全灭"的行为。
+    """
+    good = {
+        "turn_index": 0,
+        "role": "user",
+        "content": "庄主是谁",
+        "sources": None,
+        "trace": None,
+        "agent_steps": None,
+        "status": "complete",
+    }
+    # 缺 reason/observation/source_ids，模拟"字段后来才加上"的旧记录
+    broken = _agent_turn([{"step": 1, "tool": "search_novels"}])
+    monkeypatch.setattr(main, "load_turns", lambda _sid: [good, broken])
+
+    resp = client.get("/api/sessions/s1")
+
+    assert resp.status_code == 200, "坏掉的结构化字段不该让整个会话读不出来"
+    turns = resp.json()["turns"]
+    assert len(turns) == 2
+    assert turns[0]["content"] == "庄主是谁"
+    # 正文保住了，只有解析不了的结构化字段被丢弃
+    assert turns[1]["content"] == "顾长风[1]。"
+    assert turns[1]["agent_steps"] is None
+
+
+def test_unparseable_core_fields_still_surface_as_error():
+    """正文本身坏掉（不是结构化字段的形状演进）时不能静默吞掉，仍要抛出。
+
+    直接测 `_restore_turn` 而不走 HTTP：这条路径的正确行为是让异常冒泡给全局
+    异常处理器转成 500，而 TestClient 默认会把服务端异常重新抛出、不返回响应，
+    从端点层断言反而测不出意图。
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        main._restore_turn({"turn_index": "not-an-int", "role": "user"})
+
+
 class _FakeRag:
     """/api/ask 依赖的最小 NovelRAG 替身：只实现路由会调用到的几个方法。"""
 

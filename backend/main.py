@@ -62,6 +62,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 # 让后端能 import src 下的业务逻辑（完全复用，不改动）
 ROOT = Path(__file__).resolve().parent.parent
@@ -832,10 +833,42 @@ def get_session(session_id: str):
         rows = load_turns(session_id)
     except Exception as exc:
         raise APIError(500, ErrorCode.session_read_failed, f"读取会话失败：{exc}") from exc
-    # 数据库行是原始 dict，显式过一遍 Pydantic 校验：字段缺失/类型漂移在这里
-    # 报 500 并带清晰原因，而不是等 response_model 序列化时才炸。
-    turns = [StoredTurn.model_validate(row) for row in rows]
-    return SessionHistory(session_id=session_id, turns=turns)
+    return SessionHistory(session_id=session_id, turns=[_restore_turn(row) for row in rows])
+
+
+# 结构化附加字段：校验失败时可以单独丢掉而不影响这一轮的正文内容
+_OPTIONAL_TURN_PAYLOADS = ("agent_steps", "trace", "sources")
+
+
+def _restore_turn(row: dict) -> StoredTurn:
+    """把一行历史记录还原成 StoredTurn，结构化字段坏掉时降级而不是整体失败。
+
+    为什么需要降级：``sources``/``trace``/``agent_steps`` 是 jsonb 列，形状由写入
+    当时的代码版本决定，而这些形状**一直在演进**（TraceStep 先后加过 ms /
+    stage_key / candidates；chat_turns 后来才加 agent_steps）。一旦某次改动让旧
+    记录不再满足新模型，`[StoredTurn.model_validate(row) for row in rows]` 会在
+    第一条坏行上抛异常，导致整个会话的历史全部读不出来——**用户丢掉的不是那
+    一轮的步骤卡片，而是整段对话**。
+
+    正文（role/content/status）才是用户真正在乎的东西，且形状稳定。所以坏掉的
+    只丢结构化附加字段：对话仍然完整可读，只是那一轮不再显示出处或步骤轨迹。
+    """
+    try:
+        return StoredTurn.model_validate(row)
+    except ValidationError:
+        degraded = {**row, **dict.fromkeys(_OPTIONAL_TURN_PAYLOADS)}
+        try:
+            turn = StoredTurn.model_validate(degraded)
+        except ValidationError:
+            # 连正文都不合法（role/content/status 缺失或类型不对）说明这行是真的
+            # 坏了，不是形状演进问题——此时才让它冒泡成 500，不静默吞掉。
+            raise
+        logger.warning(
+            "会话 %s 第 %s 轮的结构化字段无法解析，已降级为纯文本恢复",
+            row.get("session_id", "?"),
+            row.get("turn_index", "?"),
+        )
+        return turn
 
 
 # ----------------------------------------------------------------- 关系边审核（M4）
