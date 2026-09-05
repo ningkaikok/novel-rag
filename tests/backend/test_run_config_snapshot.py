@@ -39,7 +39,7 @@ class _FakeRag:
     def build_answer_context(self, sources):
         return sources, None
 
-    def build_prompt(self, question, sources):
+    def build_prompt(self, question, sources, history=None):
         return f"[证据] 顾长风所患的是奇毒蚀骨散，毒性极深\n问题：{question}"
 
 
@@ -66,7 +66,9 @@ def test_ask_saves_run_config_snapshot(client, monkeypatch):
     snapshot = assistant_kwargs["run_config"]
     assert snapshot is not None
     # 快照必须覆盖 M3.5-④ 要求的字段
-    assert snapshot["prompt_template_version"] == "v1"
+    # 字面量而不是引用常量：模板文本改了就必须有人来改这一行，这正是它的作用。
+    # v1 → v2：M3.6 引入带「对话背景」段的模板。
+    assert snapshot["prompt_template_version"] == "v2"
     assert snapshot["answer_mode"] in ("auto", "grounded", "free")
     assert snapshot["route_reason"]
     assert snapshot["generate_model"] == "fake-model"

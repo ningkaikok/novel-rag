@@ -20,6 +20,9 @@ import requests
 
 from chunk_model import SourceChunk
 from config import (
+    HISTORY_MAX_CHARS,
+    HISTORY_MAX_TURNS,
+    HISTORY_PER_TURN_CHARS,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     TOP_K,
@@ -34,9 +37,41 @@ from postgres import (
 # Prompt 模板的显式版本号（M3.5-④）：模板文本的任何实质修改都必须递增它，
 # 并同步更新 run_config 快照里的 prompt_template_version——否则落库的回答无法
 # 回溯"当时是用哪版提示词生成的"，评测对比也会把不同版本的输出混在一起。
-PROMPT_TEMPLATE_VERSION = "v1"
+PROMPT_TEMPLATE_VERSION = "v2"
 PROMPT_TEMPLATE = """你是一个小说问答助手。请仅根据下面提供的编号原文片段回答问题。
 如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
+
+引用要求：
+- 每个来自原文的关键事实后标注支持它的片段编号，例如“顾长风中了蚀骨散[2]”。
+- 只能使用下面真实存在的编号，不能编造引用。
+- 如果一句话由多个片段共同支持，可以写成[1][3]。
+- 不要把编号写成脚注列表；直接放在对应事实后，方便用户点击核对。
+
+原文片段：
+{context}
+
+问题：{question}
+
+回答："""
+
+# 带历史时用这一版：多出一个「对话背景」段，且必须明确划清它和证据的界线。
+#
+# 这里是整个 M3.6 最容易出事的地方：一旦把历史塞进 prompt，模型很容易改成
+# "根据我上一轮说过的话回答"，而不是"根据这一轮检索到的原文回答"——那会直接
+# 毁掉本项目最核心的引用可核验性（回答里的 [n] 必须指向真实存在的片段）。
+# 路线图对此写得很明白：摘要不能替代原文证据，涉及小说事实仍必须回到检索结果。
+# 所以下面刻意用三条硬约束把「背景」压到最低地位。
+PROMPT_TEMPLATE_WITH_HISTORY = """你是一个小说问答助手。请仅根据下面提供的编号原文片段回答问题。
+如果片段中没有足够信息回答，请明确说“根据提供的片段无法确定”，不要编造内容。
+
+下面先给出这轮对话的背景，它只用来帮你理解「用户这次到底在问什么」：
+- **不能**把对话背景当作事实依据，也不能引用它——只有编号原文片段才是可引用的证据
+- 背景和原文片段冲突时，一律以原文片段为准
+- 用户如果在追问"再展开讲讲""你刚才说的第二点"，从背景里找出他指的是什么，
+  然后仍然回到下面的原文片段去组织答案
+
+对话背景：
+{history}
 
 引用要求：
 - 每个来自原文的关键事实后标注支持它的片段编号，例如“顾长风中了蚀骨散[2]”。
@@ -73,14 +108,79 @@ def generate_ollama_prompt_stream(prompt: str, model: str = OLLAMA_MODEL) -> Ite
                 yield chunk
 
 
+def build_history_block(
+    turns: list[dict],
+    max_turns: int = HISTORY_MAX_TURNS,
+    max_chars: int = HISTORY_MAX_CHARS,
+    per_turn_chars: int = HISTORY_PER_TURN_CHARS,
+) -> tuple[str, dict]:
+    """把对话历史压成一段有预算上限的背景文本（M3.6）。
+
+    返回 ``(文本, trace)``；``trace`` 如实记录这次压缩做了什么，供界面和评测复盘：
+    每一次截断都要能解释清楚，这是路线图对本阶段的明确验收要求。
+
+    预算策略分两层，都从**最旧**的内容开始牺牲：
+
+    1. 单轮先截到 ``per_turn_chars``——助手的回答动辄上千字，整段塞进去会把
+       证据部分挤没；理解"上一轮在聊什么"通常开头几句就够
+    2. 仍然超过 ``max_chars`` 时，整轮整轮地丢掉最旧的
+
+    为什么牺牲最旧的：指代对象几乎总落在紧邻的一两轮里。隔了七八轮的"他"，
+    就算解析对了也未必是用户想要的。
+    """
+    recent = [t for t in turns if t.get("content")][-max_turns:]
+    dropped_by_turn_limit = max(0, len([t for t in turns if t.get("content")]) - len(recent))
+
+    lines = []
+    truncated_turns = 0
+    for turn in recent:
+        role = "用户" if turn.get("role") == "user" else "助手"
+        content = str(turn["content"]).strip()
+        if len(content) > per_turn_chars:
+            content = content[:per_turn_chars] + "…（略）"
+            truncated_turns += 1
+        lines.append(f"{role}：{content}")
+
+    # 超预算就从最旧的开始整轮丢，直到装得下（至少保留最近一轮）
+    dropped_by_budget = 0
+    while len(lines) > 1 and sum(len(line) for line in lines) > max_chars:
+        lines.pop(0)
+        dropped_by_budget += 1
+
+    text = "\n".join(lines)
+    reasons = []
+    if dropped_by_turn_limit:
+        reasons.append(f"超过 {max_turns} 轮上限，丢弃最旧 {dropped_by_turn_limit} 轮")
+    if dropped_by_budget:
+        reasons.append(f"超过 {max_chars} 字预算，再丢弃最旧 {dropped_by_budget} 轮")
+    if truncated_turns:
+        reasons.append(f"{truncated_turns} 轮的内容按 {per_turn_chars} 字截断")
+
+    return text, {
+        "turns_used": len(lines),
+        "turns_available": len([t for t in turns if t.get("content")]),
+        "chars": len(text),
+        "truncated": bool(reasons),
+        "reason": "；".join(reasons) or "未截断",
+    }
+
+
 class GenerationMixin:
-    def build_prompt(self, question: str, sources: list[SourceChunk]) -> str:
+    def build_prompt(
+        self,
+        question: str,
+        sources: list[SourceChunk],
+        history: list[dict] | None = None,
+    ) -> str:
         """拼装检索片段 + 问题成完整 prompt。Ollama 和其他生成后端（如 Claude CLI）共用。
 
         问到人物关系时，会在原文片段前面加一段「图线索」——那是从全书共现统计
         推断出来的关系列表，用来补足 top-k 片段覆盖不到的部分（见 graph.py）。
         线索明确标注了"是统计推断不是确定事实"，让模型拿它当线索去核对原文，
         而不是直接照抄。
+
+        ``history`` 非空时改用带「对话背景」段的模板（M3.6）。历史是**可选参数**：
+        自由问答、Agent Lab、评测脚本都不传，行为与以前完全一致。
         """
         blocks = []
         for index, source in enumerate(sources, start=1):
@@ -93,6 +193,12 @@ class GenerationMixin:
         hint = self._graph_hint(question)
         if hint:
             context = f"{hint}\n\n---\n\n{context}"
+        if history:
+            history_text, _ = build_history_block(history)
+            if history_text:
+                return PROMPT_TEMPLATE_WITH_HISTORY.format(
+                    history=history_text, context=context, question=question
+                )
         return PROMPT_TEMPLATE.format(context=context, question=question)
 
     def _graph_hint(self, question: str) -> str:

@@ -351,7 +351,7 @@ class _FakeRag:
         """M3.4 起的上下文组装统一入口；off 档等价旧 expand_neighbors 且无 trace 步骤。"""
         return sources, None
 
-    def build_prompt(self, question, sources):
+    def build_prompt(self, question, sources, history=None):
         return f"问题：{question}"
 
 
@@ -394,6 +394,72 @@ def test_ask_streams_trace_sources_and_tokens(client, monkeypatch):
     assert 'data: "顾长"' in body
     assert 'data: "风。"' in body
     assert "event: done" in body
+
+
+def test_ask_passes_session_history_into_answer_prompt(client, monkeypatch):
+    """M3.6：追问时历史必须真的进最终回答的 prompt，并在 trace 里说明带了几轮。
+
+    在此之前历史只喂给查询改写，回答 prompt 里一个字都没有——"再展开讲讲"
+    这类追问因此必然失效。这里断言的是端到端的接线，不是 build_history_block
+    本身的裁剪行为（那部分在 test_history_context.py）。
+    """
+    seen: dict = {}
+
+    class _HistoryRag(_FakeRag):
+        def build_prompt(self, question, sources, history=None):
+            seen["history"] = history
+            return f"问题：{question}"
+
+    main.state["rag"] = _HistoryRag()
+    main.state["model"] = "fake-model"
+    # 改写关掉：这条用例只验证"历史到没到 prompt"，不该被改写模型的可用性干扰
+    monkeypatch.setattr(main, "QUERY_REWRITE_ENABLED", False)
+    monkeypatch.setattr(
+        main,
+        "load_turns",
+        lambda _sid: [
+            {"role": "user", "content": "顾长风得了什么病？"},
+            {"role": "assistant", "content": "中了蚀骨散[1]。"},
+        ],
+    )
+    monkeypatch.setattr(
+        main, "generate_ollama_prompt_stream", lambda prompt, model: iter(["好"])
+    )
+
+    resp = client.post("/api/ask", json={"question": "再展开讲讲", "session_id": "s-hist"})
+
+    assert resp.status_code == 200
+    assert seen["history"], "历史必须传到 build_prompt，否则追问依旧无效"
+    assert seen["history"][0]["content"] == "顾长风得了什么病？"
+    assert "对话背景" in resp.text
+    assert "带入最近 2/2 轮对话" in resp.text
+
+
+def test_ask_without_session_sends_no_history(client, monkeypatch):
+    """没有 session_id 时行为必须和改造前完全一致：不读库、不加背景段。"""
+    seen: dict = {}
+
+    class _HistoryRag(_FakeRag):
+        def build_prompt(self, question, sources, history=None):
+            seen["history"] = history
+            return f"问题：{question}"
+
+    main.state["rag"] = _HistoryRag()
+    main.state["model"] = "fake-model"
+    monkeypatch.setattr(
+        main,
+        "load_turns",
+        lambda _sid: (_ for _ in ()).throw(AssertionError("没有会话就不该读历史")),
+    )
+    monkeypatch.setattr(
+        main, "generate_ollama_prompt_stream", lambda prompt, model: iter(["好"])
+    )
+
+    resp = client.post("/api/ask", json={"question": "顾长风是谁"})
+
+    assert resp.status_code == 200
+    assert not seen["history"]
+    assert "对话背景" not in resp.text
 
 
 def test_library_question_answers_from_complete_catalog(client, monkeypatch):

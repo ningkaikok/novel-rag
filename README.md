@@ -287,6 +287,10 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
 | `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
+| `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |
+| `HISTORY_MAX_TURNS` | `6` | 背景段最多带几轮历史，超出丢最旧的 |
+| `HISTORY_MAX_CHARS` | `1200` | 背景段的总字数预算，超出继续从最旧的整轮丢弃 |
+| `HISTORY_PER_TURN_CHARS` | `220` | 单轮最多保留多少字，超出截断（助手回答动辄上千字，整段塞进去会把证据挤没） |
 | `QUERY_EXPAND_ENABLED` | `0` | 低置信度自适应查询扩展（M3.4）：信号不足时生成最多 2~3 个改写再补救检索一次；默认关闭 |
 | `QUERY_EXPAND_MODEL` | 同 `QUERY_REWRITE_MODEL` | 扩展变体生成的模型 |
 | `QUERY_EXPAND_MAX_VARIANTS` | `3` | 单次补救最多生成的改写变体数 |

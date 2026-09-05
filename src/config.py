@@ -72,6 +72,23 @@ QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "1") != "0"
 # 不要用当前对话选的模型：用户可能选了推理型的大模型，改写会白等好几秒。
 QUERY_REWRITE_MODEL = os.environ.get("QUERY_REWRITE_MODEL", "glm:glm-4-flash")
 
+# --- 回答时携带对话历史（M3.6，见 generation_mixin.build_history_block）---
+# 在此之前，最终回答的 prompt 里只有「当前问题 + 检索证据」，历史仅用于查询改写。
+# 后果是"再展开讲讲""你刚才说的第二点"这类追问必然失效——模型根本不知道自己
+# 上一轮说过什么，每一轮对它来说都是独立问答。
+HISTORY_IN_PROMPT = os.environ.get("HISTORY_IN_PROMPT", "1") != "0"
+# 带几轮。路线图给的区间是 4~6：再多，指代对象几乎不会落在那么远的地方，
+# 却会稳定挤占预算；再少，一次简单的来回（问-答-追问）就可能被截断。
+HISTORY_MAX_TURNS = int(os.environ.get("HISTORY_MAX_TURNS", 6))
+# 历史部分的字数上限。刻意用字数而不是 token：三个生成后端
+# （Ollama/Claude/GLM）各有各的 tokenizer，没有一个通用计数器；中文大致
+# 1 token ≈ 1~1.5 字，用字数做预算是够用且零依赖的近似。
+# 超出时从**最旧的一轮**开始丢，并把截断如实写进 trace。
+HISTORY_MAX_CHARS = int(os.environ.get("HISTORY_MAX_CHARS", 1200))
+# 单轮内容的截断长度。助手的回答可能上千字，整段塞进去会淹没证据部分；
+# 理解"上一轮在聊什么"通常开头几句就够。
+HISTORY_PER_TURN_CHARS = int(os.environ.get("HISTORY_PER_TURN_CHARS", 220))
+
 # --- 自适应查询扩展（低置信度补救，见 src/query_expander.py / src/confidence.py）---
 # 默认关闭：每个变体都要完整跑一遍混合检索+重排，再加一次 LLM 调用，成本是
 # 主链路的好几倍；且改写可能引入语义漂移。只对「重排后信号显示置信度很低」

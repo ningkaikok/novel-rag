@@ -118,6 +118,7 @@ from backend.schemas import (  # noqa: E402
 )
 from citation_eval import judge_support, statements_citing  # noqa: E402
 from config import (  # noqa: E402
+    HISTORY_IN_PROMPT,
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
     OLLAMA_HOST,
@@ -130,6 +131,7 @@ from config import (  # noqa: E402
     RERANKER_MODEL,
 )
 from embedder import load_embedder  # noqa: E402
+from generation_mixin import build_history_block  # noqa: E402
 from postgres import (  # noqa: E402
     VALID_REVIEW_STATUSES,
     close_pool,
@@ -436,7 +438,23 @@ def search(
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
-def _rewrite_for_search(req: AskRequest) -> str:
+def _load_history(session_id: str | None) -> list[dict]:
+    """读这个会话的历史；没有 session_id 或读失败都返回空列表。
+
+    M3.6 起历史有两个消费方——查询改写和最终回答的 prompt——所以集中读一次
+    再分发，避免同一次请求打两遍数据库。读失败不能影响回答：最坏退回到
+    "没有历史"，也就是改造之前的行为，但要留下日志，别静默失效。
+    """
+    if not session_id:
+        return []
+    try:
+        return load_turns(session_id)
+    except Exception as exc:
+        logger.warning(f"读会话历史失败（不影响回答）：{exc}")
+        return []
+
+
+def _rewrite_for_search(req: AskRequest, turns: list[dict]) -> str:
     """带上会话历史，把追问补全成能独立检索的问题；任何一步失败都退回原问题。
 
     整条链路上的每一步都可能失败（没配 session_id、读历史失败、模型限流），
@@ -444,14 +462,7 @@ def _rewrite_for_search(req: AskRequest) -> str:
     拿原问题去检索。所以这里层层兜底，但每次兜底都记一条日志，
     避免出现"功能静默失效却查不出原因"（Contextual Retrieval 那边踩过这个坑）。
     """
-    if not (QUERY_REWRITE_ENABLED and req.session_id):
-        return req.question
-    try:
-        turns = load_turns(req.session_id)
-    except Exception as exc:
-        logger.warning(f"读会话历史失败，改写跳过（不影响回答）：{exc}")
-        return req.question
-    if not turns:
+    if not (QUERY_REWRITE_ENABLED and turns):
         return req.question
 
     errors: list[str] = []
@@ -537,8 +548,12 @@ async def ask(req: AskRequest, request: Request):
     # 再拿补全后的问题去检索。**只影响检索**——存库、显示、送给模型的都还是
     # 用户原始问题（见下面 save_turn 用的是 req.question）。
     # 自由问答不检索，所以也没必要额外花一次模型调用做“面向检索”的问题改写。
+    # 历史读一次，供查询改写和回答 prompt 共用（M3.6）
+    history = _load_history(req.session_id) if decision.route is AnswerMode.grounded else []
     search_question = (
-        _rewrite_for_search(req) if decision.route is AnswerMode.grounded else req.question
+        _rewrite_for_search(req, history)
+        if decision.route is AnswerMode.grounded
+        else req.question
     )
 
     model = state["model"]
@@ -591,6 +606,21 @@ async def ask(req: AskRequest, request: Request):
             ).model_dump()
             trace_payload.append(first)
             yield f"event: step\ndata: {json.dumps(first, ensure_ascii=False)}\n\n"
+
+        if HISTORY_IN_PROMPT and history:
+            # 「每次压缩都能在 trace 中解释」是 M3.6 的验收要求之一：带了几轮、
+            # 丢了什么、为什么丢，都要能在界面上看到，而不是变成一个黑箱。
+            _, history_trace = build_history_block(history)
+            history_step = TraceStep(
+                step="对话背景",
+                detail=(
+                    f"带入最近 {history_trace['turns_used']}/"
+                    f"{history_trace['turns_available']} 轮对话"
+                    f"（{history_trace['chars']} 字）：{history_trace['reason']}"
+                ),
+            ).model_dump()
+            trace_payload.append(history_step)
+            yield f"event: step\ndata: {json.dumps(history_step, ensure_ascii=False)}\n\n"
 
         sources = []
         context_sources = []
@@ -663,7 +693,11 @@ async def ask(req: AskRequest, request: Request):
             token_iter = iter([structured_answer])
         else:
             prompt = (
-                rag.build_prompt(req.question, context_sources)
+                rag.build_prompt(
+                    req.question,
+                    context_sources,
+                    history=history if HISTORY_IN_PROMPT else None,
+                )
                 if decision.route is AnswerMode.grounded and rag is not None
                 else build_free_prompt(req.question)
             )
