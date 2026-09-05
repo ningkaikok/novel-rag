@@ -67,6 +67,24 @@ Agent Lab 让模型根据观察选择下一步，适合学习 Agent 的状态和
 Agent Lab 当前不保存到普通会话历史。这让实验轨迹和稳定聊天记录保持边界，也避免
 刷新后把一半执行误当成可恢复工作流。
 
+## 动作解析的可观测性（M3.2.1 前置埋点）
+
+规划器的输出是一段 JSON，`_parse_action` 容忍模型带 Markdown 围栏或在 JSON 前后
+多写几句话，但**容忍本身有风险**：正则兜底抓的是第一个 `{...}`，模型多写一句
+带花括号的话就可能抓错对象，而且抓错了不会报错。
+
+每个由规划器产出的步骤都带一个 `parse_mode`：`strict`（裸 JSON 一次成功）/
+`fenced`（剥掉围栏才成功）/ `regex`（靠正则兜底，最值得关注）/
+`failed:<类别>`（彻底失败，走了降级）。它随 `agent_steps` 落库，用
+
+```bash
+uv run python scripts/agent_parse_stats.py           # 全部历史
+uv run python scripts/agent_parse_stats.py --days 7  # 最近 7 天
+```
+
+聚合。这条埋点是路线图 M3.2.1（把 JSON 协议换成首行标签协议）的前置项——先用
+真实失败率决定值不值得换，而不是凭"新协议更好"就抢跑。
+
 ## 为什么这里仍不需要 LangGraph
 
 这里已经是真正的“工具 → 观察 → 再判断”循环，但状态只有一个 Python 列表，工具只有

@@ -145,6 +145,11 @@ class AgentStep(BaseModel):
     # M3.5-③：同一次 Agent 运行的所有步骤共享一个 run_id（轻量串联字段，
     # 由 /api/agent/ask 在入口生成后注入；历史记录里的旧步骤没有，保持 None）。
     run_id: str | None = None
+    # M3.2.1 埋点：这一步的动作是怎么解析出来的——strict / fenced / regex /
+    # failed:<类别>。规划器没参与的步骤（强制收尾、目录门禁）为 None。
+    # 落库到 chat_turns.agent_steps，用 scripts/agent_parse_stats.py 聚合真实
+    # 失败率，再决定「换成首行标签协议」这件事的排期（见 docs/roadmap.md M3.2.1）。
+    parse_mode: str | None = None
 
 
 class TraceStep(BaseModel):

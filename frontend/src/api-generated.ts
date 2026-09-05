@@ -367,6 +367,8 @@ export interface components {
             };
             /** Observation */
             observation: string;
+            /** Parse Mode */
+            parse_mode?: string | null;
             /** Reason */
             reason: string;
             /** Run Id */
