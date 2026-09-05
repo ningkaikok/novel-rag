@@ -219,6 +219,71 @@ def fit_text_to_embedding_limit(model: Any, text: str) -> tuple[str, bool]:
     return best, True
 
 
+def fit_context_to_embedding_budget(
+    model: Any, context: str, chunk_text: str, *, separator: str = "\n"
+) -> tuple[str, bool]:
+    """把 Contextual Retrieval 生成的说明压到「说明 + 原文」不超模型上限，
+    但**原文片段本身绝不截断**（返回 `(压缩后的说明, 是否发生了改动)`）。
+
+    这是 `fit_text_to_embedding_limit` 的姊妹函数，但压缩对象不同：那个函数
+    直接二分查找整段文本的前缀，如果直接套用在「说明\\n原文」上，二分找到的
+    前缀多半会截在原文中间——说明通常只有几十字，真正被砍掉的是后面的正文，
+    这正是本项目的核心红线（原文是唯一允许当"证据"交给模型的内容，见
+    `chunk_model.SourceChunk` 的字段注释）不能碰的东西。
+
+    所以这里反过来：**原文后缀固定不动**，只在说明这半段做二分查找，找最长
+    还能让"说明前缀 + 原文"整体不超预算的说明前缀，压到空串也没关系——那就是
+    彻底放弃这条说明，退回到没有 Contextual Retrieval 的状态，仍然优于让
+    整本书的索引因为一条说明而失败。
+
+    Token 计数不是简单的减法——分词在拼接边界不是严格可加的（比如说明末尾和
+    原文开头的字符可能被合并成同一个 token），所以每一步二分都对**拼接后的
+    真实候选字符串**重新调用 tokenizer，而不是用 `limit - count(chunk_text)`
+    估算说明还能占多少 token。
+
+    返回 `(context, False)` 表示"什么都没变"，有两种情况：本来就没超预算；
+    或者原文片段本身单独就已经超过模型上限——这种情况下压缩说明毫无意义
+    （压成空串照样超限），且**不是** Contextual Retrieval 该负责的问题（是
+    切分参数配得比模型窗口还大），必须原样交还给调用方，让
+    `assert_embedding_inputs` 的硬性门禁照常拦截整本书，而不是在这里悄悄
+    放过一个真正超长的原文片段。
+    """
+    if not context:
+        return context, False
+    info = embedding_model_metadata(model)
+    limit = info["max_seq_length"]
+    if not limit:
+        return context, False
+    combined_count = _token_count(model, f"{context}{separator}{chunk_text}")
+    if combined_count is None:
+        raise IndexQualityError("无法用真实 tokenizer 检查上下文说明长度")
+    if combined_count <= limit:
+        return context, False
+
+    chunk_only_count = _token_count(model, chunk_text)
+    if chunk_only_count is None:
+        raise IndexQualityError("无法用真实 tokenizer 检查上下文说明长度")
+    if chunk_only_count > limit:
+        # 原文自己就超长，压不压说明都没用；原样交还，走既有的硬性门禁。
+        return context, False
+
+    # 到这里已确认"去掉说明、只用原文"必然装得下（middle=0 这一档一定成立），
+    # 二分查找的是能塞进去的最长说明前缀。
+    low, high = 0, len(context)
+    best = ""
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = context[:middle]
+        candidate_text = f"{candidate}{separator}{chunk_text}" if candidate else chunk_text
+        candidate_count = _token_count(model, candidate_text)
+        if candidate_count is not None and candidate_count <= limit:
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    return best, True
+
+
 def validate_embedding_vectors(
     embeddings: Any, *, expected_dimension: int, kind: str
 ) -> dict[str, Any]:

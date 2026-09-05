@@ -78,6 +78,7 @@ from index_quality import (
     QUALITY_GATE_VERSION,
     assert_embedding_inputs,
     assert_quality_report,
+    fit_context_to_embedding_budget,
     fit_text_to_embedding_limit,
     make_quality_report,
     validate_embedding_vectors,
@@ -373,6 +374,42 @@ def _build_contexts(chunks: list) -> dict[str, str]:
     return {**cached, **{h: c for h, c in new_items if c}}
 
 
+def _build_indexed_texts(
+    chunks: list, contexts: dict[str, str], model: SentenceTransformer
+) -> tuple[list[str], int, int]:
+    """拼出「说明 + 原文」的最终 embedding 输入，返回 (indexed_texts, 截断数, 放弃数)。
+
+    Contextual Retrieval 的核心约定落地处：索引「生成的说明 + 原文」，说明按
+    片段内容哈希关联；没生成到说明的片段保持原样。
+
+    说明本身通常只有几十字，但极端情况下（片段原文已经接近模型上限，或者
+    一次生成异常地长）拼接后可能超过 embedding 的有效长度。这里用
+    ``fit_context_to_embedding_budget`` 只压缩「说明」这一半、压到空也没
+    关系——**绝不截断原文**，压不动（原文本身单独就超长）时原样交还，让
+    调用方的 ``assert_embedding_inputs`` 硬性门禁照常拦截整本书，那才是
+    切分参数的问题，不该被这里悄悄放过。
+
+    独立成函数是为了不依赖真实 embedding 模型也能测：只要 tokenizer 是可控的
+    替身，就能验证"原文绝不被截断"和"三种结局（不变/截断说明/放弃说明）都
+    对得上"，不用像 ``build_index`` 那样起数据库和真实模型。
+    """
+    indexed_texts = []
+    truncated = dropped = 0
+    for chunk in chunks:
+        context = contexts.get(text_hash(chunk.text))
+        if context is None:
+            indexed_texts.append(chunk.text)
+            continue
+        fitted, changed = fit_context_to_embedding_budget(model, context, chunk.text)
+        if changed:
+            if fitted:
+                truncated += 1
+            else:
+                dropped += 1
+        indexed_texts.append(f"{fitted}\n{chunk.text}" if fitted else chunk.text)
+    return indexed_texts, truncated, dropped
+
+
 def _noop_cancel() -> None:
     """cancel_check 的缺省值：单机命令行运行时没有取消机制，调用即返回。"""
     return None
@@ -607,14 +644,14 @@ def build_index(
         elif skip_reason:
             print(f"  跳过《{novel[:16]}》上下文增强：{skip_reason}")
 
-        # Contextual Retrieval 的核心约定落地处：索引「生成的说明 + 原文」，
-        # 说明按片段内容哈希关联；没生成到说明的片段保持原样。
-        indexed_texts = [
-            f"{contexts[text_hash(c.text)]}\n{c.text}"
-            if text_hash(c.text) in contexts
-            else c.text
-            for c in chunks
-        ]
+        indexed_texts, context_truncated, context_dropped = _build_indexed_texts(
+            chunks, contexts, model
+        )
+        if context_truncated or context_dropped:
+            print(
+                f"  《{novel[:16]}》上下文说明超出 embedding 长度预算：截断 "
+                f"{context_truncated} 条、放弃 {context_dropped} 条（原文片段本身未受影响）"
+            )
         # 必须在 encode 前检查。SentenceTransformer 默认会截断超长输入，
         # 如果等向量生成后再检查，已经无法恢复被静默丢失的正文。
         assert_embedding_inputs(model, indexed_texts, kind="chunk")
