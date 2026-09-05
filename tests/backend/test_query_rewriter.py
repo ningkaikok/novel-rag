@@ -90,3 +90,35 @@ def test_history_keeps_only_recent_turns():
     formatted = format_history(turns, max_turns=2)
     assert "第19个问题" in formatted
     assert "第0个问题" not in formatted
+
+
+def test_correction_phrases_trigger_rewrite():
+    """纠正上一轮的追问必须触发改写。
+
+    「不是问结局，是问开头」这类句子单看字面完全不成问题——直接拿去检索只会
+    搜到噪声，它 100% 依赖上文才有意义。M3.6 评测集发现这类此前完全不触发。
+    """
+    assert needs_rewrite("不是问结局，是问开头。", has_history=True)
+    assert needs_rewrite("不对，我问的是另一个顾长风。", has_history=True)
+    assert needs_rewrite("我说的不是他，是那个会修车的。", has_history=True)
+
+
+def test_bare_negation_in_self_contained_question_does_not_trigger():
+    """裸的「不是」不能当纠正信号——它在自足问句里太常见。
+
+    触发词表刻意只收「不对/不是问/我问的/我说的/而是」这些纠正专用搭配：
+    多触发一次不只是多花一次调用，评测里已经看到坏改写会把问题问偏。
+    """
+    assert not needs_rewrite("蚀骨散是不是很难解开", has_history=True)
+
+
+def test_rewrite_prompt_forbids_replacing_user_written_names():
+    """提示词必须写明"用户写出的名字不能改"。
+
+    M3.6 评测集测出的最严重 bug：问「巴特尔能牵它吗」被改写成「陆知微能牵它吗」，
+    模型从上文挑了个更显眼的人名把用户亲口写的覆盖掉了——这会悄悄回答另一个问题。
+    这条断言防止那句硬约束在后续编辑里被顺手删掉。
+    """
+    from query_rewriter import _PROMPT
+
+    assert "绝对不能改" in _PROMPT
