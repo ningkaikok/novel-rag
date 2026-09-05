@@ -1,0 +1,516 @@
+{
+  "_readme": [
+    "多轮上下文评测集（M3.6）。每条是 (history, question, 期望) 三元组，用来回答一个问题：",
+    "带着上文去理解这句追问时，系统有没有指到正确的对象。",
+    "",
+    "覆盖路线图要求的五个类别：",
+    "  指代    —— 「他/它/这个人」到底指谁",
+    "  否定    —— 上文里的否定语义（没报官、谁都不让牵、什么都没给）不能在追问里被翻转",
+    "  时间顺序 —— 「先/后」「去程/回程」「之前/之后」这类顺序关系",
+    "  跨书切换 —— 上文在 A 书，追问其实问的是 B 书",
+    "  纠正上一轮 —— 用户明确说「不对，我问的是……」",
+    "",
+    "语料全部来自仓库原创文本：tests/ci_corpus/沙海航灯.txt、",
+    "tests/ci_corpus/青梧镇异闻.txt、data/novels/雾隐山庄.txt，绝不含任何版权小说原文。",
+    "",
+    "跨书类别刻意利用了原创语料之间天然的同名/近名陷阱：",
+    "  顾长风 —— 《青梧镇异闻》里是钟表匠师父，《雾隐山庄》里是中毒的老医师，两个人",
+    "  沈砚秋（青梧镇） vs 沈砚之（雾隐山庄） —— 只差一个字",
+    "这些是最容易把上文误带进新问题的地方，也是这一类最该被测住的行为。",
+    "",
+    "断言方式刻意是确定性的字符串包含/排除，不引入 LLM 评委：",
+    "  expect_contains —— 改写后的检索问题里必须出现（通常是被解析出来的实体）",
+    "  expect_absent   —— 必须不出现（通常是上文里那个错误的对象）",
+    "should_rewrite 标注这条追问该不该触发改写：问题本身已自足（点名了书名或实体）时为 false——此时不改写才是正确行为，硬改会把上文的无关实体拼进检索词。",
+    "两者都为空的条目表示「不该改写」——问题本身已经自足，改写只会徒增一次调用和跑偏风险。"
+  ],
+  "cases": [
+    {
+      "id": "mt_ref_01",
+      "category": "指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "《沙海航灯》里勘探队的队长是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "队长是陆知微，三十九岁，跑了十二年沙漠，队里人叫他「活地图」。"
+        }
+      ],
+      "question": "他后来怎么样了？",
+      "expect_contains": [
+        "陆知微"
+      ],
+      "expect_absent": [],
+      "note": "最基础的人称指代：上一轮只提到一个人，「他」没有歧义",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_ref_02",
+      "category": "指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "沈记钟表铺里那只猫叫什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "叫墨团，通体乌黑，因为总爱蜷成一团得名。"
+        }
+      ],
+      "question": "它平时睡在哪里？",
+      "expect_contains": [
+        "墨团"
+      ],
+      "expect_absent": [],
+      "note": "非人称指代：「它」指向动物，改写要能处理",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_ref_03",
+      "category": "指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "沙海航灯里勘探队有哪些人？"
+        },
+        {
+          "role": "assistant",
+          "content": "队长陆知微、司机兼机械师巴特尔、实习生小何，还有一头叫老白的骆驼。"
+        }
+      ],
+      "question": "那个实习生最后在总结里写了什么？",
+      "expect_contains": [
+        "小何"
+      ],
+      "expect_absent": [],
+      "note": "上文有多个人物，靠身份描述（实习生）而不是代词消歧",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_ref_04",
+      "category": "指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "青梧镇上丢了几块表？"
+        },
+        {
+          "role": "assistant",
+          "content": "丢了三块老怀表，失主分别是周掌柜、白先生和陈伯。"
+        }
+      ],
+      "question": "它们最后找回来了吗？",
+      "expect_contains": [
+        "表"
+      ],
+      "expect_absent": [],
+      "note": "复数指代物品，改写不能把「它们」丢掉变成没有主语的问题",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_ref_05",
+      "category": "指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "青梧镇的钟表铺是谁开的？"
+        },
+        {
+          "role": "assistant",
+          "content": "店主叫沈砚秋，三十四岁，是镇上唯一的修表匠，手艺是师父顾长风带出来的。"
+        }
+      ],
+      "question": "他师父临终前留下了什么？",
+      "expect_contains": [
+        "沈砚秋"
+      ],
+      "expect_absent": [],
+      "note": "「他师父」是二级指代：先解析「他」=沈砚秋，才能定位到顾长风",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_neg_01",
+      "category": "否定",
+      "history": [
+        {
+          "role": "user",
+          "content": "沈砚秋抓到偷表的人之后做了什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "他没有报官，让小顺第二天来铺子里扫地，工钱抵欠下的账。"
+        }
+      ],
+      "question": "他为什么没有报官？",
+      "expect_contains": [
+        "沈砚秋"
+      ],
+      "expect_absent": [],
+      "note": "否定语义必须原样保留：改写成「为什么报官」会把问题问反",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_neg_02",
+      "category": "否定",
+      "history": [
+        {
+          "role": "user",
+          "content": "老白是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "是队里一头四岁的白骆驼，驮全队的水和仪器，脾气不小，除了陆知微谁牵它都要挨一口。"
+        }
+      ],
+      "question": "巴特尔能牵它吗？",
+      "expect_contains": [
+        "老白"
+      ],
+      "expect_absent": [],
+      "note": "上文的排他性否定（除了 X 谁都不行）要能支撑对具体某人的判断",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_neg_03",
+      "category": "否定",
+      "history": [
+        {
+          "role": "user",
+          "content": "三块表还回去之后，失主们怎么答谢沈砚秋？"
+        },
+        {
+          "role": "assistant",
+          "content": "周掌柜要给钱但他只收了成本，白先生送了一方砚台，陈伯什么都没给，只是从此过渡口不收他的钱。"
+        }
+      ],
+      "question": "陈伯送了他什么谢礼？",
+      "expect_contains": [
+        "陈伯"
+      ],
+      "expect_absent": [],
+      "note": "预设了错误前提的追问：正确回答应指出他什么都没送，而不是编一个礼物",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_neg_04",
+      "category": "否定",
+      "history": [
+        {
+          "role": "user",
+          "content": "钻井队送锦旗给陆知微的时候他是什么反应？"
+        },
+        {
+          "role": "assistant",
+          "content": "他把锦旗叠起来收进箱子，转身继续核对地图，说沙漠里不需要锦旗，需要的是准确的等高线。"
+        }
+      ],
+      "question": "他为什么不看重这面锦旗？",
+      "expect_contains": [
+        "陆知微"
+      ],
+      "expect_absent": [],
+      "note": "上文的否定态度（不需要锦旗）是追问的前提，不能被改写抹掉",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_time_01",
+      "category": "时间顺序",
+      "history": [
+        {
+          "role": "user",
+          "content": "勘探队在路上遇到了哪些麻烦？"
+        },
+        {
+          "role": "assistant",
+          "content": "第二天卡车在沙梁上陷了轮子，第三天小何的水提前喝完了，当晚还发现因为绕流沙偏了六公里。"
+        }
+      ],
+      "question": "这些是在发现芦苇根之前还是之后？",
+      "expect_contains": [
+        "芦苇根"
+      ],
+      "expect_absent": [],
+      "note": "跨轮的顺序判断：上文列的是第二、三天，芦苇根是第五天",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_time_02",
+      "category": "时间顺序",
+      "history": [
+        {
+          "role": "user",
+          "content": "勘探队测完七号井位之后呢？"
+        },
+        {
+          "role": "assistant",
+          "content": "回程走了六天，半路遇到一场沙暴。"
+        }
+      ],
+      "question": "沙暴是发生在去程还是回程？",
+      "expect_contains": [
+        "沙暴",
+        "勘探队"
+      ],
+      "expect_absent": [],
+      "note": "去程/回程是最容易搞混的顺序关系。断言要求补出「勘探队」——只有把上文的主体带进来，这个问题拿去检索才有意义；光有「沙暴」两个字说明根本没改写",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_time_03",
+      "category": "时间顺序",
+      "history": [
+        {
+          "role": "user",
+          "content": "七号井位的报告交上去之后有什么结果？"
+        },
+        {
+          "role": "assistant",
+          "content": "三个月后批文下来，七号井位批准建井，还追加了两口探井。"
+        }
+      ],
+      "question": "那口井真正出水是在批文之前还是之后？",
+      "expect_contains": [
+        "出水"
+      ],
+      "expect_absent": [],
+      "note": "需要把上文的「三个月后批文」和原文「第二年春天出水」排到同一条时间线上",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_time_04",
+      "category": "时间顺序",
+      "history": [
+        {
+          "role": "user",
+          "content": "小顺是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "杂货铺的伙计，偷表的人，父亲当年也是钟表匠，欠赌债把祖传工具押了出去。"
+        }
+      ],
+      "question": "他装好自己第一块表是在被发现之前还是之后？",
+      "expect_contains": [
+        "小顺"
+      ],
+      "expect_absent": [],
+      "note": "上文只交代了身份，顺序判断要回到原文（秋天，即被发现之后）",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_book_01",
+      "category": "跨书切换",
+      "history": [
+        {
+          "role": "user",
+          "content": "《青梧镇异闻》里沈砚秋的师父是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "是顾长风，临终前把一块 1897 年的黄铜怀表交给他。"
+        }
+      ],
+      "question": "《雾隐山庄》里的顾长风得了什么病？",
+      "expect_contains": [
+        "雾隐山庄"
+      ],
+      "expect_absent": [
+        "青梧镇",
+        "怀表",
+        "钟表"
+      ],
+      "note": "同名不同人的最强陷阱：追问已显式点名另一本书，改写绝不能把上文的钟表匠语境带过去",
+      "should_rewrite": false
+    },
+    {
+      "id": "mt_book_02",
+      "category": "跨书切换",
+      "history": [
+        {
+          "role": "user",
+          "content": "《雾隐山庄》里顾长风中的是什么毒？"
+        },
+        {
+          "role": "assistant",
+          "content": "是一种叫「蚀骨散」的罕见奇毒，十几年前中的，寻常药石无法根治。"
+        }
+      ],
+      "question": "那只叫墨团的猫是哪本书里的？",
+      "expect_contains": [
+        "墨团"
+      ],
+      "expect_absent": [
+        "雾隐山庄",
+        "蚀骨散"
+      ],
+      "note": "追问切到完全无关的另一本书，上文的毒药语境不该被带入",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_book_03",
+      "category": "跨书切换",
+      "history": [
+        {
+          "role": "user",
+          "content": "《雾隐山庄》里给顾长风解毒的人是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "是沈砚之，江南来的游方郎中，带着师父留下的解毒药方。"
+        }
+      ],
+      "question": "沈砚秋是做什么的？",
+      "expect_contains": [
+        "沈砚秋"
+      ],
+      "expect_absent": [
+        "沈砚之"
+      ],
+      "note": "一字之差的近名：改写若把「沈砚秋」纠成上文的「沈砚之」，就会答错一整本书",
+      "should_rewrite": false
+    },
+    {
+      "id": "mt_book_04",
+      "category": "跨书切换",
+      "history": [
+        {
+          "role": "user",
+          "content": "《沙海航灯》讲了什么故事？"
+        },
+        {
+          "role": "assistant",
+          "content": "地质勘探队进准噶尔盆地复测七号井位，最终确认可以打井，第二年出水，牧民叫它知微井。"
+        }
+      ],
+      "question": "青梧镇上那三块怀表是谁偷的？",
+      "expect_contains": [
+        "怀表"
+      ],
+      "expect_absent": [
+        "沙海",
+        "勘探",
+        "七号井"
+      ],
+      "note": "跨书且跨题材，追问自足；改写若强行拼接上文会污染检索词",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_fix_01",
+      "category": "纠正上一轮",
+      "history": [
+        {
+          "role": "user",
+          "content": "顾长风是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "《青梧镇异闻》里的顾长风是沈砚秋的师父，一位钟表匠。"
+        }
+      ],
+      "question": "不对，我问的是《雾隐山庄》里那个顾长风。",
+      "expect_contains": [
+        "雾隐山庄",
+        "顾长风"
+      ],
+      "expect_absent": [
+        "钟表"
+      ],
+      "note": "显式纠正：用户指出上一轮答错了对象，改写必须采纳纠正而不是沿用上文",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_fix_02",
+      "category": "纠正上一轮",
+      "history": [
+        {
+          "role": "user",
+          "content": "勘探队里谁第一次进沙漠？"
+        },
+        {
+          "role": "assistant",
+          "content": "实习生小何，刚从北京的研究所分来。"
+        }
+      ],
+      "question": "我说的不是他，是那个会修车的。",
+      "expect_contains": [
+        "巴特尔"
+      ],
+      "expect_absent": [],
+      "note": "纠正 + 描述性指代：要把「会修车的」解析成巴特尔，而不是继续跟着小何",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_fix_03",
+      "category": "纠正上一轮",
+      "history": [
+        {
+          "role": "user",
+          "content": "《青梧镇异闻》的结局是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "小顺装好了平生第一块表，那块 1897 年的怀表挂在他工作台上方。"
+        }
+      ],
+      "question": "不是问结局，是问开头。",
+      "expect_contains": [
+        "青梧镇"
+      ],
+      "expect_absent": [
+        "结局"
+      ],
+      "note": "纠正的是「问的是哪一部分」而不是对象；改写要把结局换成开头，别两个都留着",
+      "should_rewrite": true
+    },
+    {
+      "id": "mt_self_01",
+      "category": "不该改写",
+      "history": [
+        {
+          "role": "user",
+          "content": "《沙海航灯》里的队长是谁？"
+        },
+        {
+          "role": "assistant",
+          "content": "陆知微。"
+        }
+      ],
+      "question": "《青梧镇异闻》里沈砚秋养的猫叫什么名字？",
+      "expect_contains": [
+        "沈砚秋"
+      ],
+      "expect_absent": [
+        "陆知微",
+        "沙海"
+      ],
+      "note": "问题本身已完全自足：改写没有任何可补的信息，硬改只会把上文的无关实体拼进来",
+      "should_rewrite": false
+    },
+    {
+      "id": "mt_self_02",
+      "category": "不该改写",
+      "history": [
+        {
+          "role": "user",
+          "content": "墨团是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "沈记钟表铺里一只通体乌黑的猫。"
+        }
+      ],
+      "question": "陆知微在沙漠里跑了多少年？",
+      "expect_contains": [
+        "陆知微"
+      ],
+      "expect_absent": [
+        "墨团",
+        "钟表"
+      ],
+      "note": "同上，且换了书：自足问题被改写污染的代价是检索直接跑到另一本书上",
+      "should_rewrite": false
+    }
+  ]
+}

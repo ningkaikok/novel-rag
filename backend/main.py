@@ -52,6 +52,7 @@
 
 import json
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -118,6 +119,11 @@ from backend.schemas import (  # noqa: E402
 )
 from citation_eval import judge_support, statements_citing  # noqa: E402
 from config import (  # noqa: E402
+    HISTORY_IN_PROMPT,
+    HISTORY_MAX_TURNS,
+    HISTORY_SUMMARY_ENABLED,
+    HISTORY_SUMMARY_EVERY,
+    HISTORY_SUMMARY_MODEL,
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
     OLLAMA_HOST,
@@ -130,6 +136,7 @@ from config import (  # noqa: E402
     RERANKER_MODEL,
 )
 from embedder import load_embedder  # noqa: E402
+from generation_mixin import build_history_block  # noqa: E402
 from postgres import (  # noqa: E402
     VALID_REVIEW_STATUSES,
     close_pool,
@@ -141,8 +148,10 @@ from postgres import (  # noqa: E402
     has_index,
     init_pool,
     list_relation_edges,
+    load_session_summary,
     load_turns,
     next_turn_index,
+    save_session_summary,
     save_turn,
     set_relation_review,
 )
@@ -152,6 +161,11 @@ from rag import (  # noqa: E402
     PROMPT_TEMPLATE_VERSION,
     NovelRAG,
     generate_ollama_prompt_stream,
+)
+from session_summary import (  # noqa: E402
+    build_summary,
+    should_update,
+    turns_to_summarize,
 )
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
@@ -436,7 +450,67 @@ def search(
 
 
 # ----------------------------------------------------------------- 提问（SSE 流式）
-def _rewrite_for_search(req: AskRequest) -> str:
+def _load_history(session_id: str | None) -> list[dict]:
+    """读这个会话的历史；没有 session_id 或读失败都返回空列表。
+
+    M3.6 起历史有两个消费方——查询改写和最终回答的 prompt——所以集中读一次
+    再分发，避免同一次请求打两遍数据库。读失败不能影响回答：最坏退回到
+    "没有历史"，也就是改造之前的行为，但要留下日志，别静默失效。
+    """
+    if not session_id:
+        return []
+    try:
+        return load_turns(session_id)
+    except Exception as exc:
+        logger.warning(f"读会话历史失败（不影响回答）：{exc}")
+        return []
+
+
+def _refresh_session_summary(session_id: str, turns: list[dict], errors: list) -> str | None:
+    """取这个会话当前可用的滚动摘要，必要时先滚一次（M3.6）。
+
+    "必要"的定义很窄：攒够 ``HISTORY_SUMMARY_EVERY`` 轮**掉出逐字窗口**的对话才更新。
+    短会话一次都不会触发，长会话大约每四轮一次——这是路线图"只在超过阈值时更新"
+    和"短会话路径不增加额外模型调用"两条要求的落点。
+
+    每一层失败都往回退一格，绝不阻塞回答：落库失败仍用新摘要，生成失败沿用上一版，
+    连读都失败就当作没有摘要（等于回到只带最近几轮原文）。
+    """
+    try:
+        record = load_session_summary(session_id)
+    except Exception as exc:
+        errors.append(f"读会话摘要失败：{exc}")
+        return None
+
+    previous = (record or {}).get("summary")
+    covered = int((record or {}).get("covers_through", -1))
+    pending = turns_to_summarize(turns, covered, HISTORY_MAX_TURNS)
+    if not should_update(pending, HISTORY_SUMMARY_EVERY):
+        return previous
+
+    summary = build_summary(
+        previous,
+        pending,
+        lambda prompt: _generate_for_model(prompt, HISTORY_SUMMARY_MODEL),
+        errors=errors,
+    )
+    if not summary:
+        return previous  # 沿用上一版：一次调用失败不该让长会话突然失忆
+
+    try:
+        save_session_summary(
+            session_id,
+            summary,
+            max(int(t.get("turn_index", -1)) for t in pending),
+            HISTORY_SUMMARY_MODEL,
+        )
+    except Exception as exc:
+        # 没落上库只意味着下一轮还要再算一次，本轮的新摘要照样能用
+        errors.append(f"会话摘要落库失败：{exc}")
+    return summary
+
+
+def _rewrite_for_search(req: AskRequest, turns: list[dict]) -> str:
     """带上会话历史，把追问补全成能独立检索的问题；任何一步失败都退回原问题。
 
     整条链路上的每一步都可能失败（没配 session_id、读历史失败、模型限流），
@@ -444,14 +518,7 @@ def _rewrite_for_search(req: AskRequest) -> str:
     拿原问题去检索。所以这里层层兜底，但每次兜底都记一条日志，
     避免出现"功能静默失效却查不出原因"（Contextual Retrieval 那边踩过这个坑）。
     """
-    if not (QUERY_REWRITE_ENABLED and req.session_id):
-        return req.question
-    try:
-        turns = load_turns(req.session_id)
-    except Exception as exc:
-        logger.warning(f"读会话历史失败，改写跳过（不影响回答）：{exc}")
-        return req.question
-    if not turns:
+    if not (QUERY_REWRITE_ENABLED and turns):
         return req.question
 
     errors: list[str] = []
@@ -537,8 +604,12 @@ async def ask(req: AskRequest, request: Request):
     # 再拿补全后的问题去检索。**只影响检索**——存库、显示、送给模型的都还是
     # 用户原始问题（见下面 save_turn 用的是 req.question）。
     # 自由问答不检索，所以也没必要额外花一次模型调用做“面向检索”的问题改写。
+    # 历史读一次，供查询改写和回答 prompt 共用（M3.6）
+    history = _load_history(req.session_id) if decision.route is AnswerMode.grounded else []
     search_question = (
-        _rewrite_for_search(req) if decision.route is AnswerMode.grounded else req.question
+        _rewrite_for_search(req, history)
+        if decision.route is AnswerMode.grounded
+        else req.question
     )
 
     model = state["model"]
@@ -591,6 +662,39 @@ async def ask(req: AskRequest, request: Request):
             ).model_dump()
             trace_payload.append(first)
             yield f"event: step\ndata: {json.dumps(first, ensure_ascii=False)}\n\n"
+
+        session_summary: str | None = None
+        summary_ms: int | None = None
+        if HISTORY_IN_PROMPT and HISTORY_SUMMARY_ENABLED and req.session_id and history:
+            # 摘要要调模型，放线程池里，别把事件循环堵住——它和下面的逐字流式
+            # 共用同一个 worker 线程池，行为与 judge_support 那条路径一致。
+            summary_errors: list[str] = []
+            summary_mark = time.perf_counter()
+            session_summary = await run_in_threadpool(
+                _refresh_session_summary, req.session_id, history, summary_errors
+            )
+            # 摘要耗时要能被看见：它是这条链路上唯一一次"用户没要求却发生"的模型
+            # 调用，慢在这里的时候不写出来就完全无从判断。绝大多数轮次没到阈值，
+            # 这里只是读一次库，毫秒级。
+            summary_ms = int((time.perf_counter() - summary_mark) * 1000)
+            for reason in summary_errors:
+                logger.warning(f"会话摘要降级（不影响回答）：{reason}")
+
+        if HISTORY_IN_PROMPT and (history or session_summary):
+            # 「每次压缩都能在 trace 中解释」是 M3.6 的验收要求之一：带了几轮、
+            # 丢了什么、为什么丢，都要能在界面上看到，而不是变成一个黑箱。
+            _, history_trace = build_history_block(history, summary=session_summary)
+            history_step = TraceStep(
+                ms=summary_ms,
+                step="对话背景",
+                detail=(
+                    f"带入最近 {history_trace['turns_used']}/"
+                    f"{history_trace['turns_available']} 轮对话"
+                    f"（{history_trace['chars']} 字）：{history_trace['reason']}"
+                ),
+            ).model_dump()
+            trace_payload.append(history_step)
+            yield f"event: step\ndata: {json.dumps(history_step, ensure_ascii=False)}\n\n"
 
         sources = []
         context_sources = []
@@ -663,7 +767,12 @@ async def ask(req: AskRequest, request: Request):
             token_iter = iter([structured_answer])
         else:
             prompt = (
-                rag.build_prompt(req.question, context_sources)
+                rag.build_prompt(
+                    req.question,
+                    context_sources,
+                    history=history if HISTORY_IN_PROMPT else None,
+                    summary=session_summary,
+                )
                 if decision.route is AnswerMode.grounded and rag is not None
                 else build_free_prompt(req.question)
             )

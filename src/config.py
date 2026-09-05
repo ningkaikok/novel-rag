@@ -72,6 +72,53 @@ QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "1") != "0"
 # 不要用当前对话选的模型：用户可能选了推理型的大模型，改写会白等好几秒。
 QUERY_REWRITE_MODEL = os.environ.get("QUERY_REWRITE_MODEL", "glm:glm-4-flash")
 
+# --- 回答时携带对话历史（M3.6，见 generation_mixin.build_history_block）---
+# 在此之前，最终回答的 prompt 里只有「当前问题 + 检索证据」，历史仅用于查询改写。
+# 后果是"再展开讲讲""你刚才说的第二点"这类追问必然失效——模型根本不知道自己
+# 上一轮说过什么，每一轮对它来说都是独立问答。
+HISTORY_IN_PROMPT = os.environ.get("HISTORY_IN_PROMPT", "1") != "0"
+# 带几轮。路线图给的区间是 4~6：再多，指代对象几乎不会落在那么远的地方，
+# 却会稳定挤占预算；再少，一次简单的来回（问-答-追问）就可能被截断。
+HISTORY_MAX_TURNS = int(os.environ.get("HISTORY_MAX_TURNS", 6))
+# 历史部分的字数上限。刻意用字数而不是 token：三个生成后端
+# （Ollama/Claude/GLM）各有各的 tokenizer，没有一个通用计数器；中文大致
+# 1 token ≈ 1~1.5 字，用字数做预算是够用且零依赖的近似。
+# 超出时从**最旧的一轮**开始丢，并把截断如实写进 trace。
+HISTORY_MAX_CHARS = int(os.environ.get("HISTORY_MAX_CHARS", 1200))
+# 单轮内容的截断长度。助手的回答可能上千字，整段塞进去会淹没证据部分；
+# 理解"上一轮在聊什么"通常开头几句就够。
+HISTORY_PER_TURN_CHARS = int(os.environ.get("HISTORY_PER_TURN_CHARS", 220))
+
+# --- 滚动会话摘要（M3.6，见 src/session_summary.py）---
+# 逐字历史只保留最近几轮，更早的内容会被整轮丢掉。滚动摘要接住掉出窗口的那部分，
+# 让长会话仍然记得"我们在聊哪本书、这个人是谁、之前确认过什么"。
+#
+# **默认关闭**，与 GraphRAG、查询扩展、忠实度 Judge 的处理一致：路线图对本阶段
+# 写死了"未经评测不得默认影响回答"，而现有多轮评测集最长只有三四轮，根本触发
+# 不到摘要，也就无从证明它没有引入摘要漂移或事实丢失。要打开它，先按
+# docs/experiments/m36-session-summary.md 里写的条件补齐长会话评测。
+HISTORY_SUMMARY_ENABLED = os.environ.get("HISTORY_SUMMARY_ENABLED", "0") == "1"
+# 摘要用的模型。和查询改写同理：这是压缩任务不是推理任务，用便宜快速的小模型；
+# 更重要的是它跑在提问的关键路径上，用大模型会让用户白等好几秒。
+HISTORY_SUMMARY_MODEL = os.environ.get("HISTORY_SUMMARY_MODEL", QUERY_REWRITE_MODEL)
+# 攒够多少轮掉出窗口的对话才更新一次摘要。"只在超过阈值时更新"是路线图的原话，
+# 目的就是不让每一轮追问都多付一次模型调用：设成 4，长会话里大约每四轮才更新一次。
+HISTORY_SUMMARY_EVERY = int(os.environ.get("HISTORY_SUMMARY_EVERY", 4))
+# 摘要自身的字数上限。它是滚动累积的，不设上限会随会话长度无限膨胀，
+# 最后反过来把证据挤出 prompt——那正是引入预算想避免的事。
+HISTORY_SUMMARY_MAX_CHARS = int(os.environ.get("HISTORY_SUMMARY_MAX_CHARS", 400))
+
+# --- Agent Lab 工具输出的体积闸门（M3.6，见 src/agent_lab.py）---
+# 步数上限拦不住体积：read_neighbors / get_chapter 一次就能返回一整章，大部头的
+# 一章本身就可能撑爆 prompt。参数上限（radius≤3、limit≤12）是**读取之前**的第一道
+# 闸，它限制的是"取几段"；这里是**读到内容之后**的第二道闸，限制的是"多少字"——
+# 片段长度本身是变量，只限条数并不能限住体积。
+#
+# 用字数而不是 token：这份预算保护的是**生成** prompt，而生成后端有三个
+# （Ollama / Claude / GLM），各有各的 tokenizer，没有一个通用计数器可用。
+# 中文大致 1 token ≈ 1~1.5 字，字数是够用且零依赖的近似（同 HISTORY_MAX_CHARS）。
+AGENT_TOOL_MAX_CHARS = int(os.environ.get("AGENT_TOOL_MAX_CHARS", 6000))
+
 # --- 自适应查询扩展（低置信度补救，见 src/query_expander.py / src/confidence.py）---
 # 默认关闭：每个变体都要完整跑一遍混合检索+重排，再加一次 LLM 调用，成本是
 # 主链路的好几倍；且改写可能引入语义漂移。只对「重排后信号显示置信度很低」

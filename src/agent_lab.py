@@ -18,6 +18,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
+from config import AGENT_TOOL_MAX_CHARS
 from postgres import connect
 from rag import NovelRAG, SourceChunk, _mentions_novel
 
@@ -33,6 +34,107 @@ class ToolResult:
     # 二者不能混为一谈：检索摘要通常只是局部召回，而结构化事实可以声明
     # 自己的覆盖范围（complete / bounded / partial）。
     facts: dict[str, object] = field(default_factory=dict)
+
+
+def _apply_output_budget(
+    sources: list[SourceChunk],
+    max_chars: int = AGENT_TOOL_MAX_CHARS,
+    center_chunk_id: int | None = None,
+) -> tuple[list[SourceChunk], dict]:
+    """工具**读到内容之后**的第二道闸：限制单次工具输出的体积（M3.6）。
+
+    第一道闸是参数上限（``radius`` ≤3、``limit`` ≤12），它限制的是"取几段"。
+    但片段长度本身是变量——大部头的一章、或几段特别长的原文，条数合法、体积
+    照样能撑爆 prompt。步数上限（3~5 步）同样拦不住这个：它管的是次数不是大小。
+
+    ``center_chunk_id`` 决定牺牲顺序：
+
+    - 传了（``read_neighbors``）：中心片段**无条件保留**，再向两侧对称生长，
+      每轮纳入更便宜的一侧。截断永远从离中心最远处开始——这和整章扩展
+      （``retrieval_mixins._expand_chapters``）是同一套策略，理由也一样：
+      用户要的是"这一段前后"，最远端的邻居本来就是最可有可无的
+    - 没传（``get_chapter``）：按原文顺序保留前面的，从末尾开始丢
+
+    返回 ``(保留的片段, trace)``；``trace`` 如实记录丢了几段、为什么丢——
+    截断不写进 trace 就是静默丢证据，比不截断更危险。
+    """
+
+    def _cost(source: SourceChunk) -> int:
+        return len(source.text or "")
+
+    total = sum(_cost(s) for s in sources)
+    if total <= max_chars or not sources:
+        return sources, {
+            "budget_chars": max_chars,
+            "chars": total,
+            "dropped": 0,
+            "truncated": False,
+            "reason": "未截断",
+        }
+
+    if center_chunk_id is None:
+        kept: list[SourceChunk] = []
+        used = 0
+        for source in sources:
+            if kept and used + _cost(source) > max_chars:
+                break
+            kept.append(source)  # 至少留一段，压成空的等于这次工具调用白跑
+            used += _cost(source)
+    else:
+        ids = [s.chunk_id for s in sources]
+        center = ids.index(center_chunk_id) if center_chunk_id in ids else len(ids) // 2
+        kept = [sources[center]]
+        used = _cost(sources[center])
+        left, right = center - 1, center + 1
+        while left >= 0 or right < len(sources):
+            left_cost = _cost(sources[left]) if left >= 0 else None
+            right_cost = _cost(sources[right]) if right < len(sources) else None
+            # 每轮纳入更便宜的一侧，直到两侧都放不下
+            if left_cost is not None and (right_cost is None or left_cost <= right_cost):
+                pick, left = left, left - 1
+            elif right_cost is not None:
+                pick, right = right, right + 1
+            else:
+                break
+            if used + _cost(sources[pick]) > max_chars:
+                break
+            kept.append(sources[pick])
+            used += _cost(sources[pick])
+        kept.sort(key=lambda s: s.chunk_id)
+
+    dropped = len(sources) - len(kept)
+    return kept, {
+        "budget_chars": max_chars,
+        "chars": used,
+        "dropped": dropped,
+        "truncated": True,
+        "reason": (
+            f"原文共 {total} 字，超过单次工具输出 {max_chars} 字预算，"
+            f"丢弃{'离中心最远的' if center_chunk_id is not None else '末尾的'} {dropped} 段"
+        ),
+    }
+
+
+def _summarize_items(items: list[str], max_chars: int = 800) -> str:
+    """目录类输出给规划器看的那一行：太长就只列前面几项，并说清楚省了多少。
+
+    只压 ``summary``，**不动 ``facts["items"]``**。这个区分是 ToolResult 的核心
+    约定：summary 是给规划器快速阅读的，facts 是可机器校验的完整事实——目录问题
+    的确定性回答（``_catalog_answer``）依赖后者，压了它就会把"共有几部"答错。
+    """
+    if not items:
+        return "（空）"
+    kept: list[str] = []
+    used = 0
+    for item in items:
+        if kept and used + len(item) + 1 > max_chars:
+            break
+        kept.append(item)
+        used += len(item) + 1
+    text = "、".join(kept)
+    if len(kept) < len(items):
+        text += f"…（共 {len(items)} 项，这里只列出前 {len(kept)} 项）"
+    return text
 
 
 class AgentToolbox:
@@ -86,7 +188,7 @@ class AgentToolbox:
                 complete = len(rows) <= limit
                 items = [row["novel"] for row in rows[:limit]]
                 return ToolResult(
-                    "书架包含：" + ("、".join(items) if items else "（空）"),
+                    "书架包含：" + _summarize_items(items),
                     facts={
                         "kind": "library_query",
                         "coverage": "complete" if complete else "bounded",
@@ -244,9 +346,14 @@ class AgentToolbox:
                 "ORDER BY chunk_id",
                 (resolved, max(0, int(chunk_id) - radius), int(chunk_id) + radius),
             ).fetchall()
-        sources = [_row_to_source(row) for row in rows]
+        sources, budget = _apply_output_budget(
+            [_row_to_source(row) for row in rows], center_chunk_id=int(chunk_id)
+        )
+        summary = f"读取片段 #{chunk_id} 前后共 {len(sources)} 段"
+        if budget["truncated"]:
+            summary += f"（{budget['reason']}）"
         return ToolResult(
-            f"读取片段 #{chunk_id} 前后共 {len(sources)} 段",
+            summary,
             sources,
             facts={
                 "kind": "neighbor_context",
@@ -254,6 +361,7 @@ class AgentToolbox:
                 "novel": resolved,
                 "center_chunk_id": int(chunk_id),
                 "returned_count": len(sources),
+                "budget": budget,
             },
         )
 
@@ -266,9 +374,12 @@ class AgentToolbox:
                 "ORDER BY chunk_id LIMIT %s",
                 (resolved, f"%{chapter_title}%", max(1, min(int(limit), 12))),
             ).fetchall()
-        sources = [_row_to_source(row) for row in rows]
+        sources, budget = _apply_output_budget([_row_to_source(row) for row in rows])
+        summary = f"章节“{chapter_title}”读取到 {len(sources)} 段原文"
+        if budget["truncated"]:
+            summary += f"（{budget['reason']}）"
         return ToolResult(
-            f"章节“{chapter_title}”读取到 {len(sources)} 段原文",
+            summary,
             sources,
             facts={
                 "kind": "chapter_passages",
@@ -277,6 +388,7 @@ class AgentToolbox:
                 "chapter_title": chapter_title,
                 "returned_count": len(sources),
                 "limit": max(1, min(int(limit), 12)),
+                "budget": budget,
             },
         )
 

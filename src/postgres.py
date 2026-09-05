@@ -886,6 +886,20 @@ def ensure_chat_schema() -> None:
             "CREATE INDEX IF NOT EXISTS chat_turns_session_idx "
             "ON chat_turns (session_id, turn_index)"
         )
+        # M3.6：滚动会话摘要。一个会话一行，覆盖到哪一轮记在 covers_through，
+        # 靠它判断"哪些轮次还没进摘要"——不记的话每次都得重新摘要全部历史，
+        # 那就不叫滚动了。摘要是派生数据，丢了只是回到"只有最近几轮原文"。
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_session_summaries (
+                session_id     UUID PRIMARY KEY,
+                summary        TEXT    NOT NULL,
+                covers_through INTEGER NOT NULL,
+                model          TEXT,
+                updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
 
 
 def save_turn(
@@ -954,6 +968,37 @@ def load_turns(session_id: str) -> list[dict]:
             (session_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def load_session_summary(session_id: str) -> dict | None:
+    """读这个会话的滚动摘要；没有就返回 None（第一次或还没到阈值）。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT summary, covers_through, model FROM chat_session_summaries "
+            "WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_session_summary(
+    session_id: str, summary: str, covers_through: int, model: str | None = None
+) -> None:
+    """写入或覆盖会话摘要（幂等，一个会话只有一行）。"""
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_session_summaries
+                (session_id, summary, covers_through, model, updated_at)
+            VALUES (%s, %s, %s, %s, now())
+            ON CONFLICT (session_id) DO UPDATE SET
+                summary        = EXCLUDED.summary,
+                covers_through = EXCLUDED.covers_through,
+                model          = EXCLUDED.model,
+                updated_at     = now()
+            """,
+            (session_id, summary, covers_through, model),
+        )
 
 
 def next_turn_index(session_id: str) -> int:
