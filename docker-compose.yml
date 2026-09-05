@@ -16,7 +16,16 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      # 只绑定回环地址：容器内 uvicorn 监听 0.0.0.0（容器里必须如此，否则
+      # 端口映射进不来），但宿主机这一侧只暴露给本机。
+      #
+      # 写成 "8000:8000" 会发布到宿主机的**所有**网卡——本项目全部接口都没有
+      # 鉴权也没有限流（见 README「安全边界」），一旦机器接在公司/公共 WiFi 或
+      # 云主机公网 IP 上，同网段任何人都能读你的书架和聊天记录、并无上限地
+      # 消耗你配置的 Claude/GLM 付费额度。
+      #
+      # 确实需要局域网访问时再显式改成 "8000:8000"，并自己做好防火墙。
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql://novel:novel@db:5432/novel_rag
       # 宿主机上的 Ollama：Docker Desktop 原生支持 host.docker.internal；
