@@ -186,6 +186,12 @@ TOP_K = int(os.environ.get("TOP_K", 3))
 # 召回候选数量。候选池大于最终上下文，避免过早截断相关片段。
 RECALL_K = int(os.environ.get("RECALL_K", 20))
 
+# --- 普通查询缓存（只缓存检索结果，不缓存回答正文）---
+# 单进程本地缓存足以覆盖重复追问和页面重试；索引指纹会进入缓存键，索引成功
+# 更新后后端也会主动清空。默认开启但有界，避免把基础设施复杂度提前引入。
+QUERY_CACHE_ENABLED = os.environ.get("QUERY_CACHE_ENABLED", "1") != "0"
+QUERY_CACHE_MAX_ENTRIES = int(os.environ.get("QUERY_CACHE_MAX_ENTRIES", 128))
+
 # 「长上下文取舍」的另一面：整本书小到能全塞进模型窗口时，**RAG 本身就是多余的**。
 # 与其检索出几段（可能漏掉关键信息），不如把全文给模型——不会有任何信息损失。
 #

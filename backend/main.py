@@ -50,6 +50,7 @@
 （在项目根目录 novel-rag/ 下运行）
 """
 
+import hashlib
 import json
 import sys
 import threading
@@ -97,6 +98,7 @@ from backend.index_tasks import (  # noqa: E402
     TaskNotFound,
 )
 from backend.middleware import RequestIDMiddleware  # noqa: E402
+from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AgentAskRequest,
     AgentStep,
@@ -113,6 +115,7 @@ from backend.schemas import (  # noqa: E402
     HealthStatus,
     IndexTaskStatus,
     ModelList,
+    QueryCacheMetrics,
     SearchMatch,
     SearchResult,
     SessionClearResult,
@@ -132,8 +135,10 @@ from citation_eval import (  # noqa: E402
     statements_citing,
 )
 from config import (  # noqa: E402
+    CHAPTER_EXPANSION_MODE,
     FAITHFULNESS_JUDGE_MODE,
     FAITHFULNESS_SHADOW_ENABLED,
+    HIERARCHY_ENABLED,
     HISTORY_IN_PROMPT,
     HISTORY_MAX_TURNS,
     HISTORY_SUMMARY_ENABLED,
@@ -143,10 +148,14 @@ from config import (  # noqa: E402
     NOVELS_DIR,
     OLLAMA_HOST,
     OLLAMA_MODEL,
+    QUERY_CACHE_ENABLED,
+    QUERY_CACHE_MAX_ENTRIES,
     QUERY_EXPAND_ENABLED,
     QUERY_EXPAND_MODEL,
     QUERY_REWRITE_ENABLED,
     QUERY_REWRITE_MODEL,
+    RECALL_K,
+    RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     RERANKER_MODEL,
 )
@@ -164,6 +173,7 @@ from postgres import (  # noqa: E402
     has_index,
     init_pool,
     list_relation_edges,
+    load_index_manifest,
     load_session_summary,
     load_turns,
     next_turn_index,
@@ -190,6 +200,44 @@ from session_summary import (  # noqa: E402
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
 index_tasks = IndexTaskManager()
+query_cache = QueryCache(enabled=QUERY_CACHE_ENABLED, max_entries=QUERY_CACHE_MAX_ENTRIES)
+
+
+def _index_fingerprint() -> str | None:
+    """生成当前索引的稳定指纹，只包含 manifest 元数据，不包含小说正文。"""
+    try:
+        manifests = load_index_manifest()
+    except Exception as exc:
+        logger.warning(f"读取索引指纹失败，跳过查询缓存：{exc}")
+        return None
+    payload = [
+        {
+            "novel": novel,
+            "source_hash": record.get("source_hash"),
+            "pipeline_hash": record.get("pipeline_hash"),
+            "chunk_count": record.get("chunk_count"),
+        }
+        for novel, record in sorted(manifests.items())
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _retrieval_cache_key(question: str, top_k: int) -> CacheKey | None:
+    """构造检索缓存键；没有可信索引指纹时宁可绕过缓存。"""
+    index_fingerprint = state.get("index_fingerprint")
+    if not index_fingerprint:
+        return None
+    retrieval_config = {
+        "rerank_enabled": RERANK_ENABLED,
+        "reranker_model": RERANKER_MODEL if RERANK_ENABLED else None,
+        "rerank_candidate_multiplier": RERANK_CANDIDATE_MULTIPLIER,
+        "recall_k": RECALL_K,
+        "hierarchy_enabled": HIERARCHY_ENABLED,
+        "chapter_expansion_mode": CHAPTER_EXPANSION_MODE,
+    }
+    config_text = json.dumps(retrieval_config, sort_keys=True, separators=(",", ":"))
+    return CacheKey(question=question.strip(), index_fingerprint=index_fingerprint, retrieval_fingerprint=config_text)
 
 
 @asynccontextmanager
@@ -249,7 +297,12 @@ def _try_load_rag() -> NovelRAG | None:
     try:
         service = NovelRAG(embedder=state["embedder"])
     except Exception:
+        state["index_fingerprint"] = None
         return None  # PostgreSQL 索引还没建立
+    # 索引重建成功后刷新指纹并清空旧结果；外部修改索引但未更新 manifest 时，
+    # 指纹读取失败会让缓存自动绕过，而不是冒险复用旧证据。
+    state["index_fingerprint"] = _index_fingerprint()
+    query_cache.clear()
     # 自适应查询扩展（M3.4）：rag.py 不依赖云端 SDK，生成函数由 Web 层按
     # QUERY_EXPAND_MODEL 前缀路由注入（和上面 _rewrite_for_search 的路由
     # 是同一个模式）。开关默认关闭，关闭时这里什么都不挂、零开销。
@@ -366,6 +419,9 @@ def _start_index_task(
         )
         # NovelRAG 自身不缓存片段，但首次建库前 state["rag"] 是 None；成功后要补上。
         state["rag"] = _try_load_rag() if result["chunk_count"] else None
+        if not result["chunk_count"]:
+            state["index_fingerprint"] = None
+            query_cache.clear()
         return result
 
     try:
@@ -616,6 +672,7 @@ def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict
         "faithfulness_shadow_enabled": FAITHFULNESS_SHADOW_ENABLED,
         "faithfulness_judge_mode": FAITHFULNESS_JUDGE_MODE,
         "model_gateway": model_gateway.routing_snapshot(model),
+        "query_cache": query_cache.snapshot(),
     }
 
 
@@ -863,22 +920,40 @@ async def ask(req: AskRequest, request: Request):
                 trace_payload.append(structured_step)
                 yield f"event: step\ndata: {json.dumps(structured_step, ensure_ascii=False)}\n\n"
             else:
-                step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
-                while True:
-                    # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
-                    # 每个 await 都是一次让出控制权的机会。
-                    item = await run_in_threadpool(_next_or_sentinel, step_iter)
-                    if item is _SENTINEL:
-                        break
-                    kind, value = item
-                    if kind == "result":
-                        sources = value
-                        continue
-                    # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
-                    # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
-                    payload_step = TraceStep(**value).model_dump()
-                    trace_payload.append(payload_step)
-                    yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+                cache_key = _retrieval_cache_key(search_question, req.top_k)
+                cached_sources = query_cache.get(cache_key) if cache_key else None
+                cache_hit = cached_sources is not None
+                run_config["query_cache"] = query_cache.snapshot(request_hit=cache_hit)
+                if cache_key is None:
+                    run_config["query_cache"]["bypass_reason"] = "index_fingerprint_unavailable"
+                if cached_sources is not None:
+                    sources = cached_sources
+                    cache_step = TraceStep(
+                        step="查询缓存",
+                        detail="命中当前索引与检索配置的缓存，跳过向量/BM25/重排",
+                        ms=0,
+                    ).model_dump()
+                    trace_payload.append(cache_step)
+                    yield f"event: step\ndata: {json.dumps(cache_step, ensure_ascii=False)}\n\n"
+                else:
+                    step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+                    while True:
+                        # 和下面消费模型用的是同一套模式：同步生成器丢线程池里逐个取，
+                        # 每个 await 都是一次让出控制权的机会。
+                        item = await run_in_threadpool(_next_or_sentinel, step_iter)
+                        if item is _SENTINEL:
+                            break
+                        kind, value = item
+                        if kind == "result":
+                            sources = value
+                            continue
+                        # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
+                        # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
+                        payload_step = TraceStep(**value).model_dump()
+                        trace_payload.append(payload_step)
+                        yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+                    if cache_key is not None:
+                        query_cache.put(cache_key, sources)
 
                 context_sources, expand_step = rag.build_answer_context(sources)
                 if expand_step is not None:
@@ -1304,6 +1379,12 @@ def set_model(req: SetModelRequest):
 @app.get("/api/health", response_model=HealthStatus)
 def health():
     return HealthStatus(ok=True, ready=state.get("rag") is not None)
+
+
+@app.get("/api/metrics/query-cache", response_model=QueryCacheMetrics)
+def query_cache_metrics():
+    """返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。"""
+    return query_cache.snapshot()
 
 
 # ------------------------------------------------------------- 前端静态托管（生产）

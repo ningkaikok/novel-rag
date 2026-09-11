@@ -287,6 +287,8 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
 | `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
+| `QUERY_CACHE_ENABLED` | `1` | 启用有界的普通查询检索缓存；只缓存来源，不缓存回答正文 |
+| `QUERY_CACHE_MAX_ENTRIES` | `128` | 单进程 LRU 检索缓存最多保留的查询数 |
 | `MODEL_ROUTING_ENABLED` | `1` | 启用任务级模型路由；回答仍尊重界面当前选择的模型 |
 | `MODEL_QUERY_REWRITE` | 同 `QUERY_REWRITE_MODEL` | Model Gateway 为查询改写任务选择的模型 |
 | `MODEL_SUMMARY` | 同 `HISTORY_SUMMARY_MODEL` | Model Gateway 为会话摘要任务选择的模型 |

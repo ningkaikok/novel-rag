@@ -272,6 +272,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics/query-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query Cache Metrics
+         * @description 返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。
+         */
+        get: operations["query_cache_metrics_api_metrics_query_cache_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/model": {
         parameters: {
             query?: never;
@@ -620,6 +640,25 @@ export interface components {
             current: string;
             /** Models */
             models: string[];
+        };
+        /** QueryCacheMetrics */
+        QueryCacheMetrics: {
+            /** Enabled */
+            enabled: boolean;
+            /** Entries */
+            entries: number;
+            /** Evictions */
+            evictions: number;
+            /** Hit Rate */
+            hit_rate?: number | null;
+            /** Hits */
+            hits: number;
+            /** Max Entries */
+            max_entries: number;
+            /** Misses */
+            misses: number;
+            /** Request Hit */
+            request_hit?: boolean | null;
         };
         /** RetrievalCandidate */
         RetrievalCandidate: {
@@ -1218,6 +1257,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_cache_metrics_api_metrics_query_cache_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryCacheMetrics"];
                 };
             };
         };

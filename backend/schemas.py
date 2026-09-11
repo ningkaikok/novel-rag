@@ -159,6 +159,17 @@ class CitationFeedbackResult(BaseModel):
     feedback: Literal["helpful", "incorrect"]
 
 
+class QueryCacheMetrics(BaseModel):
+    enabled: bool
+    request_hit: bool | None = None
+    hits: int
+    misses: int
+    hit_rate: float | None = None
+    entries: int
+    max_entries: int
+    evictions: int
+
+
 class AgentStep(BaseModel):
     step: int
     reason: str

@@ -683,6 +683,66 @@
     "title": "ModelList",
     "type": "object"
    },
+   "QueryCacheMetrics": {
+    "properties": {
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "entries": {
+      "title": "Entries",
+      "type": "integer"
+     },
+     "evictions": {
+      "title": "Evictions",
+      "type": "integer"
+     },
+     "hit_rate": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hit Rate"
+     },
+     "hits": {
+      "title": "Hits",
+      "type": "integer"
+     },
+     "max_entries": {
+      "title": "Max Entries",
+      "type": "integer"
+     },
+     "misses": {
+      "title": "Misses",
+      "type": "integer"
+     },
+     "request_hit": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Request Hit"
+     }
+    },
+    "required": [
+     "enabled",
+     "hits",
+     "misses",
+     "entries",
+     "max_entries",
+     "evictions"
+    ],
+    "title": "QueryCacheMetrics",
+    "type": "object"
+   },
    "RetrievalCandidate": {
     "properties": {
      "chapter_title": {
@@ -1757,6 +1817,25 @@
      }
     },
     "summary": "Retry Index Task"
+   }
+  },
+  "/api/metrics/query-cache": {
+   "get": {
+    "description": "返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。",
+    "operationId": "query_cache_metrics_api_metrics_query_cache_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QueryCacheMetrics"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Query Cache Metrics"
    }
   },
   "/api/model": {
