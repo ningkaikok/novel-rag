@@ -78,6 +78,17 @@
       "title": "Source Ids",
       "type": "array"
      },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
      "step": {
       "title": "Step",
       "type": "integer"
@@ -854,6 +865,12 @@
       ],
       "title": "Route"
      },
+     "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+     },
      "stage": {
       "anyOf": [
        {
@@ -906,6 +923,12 @@
      "run_id": {
       "title": "Run Id",
       "type": "string"
+     },
+     "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
      }
     },
     "required": [
@@ -913,6 +936,99 @@
      "events"
     ],
     "title": "RunEventList",
+    "type": "object"
+   },
+   "RunMetrics": {
+    "properties": {
+     "answer_failed": {
+      "title": "Answer Failed",
+      "type": "boolean"
+     },
+     "answer_generated": {
+      "title": "Answer Generated",
+      "type": "boolean"
+     },
+     "elapsed_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elapsed Ms"
+     },
+     "event_count": {
+      "title": "Event Count",
+      "type": "integer"
+     },
+     "evidence_events": {
+      "title": "Evidence Events",
+      "type": "integer"
+     },
+     "route": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Route"
+     },
+     "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "tool_calls": {
+      "title": "Tool Calls",
+      "type": "integer"
+     },
+     "tool_failures": {
+      "title": "Tool Failures",
+      "type": "integer"
+     },
+     "tool_success_rate": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tool Success Rate"
+     },
+     "tool_successes": {
+      "title": "Tool Successes",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "event_count",
+     "tool_calls",
+     "tool_successes",
+     "tool_failures",
+     "evidence_events",
+     "answer_generated",
+     "answer_failed"
+    ],
+    "title": "RunMetrics",
     "type": "object"
    },
    "SearchMatch": {
@@ -2073,6 +2189,46 @@
      }
     },
     "summary": "Run Events"
+   }
+  },
+  "/api/runs/{run_id}/metrics": {
+   "get": {
+    "description": "从运行事件计算安全聚合指标，不返回聊天正文或工具结果。",
+    "operationId": "run_metrics_api_runs__run_id__metrics_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunMetrics"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Run Metrics"
    }
   },
   "/api/search": {

@@ -171,6 +171,7 @@ class QueryCacheMetrics(BaseModel):
 
 
 class RunEvent(BaseModel):
+    schema_version: Literal["1"] = "1"
     event_type: str
     status: str | None = None
     route: str | None = None
@@ -181,8 +182,24 @@ class RunEvent(BaseModel):
 
 
 class RunEventList(BaseModel):
+    schema_version: Literal["1"] = "1"
     run_id: str
     events: list[RunEvent]
+
+
+class RunMetrics(BaseModel):
+    schema_version: Literal["1"] = "1"
+    event_count: int
+    route: str | None = None
+    status: str | None = None
+    elapsed_ms: int | None = None
+    tool_calls: int
+    tool_successes: int
+    tool_failures: int
+    tool_success_rate: float | None = None
+    evidence_events: int
+    answer_generated: bool
+    answer_failed: bool
 
 
 class AgentStep(BaseModel):
@@ -191,6 +208,7 @@ class AgentStep(BaseModel):
     tool: str
     args: dict = Field(default_factory=dict)
     observation: str
+    status: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     # M3.5-③：同一次 Agent 运行的所有步骤共享一个 run_id（轻量串联字段，
     # 由 /api/agent/ask 在入口生成后注入；历史记录里的旧步骤没有，保持 None）。

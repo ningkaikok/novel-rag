@@ -894,6 +894,7 @@ def ensure_chat_schema() -> None:
                 id          BIGSERIAL PRIMARY KEY,
                 run_id      TEXT NOT NULL,
                 session_id  UUID,
+                schema_version TEXT NOT NULL DEFAULT '1',
                 event_type  TEXT NOT NULL,
                 status      TEXT,
                 route       TEXT,
@@ -903,6 +904,10 @@ def ensure_chat_schema() -> None:
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
+        )
+        conn.execute(
+            "ALTER TABLE run_events ADD COLUMN IF NOT EXISTS "
+            "schema_version TEXT NOT NULL DEFAULT '1'"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)"
@@ -1177,6 +1182,7 @@ def save_run_events(
         (
             run_id,
             session_id,
+            event.get("schema_version", "1"),
             event.get("type", "unknown"),
             event.get("status"),
             event.get("route"),
@@ -1191,9 +1197,9 @@ def save_run_events(
     with connect() as conn, conn.cursor() as cursor:
         cursor.executemany(
             """
-                INSERT INTO run_events
-                    (run_id, session_id, event_type, status, route, stage, tool, elapsed_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO run_events
+                    (run_id, session_id, schema_version, event_type, status, route, stage, tool, elapsed_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
             rows,
         )
@@ -1204,7 +1210,7 @@ def load_run_events(run_id: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT event_type, status, route, stage, tool, elapsed_ms, created_at
+            SELECT schema_version, event_type, status, route, stage, tool, elapsed_ms, created_at
             FROM run_events
             WHERE run_id = %s
             ORDER BY id
