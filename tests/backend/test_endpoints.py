@@ -48,9 +48,11 @@ def test_run_events_endpoint_returns_metadata_only(client, monkeypatch):
     resp = client.get("/api/runs/run-1/events")
     assert resp.status_code == 200
     assert resp.json() == {
+        "schema_version": "1",
         "run_id": "run-1",
         "events": [
             {
+                "schema_version": "1",
                 "event_type": "run_finished",
                 "status": "complete",
                 "route": None,
@@ -60,6 +62,38 @@ def test_run_events_endpoint_returns_metadata_only(client, monkeypatch):
                 "created_at": None,
             }
         ],
+    }
+
+
+def test_run_metrics_endpoint_aggregates_metadata_only(client, monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_run_events",
+        lambda _run_id: [
+            {"event_type": "run_started"},
+            {"event_type": "route_selected", "route": "grounded"},
+            {"event_type": "evidence_added", "stage": "hybrid"},
+            {"event_type": "tool_finished", "tool": "search_novels", "status": "complete"},
+            {"event_type": "run_finished", "status": "complete", "elapsed_ms": 42},
+        ],
+    )
+
+    resp = client.get("/api/runs/run-1/metrics")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "schema_version": "1",
+        "event_count": 5,
+        "route": "grounded",
+        "status": "complete",
+        "elapsed_ms": 42,
+        "tool_calls": 1,
+        "tool_successes": 1,
+        "tool_failures": 0,
+        "tool_success_rate": 1.0,
+        "evidence_events": 1,
+        "answer_generated": False,
+        "answer_failed": False,
     }
 
 

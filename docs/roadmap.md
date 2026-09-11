@@ -404,8 +404,10 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 - [ ] M6.4：统一 Agent 事件，串起 Router、Planner、Tool、检索、LLM 和 SSE 的 `run_id`；
   同时建立路由准确率、工具成功率、答案依据率、延迟和成本的评测闭环
   当前普通问答与 Agent 已将不含正文的 `run_started/route_selected/evidence_added/`
-  `answer_generated/run_finished` 事件独立落到 `run_events`，可通过
-  `/api/runs/{run_id}/events` 查询；完整的跨端点评测与 SSE 事件版本化仍待补齐。
+  `answer_generated/run_finished` 事件独立落到 `run_events`，事件带 `schema_version`，
+  Agent 工具事件会区分完成、超时和下游失败；可通过 `/api/runs/{run_id}/events` 查询，
+  或通过 `/api/runs/{run_id}/metrics` 聚合路由、工具成功率、依据事件、答案状态和延迟；
+  完整的跨端点评测、成本汇总与 SSE 事件版本化仍待补齐。
 - [ ] M6.5：拆分 Chat History、Run State 和 Event Log；短问答继续 SSE，长任务改为
   `job_id + worker`，并补 checkpoint、幂等、取消、恢复和死信处理；前端可恢复 SSE
   依赖此阶段的 Event Log，不提前实现

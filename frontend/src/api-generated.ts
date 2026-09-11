@@ -366,6 +366,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Metrics
+         * @description 从运行事件计算安全聚合指标，不返回聊天正文或工具结果。
+         */
+        get: operations["run_metrics_api_runs__run_id__metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -442,6 +462,8 @@ export interface components {
             run_id?: string | null;
             /** Source Ids */
             source_ids?: string[];
+            /** Status */
+            status?: string | null;
             /** Step */
             step: number;
             /** Tool */
@@ -712,6 +734,12 @@ export interface components {
             event_type: string;
             /** Route */
             route?: string | null;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: "1";
             /** Stage */
             stage?: string | null;
             /** Status */
@@ -725,6 +753,43 @@ export interface components {
             events: components["schemas"]["RunEvent"][];
             /** Run Id */
             run_id: string;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: "1";
+        };
+        /** RunMetrics */
+        RunMetrics: {
+            /** Answer Failed */
+            answer_failed: boolean;
+            /** Answer Generated */
+            answer_generated: boolean;
+            /** Elapsed Ms */
+            elapsed_ms?: number | null;
+            /** Event Count */
+            event_count: number;
+            /** Evidence Events */
+            evidence_events: number;
+            /** Route */
+            route?: string | null;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: "1";
+            /** Status */
+            status?: string | null;
+            /** Tool Calls */
+            tool_calls: number;
+            /** Tool Failures */
+            tool_failures: number;
+            /** Tool Success Rate */
+            tool_success_rate?: number | null;
+            /** Tool Successes */
+            tool_successes: number;
         };
         /** SearchMatch */
         SearchMatch: {
@@ -1427,6 +1492,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunEventList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_metrics_api_runs__run_id__metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunMetrics"];
                 };
             };
             /** @description Validation Error */

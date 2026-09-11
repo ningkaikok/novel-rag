@@ -748,6 +748,7 @@ def run_agent(
                         "observation": f"使用 {len(selected)} 个原文片段生成带引用答案",
                         "source_ids": requested or list(source_registry),
                         "parse_mode": parse_mode,
+                        "status": "accepted",
                     },
                 )
                 yield "sources", selected
@@ -766,6 +767,7 @@ def run_agent(
                 yield "done", {}
                 return
 
+        tool_status = "complete"
         try:
             result = gateway.execute(tool, args)
             source_ids: list[str] = []
@@ -792,6 +794,7 @@ def run_agent(
             category = getattr(exc, "category", type(exc).__name__)
             observation = f"工具执行失败：{category}: {exc}"
             tool_failure_streak[tool] = tool_failure_streak.get(tool, 0) + 1
+            tool_status = str(category)
 
         event = {
             "step": step,
@@ -801,6 +804,7 @@ def run_agent(
             "observation": observation,
             "source_ids": source_ids,
             "parse_mode": parse_mode,
+            "status": tool_status,
         }
         observations.append(event)
         yield "agent_step", event

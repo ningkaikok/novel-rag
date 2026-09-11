@@ -119,6 +119,7 @@ from backend.schemas import (  # noqa: E402
     QueryCacheMetrics,
     RunEvent,
     RunEventList,
+    RunMetrics,
     SearchMatch,
     SearchResult,
     SessionClearResult,
@@ -195,6 +196,7 @@ from rag import (  # noqa: E402
     NovelRAG,
     generate_ollama_prompt_stream,
 )
+from run_metrics import summarize_run_events  # noqa: E402
 from session_facts import extract_session_facts, format_facts_line  # noqa: E402
 from session_summary import (  # noqa: E402
     build_summary,
@@ -1185,7 +1187,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                             "type": "tool_finished",
                             "run_id": run_id,
                             "tool": payload["tool"],
-                            "status": "observed",
+                            "status": payload.get("status") or "observed",
                         }
                     )
                     yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -1467,6 +1469,12 @@ def run_events(run_id: str):
         run_id=run_id,
         events=[RunEvent.model_validate(event) for event in load_run_events(run_id)],
     )
+
+
+@app.get("/api/runs/{run_id}/metrics", response_model=RunMetrics)
+def run_metrics(run_id: str):
+    """从运行事件计算安全聚合指标，不返回聊天正文或工具结果。"""
+    return RunMetrics.model_validate(summarize_run_events(load_run_events(run_id)))
 
 
 # ------------------------------------------------------------- 前端静态托管（生产）

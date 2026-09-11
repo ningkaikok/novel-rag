@@ -53,6 +53,10 @@
   `/api/runs/{run_id}/events` 查询接口，支持按运行 ID 查看路由、证据、生成和结束
   状态，不复制聊天正文或工具结果。
 
+- **运行事件可以直接汇总为安全指标**：事件增加 `schema_version`，新增
+  `/api/runs/{run_id}/metrics`，可查看运行延迟、工具调用成功率、证据事件和答案状态；
+  聚合只使用事件元数据，不返回 Prompt、回答或小说原文。
+
 - **长会话不会再"忘掉开头"了（滚动会话摘要默认开启）**：新增长会话评测集
   `tests/session_summary_test_set.json`（6 条，覆盖三篇原创短篇）+
   `scripts/eval_session_summary.py`。两层证据：不开摘要时早期事实必然从背景里
