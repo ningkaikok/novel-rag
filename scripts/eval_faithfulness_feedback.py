@@ -28,11 +28,15 @@ def aggregate(rows: list[dict]) -> dict:
     output = {}
     for (method, model), counts in sorted(groups.items()):
         total = sum(counts.values())
-        agreement = sum(value for (predicted, human), value in counts.items() if predicted == human)
+        agreement = sum(
+            value for (predicted, human), value in counts.items() if predicted == human
+        )
         output[f"{method}|{model}"] = {
             "samples": total,
             "agreement": agreement / total if total else None,
-            "matrix": {f"{predicted}|{human}": value for (predicted, human), value in counts.items()},
+            "matrix": {
+                f"{predicted}|{human}": value for (predicted, human), value in counts.items()
+            },
         }
     return output
 

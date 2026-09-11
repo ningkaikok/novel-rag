@@ -904,7 +904,9 @@ def ensure_chat_schema() -> None:
             )
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)"
+        )
         # M3.6：滚动会话摘要。一个会话一行，覆盖到哪一轮记在 covers_through，
         # 靠它判断"哪些轮次还没进摘要"——不记的话每次都得重新摘要全部历史，
         # 那就不叫滚动了。摘要是派生数据，丢了只是回到"只有最近几轮原文"。
@@ -1167,9 +1169,7 @@ def load_citation_calibration_rows(limit: int = 10000) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def save_run_events(
-    run_id: str, events: list[dict], session_id: str | None = None
-) -> None:
+def save_run_events(run_id: str, events: list[dict], session_id: str | None = None) -> None:
     """保存运行事件的安全子集，不接受 Prompt、回答、原文或工具参数。"""
     rows = [
         (

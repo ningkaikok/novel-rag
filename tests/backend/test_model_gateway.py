@@ -68,11 +68,7 @@ def test_partial_generation_error_is_not_silently_retried(monkeypatch):
         raise RuntimeError("stream broken")
 
     try:
-        list(
-            model_gateway.generate_stream(
-                "问题", "qwen2.5:7b", ollama_factory=broken_ollama
-            )
-        )
+        list(model_gateway.generate_stream("问题", "qwen2.5:7b", ollama_factory=broken_ollama))
     except RuntimeError as exc:
         assert str(exc) == "stream broken"
     else:  # pragma: no cover - 防止测试被错误吞掉

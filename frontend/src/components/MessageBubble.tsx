@@ -360,11 +360,7 @@ function VerifyCitation({
             <span className="verify-reason">{result.reason}</span>
           </Tooltip>
         </div>
-        <FeedbackButtons
-          value={feedback}
-          running={feedbackRunning}
-          onSelect={sendFeedback}
-        />
+        <FeedbackButtons value={feedback} running={feedbackRunning} onSelect={sendFeedback} />
       </>
     );
   }

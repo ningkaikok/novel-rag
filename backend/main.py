@@ -240,7 +240,11 @@ def _retrieval_cache_key(question: str, top_k: int) -> CacheKey | None:
         "chapter_expansion_mode": CHAPTER_EXPANSION_MODE,
     }
     config_text = json.dumps(retrieval_config, sort_keys=True, separators=(",", ":"))
-    return CacheKey(question=question.strip(), index_fingerprint=index_fingerprint, retrieval_fingerprint=config_text)
+    return CacheKey(
+        question=question.strip(),
+        index_fingerprint=index_fingerprint,
+        retrieval_fingerprint=config_text,
+    )
 
 
 @asynccontextmanager
@@ -567,9 +571,7 @@ def _refresh_session_summary(session_id: str, turns: list[dict], errors: list) -
     summary = build_summary(
         previous,
         pending,
-        lambda prompt: _generate_for_model(
-            prompt, HISTORY_SUMMARY_MODEL, task="summary"
-        ),
+        lambda prompt: _generate_for_model(prompt, HISTORY_SUMMARY_MODEL, task="summary"),
         errors=errors,
     )
     if not summary:
@@ -603,9 +605,7 @@ def _rewrite_for_search(req: AskRequest, turns: list[dict]) -> str:
     rewritten = rewrite_query(
         req.question,
         turns,
-        lambda prompt: _generate_for_model(
-            prompt, QUERY_REWRITE_MODEL, task="query_rewrite"
-        ),
+        lambda prompt: _generate_for_model(prompt, QUERY_REWRITE_MODEL, task="query_rewrite"),
         errors,
     )
     for reason in errors:
@@ -936,7 +936,9 @@ async def ask(req: AskRequest, request: Request):
                 cache_hit = cached_sources is not None
                 run_config["query_cache"] = query_cache.snapshot(request_hit=cache_hit)
                 if cache_key is None:
-                    run_config["query_cache"]["bypass_reason"] = "index_fingerprint_unavailable"
+                    run_config["query_cache"]["bypass_reason"] = (
+                        "index_fingerprint_unavailable"
+                    )
                 if cached_sources is not None:
                     sources = cached_sources
                     cache_step = TraceStep(
@@ -1295,7 +1297,9 @@ def citation_feedback(req: CitationFeedbackRequest):
             comment=req.comment,
         )
     except Exception as exc:
-        raise APIError(500, ErrorCode.session_write_failed, f"保存引用反馈失败：{exc}") from exc
+        raise APIError(
+            500, ErrorCode.session_write_failed, f"保存引用反馈失败：{exc}"
+        ) from exc
     return CitationFeedbackResult(feedback=req.feedback)
 
 

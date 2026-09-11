@@ -211,9 +211,7 @@ def test_mcp_registration_matches_registry():
             expected_types = expected_meta.get("type") or [
                 item["type"] for item in expected_meta.get("anyOf", [])
             ]
-            actual_type = meta.get("type") or [
-                item["type"] for item in meta.get("anyOf", [])
-            ]
+            actual_type = meta.get("type") or [item["type"] for item in meta.get("anyOf", [])]
             assert actual_type == expected_types, (name, param)
 
         expected_required = {

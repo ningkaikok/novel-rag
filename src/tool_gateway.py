@@ -42,7 +42,11 @@ def _type_matches(value: object, expected: str | list[str]) -> bool:
             return True
         if kind == "integer" and isinstance(value, int) and not isinstance(value, bool):
             return True
-        if kind == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            kind == "number"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
             return True
         if kind == "array" and isinstance(value, list):
             return True
@@ -89,9 +93,7 @@ class ToolGateway:
         max_calls: int = 5,
     ):
         self.toolbox = toolbox
-        self.permissions = frozenset(
-            {"novel:read"} if permissions is None else permissions
-        )
+        self.permissions = frozenset({"novel:read"} if permissions is None else permissions)
         self.max_calls = max(1, int(max_calls))
         self._calls = 0
         self._seen: set[str] = set()

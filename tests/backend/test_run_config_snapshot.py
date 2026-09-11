@@ -104,7 +104,9 @@ def test_run_config_snapshot_respects_privacy_red_lines(client, monkeypatch):
     # 也不含完整 prompt
     assert "[证据]" not in serialized
     assert "uncited_statements" not in serialized
-    assert "蚀骨散" not in json.dumps(kwargs["run_config"].get("events", []), ensure_ascii=False)
+    assert "蚀骨散" not in json.dumps(
+        kwargs["run_config"].get("events", []), ensure_ascii=False
+    )
 
 
 def test_free_mode_run_config_records_mode_and_reason(client, monkeypatch):
