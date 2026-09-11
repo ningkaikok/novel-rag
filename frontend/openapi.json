@@ -172,6 +172,108 @@
     "title": "BookList",
     "type": "object"
    },
+   "CitationFeedbackRequest": {
+    "description": "记录用户对单条引用的轻量反馈。\n\n``answer`` 只用于服务端计算指纹，不会落库；原文也不随反馈请求提交，\n避免为了建立质量数据飞轮而复制版权内容。",
+    "properties": {
+     "answer": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Answer",
+      "type": "string"
+     },
+     "chunk_id": {
+      "minimum": 0.0,
+      "title": "Chunk Id",
+      "type": "integer"
+     },
+     "citation": {
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Citation",
+      "type": "integer"
+     },
+     "comment": {
+      "anyOf": [
+       {
+        "maxLength": 500,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Comment"
+     },
+     "feedback": {
+      "enum": [
+       "helpful",
+       "incorrect"
+      ],
+      "title": "Feedback",
+      "type": "string"
+     },
+     "novel": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Novel",
+      "type": "string"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "turn_index": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Turn Index"
+     }
+    },
+    "required": [
+     "answer",
+     "citation",
+     "novel",
+     "chunk_id",
+     "feedback"
+    ],
+    "title": "CitationFeedbackRequest",
+    "type": "object"
+   },
+   "CitationFeedbackResult": {
+    "properties": {
+     "accepted": {
+      "default": true,
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "feedback": {
+      "enum": [
+       "helpful",
+       "incorrect"
+      ],
+      "title": "Feedback",
+      "type": "string"
+     }
+    },
+    "required": [
+     "feedback"
+    ],
+    "title": "CitationFeedbackResult",
+    "type": "object"
+   },
    "CurrentModel": {
     "properties": {
      "current": {
@@ -1313,6 +1415,45 @@
      }
     },
     "summary": "Delete Book"
+   }
+  },
+  "/api/citations/feedback": {
+   "post": {
+    "description": "记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。\n\n反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有\nsession_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。",
+    "operationId": "citation_feedback_api_citations_feedback_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CitationFeedbackRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CitationFeedbackResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Citation Feedback"
    }
   },
   "/api/citations/verify": {

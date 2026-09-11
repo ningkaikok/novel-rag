@@ -52,6 +52,7 @@
 
 import json
 import sys
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -83,7 +84,11 @@ logger = get_logger("main")
 
 import ingest  # noqa: E402
 from agent_lab import run_agent  # noqa: E402
-from backend import claude_cli, zhipu  # noqa: E402
+from backend import (  # noqa: E402
+    claude_cli,
+    model_gateway,
+    zhipu,
+)
 from backend.errors import APIError, ErrorCode, register_exception_handlers  # noqa: E402
 from backend.index_tasks import (  # noqa: E402
     IndexTaskManager,
@@ -97,6 +102,8 @@ from backend.schemas import (  # noqa: E402
     AgentStep,
     AskRequest,
     BookList,
+    CitationFeedbackRequest,
+    CitationFeedbackResult,
     CurrentModel,
     DeleteResult,
     GraphEdgeItem,
@@ -118,8 +125,15 @@ from backend.schemas import (  # noqa: E402
     VerifyCitationRequest,
     VerifyCitationResult,
 )
-from citation_eval import judge_support, statements_citing  # noqa: E402
+from citation_eval import (  # noqa: E402
+    evaluate_citations,
+    judge_support,
+    judge_support_two_step,
+    statements_citing,
+)
 from config import (  # noqa: E402
+    FAITHFULNESS_JUDGE_MODE,
+    FAITHFULNESS_SHADOW_ENABLED,
     HISTORY_IN_PROMPT,
     HISTORY_MAX_TURNS,
     HISTORY_SUMMARY_ENABLED,
@@ -153,6 +167,8 @@ from postgres import (  # noqa: E402
     load_session_summary,
     load_turns,
     next_turn_index,
+    save_citation_feedback,
+    save_citation_judgment,
     save_session_summary,
     save_turn,
     set_relation_review,
@@ -238,10 +254,8 @@ def _try_load_rag() -> NovelRAG | None:
     # QUERY_EXPAND_MODEL 前缀路由注入（和上面 _rewrite_for_search 的路由
     # 是同一个模式）。开关默认关闭，关闭时这里什么都不挂、零开销。
     if QUERY_EXPAND_ENABLED:
-        service.expand_generate_fn = lambda prompt: (
-            zhipu.generate_stream(prompt, QUERY_EXPAND_MODEL)
-            if QUERY_EXPAND_MODEL.startswith(zhipu.MODEL_PREFIX)
-            else claude_cli.generate_stream(prompt, QUERY_EXPAND_MODEL)
+        service.expand_generate_fn = lambda prompt: _generate_for_model(
+            prompt, QUERY_EXPAND_MODEL, task="query_expand"
         )
     return service
 
@@ -494,7 +508,9 @@ def _refresh_session_summary(session_id: str, turns: list[dict], errors: list) -
     summary = build_summary(
         previous,
         pending,
-        lambda prompt: _generate_for_model(prompt, HISTORY_SUMMARY_MODEL),
+        lambda prompt: _generate_for_model(
+            prompt, HISTORY_SUMMARY_MODEL, task="summary"
+        ),
         errors=errors,
     )
     if not summary:
@@ -528,10 +544,8 @@ def _rewrite_for_search(req: AskRequest, turns: list[dict]) -> str:
     rewritten = rewrite_query(
         req.question,
         turns,
-        lambda prompt: (
-            zhipu.generate_stream(prompt, QUERY_REWRITE_MODEL)
-            if QUERY_REWRITE_MODEL.startswith(zhipu.MODEL_PREFIX)
-            else claude_cli.generate_stream(prompt, QUERY_REWRITE_MODEL)
+        lambda prompt: _generate_for_model(
+            prompt, QUERY_REWRITE_MODEL, task="query_rewrite"
         ),
         errors,
     )
@@ -553,13 +567,26 @@ def _next_or_sentinel(iterator):
     return next(iterator, _SENTINEL)
 
 
-def _generate_for_model(prompt: str, model: str):
-    """统一三种生成后端，普通问答和 Agent Lab 共用同一条模型路由。"""
-    if model.startswith(claude_cli.MODEL_PREFIX):
-        return claude_cli.generate_stream(prompt, model)
-    if model.startswith(zhipu.MODEL_PREFIX):
-        return zhipu.generate_stream(prompt, model)
-    return generate_ollama_prompt_stream(prompt, model=model)
+def _generate_for_model(
+    prompt: str,
+    model: str,
+    *,
+    task: model_gateway.ModelTask = "answer",
+    stats: list[model_gateway.GenerationStats] | None = None,
+):
+    """统一三种生成后端和任务级路由，保留测试可替换的后端入口。"""
+    return model_gateway.generate_stream(
+        prompt,
+        model,
+        task=task,
+        stats=stats,
+        # 保持旧测试和本地调用方可以 monkeypatch main 模块里的后端函数。
+        ollama_factory=lambda selected, text: generate_ollama_prompt_stream(
+            text, model=selected
+        ),
+        claude_factory=lambda selected, text: claude_cli.generate_stream(text, selected),
+        zhipu_factory=lambda selected, text: zhipu.generate_stream(text, selected),
+    )
 
 
 def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict:
@@ -586,7 +613,110 @@ def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict
         # 查询改写/扩展是否可能参与本轮检索
         "query_rewrite_enabled": QUERY_REWRITE_ENABLED,
         "query_expand_enabled": QUERY_EXPAND_ENABLED,
+        "faithfulness_shadow_enabled": FAITHFULNESS_SHADOW_ENABLED,
+        "faithfulness_judge_mode": FAITHFULNESS_JUDGE_MODE,
+        "model_gateway": model_gateway.routing_snapshot(model),
     }
+
+
+def _citation_metric_snapshot(answer: str, sources: list[dict]) -> dict:
+    """生成可安全落库的引用规则指标，不把回答句子复制到配置快照。
+
+    这是 P0 的第一道低风险观测：规则只统计编号合法性和引用完整性，绝不把
+    它冒充成语义忠实度。后续用户反馈和影子 Judge 可以在同一份样本上校准。
+    """
+    metrics = evaluate_citations(answer, sources)
+    completeness = metrics["completeness"]
+    return {
+        "valid_number_ratio": metrics["valid_number_ratio"],
+        "cited_source_count": metrics["cited_source_count"],
+        "invalid_citation_count": len(metrics["invalid_citation_numbers"]),
+        "factual_statement_count": completeness["factual_statement_count"],
+        "cited_statement_count": completeness["cited_statement_count"],
+        "uncited_statement_count": completeness["uncited_statement_count"],
+        "uncited_ratio": completeness["uncited_ratio"],
+        "faithfulness": "not_automatically_judged",
+    }
+
+
+def _persist_faithfulness_shadow(
+    *,
+    answer: str,
+    sources: list[dict],
+    model: str,
+    session_id: str | None,
+    turn_index: int | None,
+) -> None:
+    """后台运行引用 Judge，并只保存聚合计数。
+
+    这是观测链路，不是回答质量门禁：任何单条失败都只记录为 uncertain，
+    不回写答案，也不让后台异常影响已经完成的请求。
+    """
+    metrics = evaluate_citations(answer, sources)
+    for citation in metrics["valid_citation_numbers"]:
+        statements = statements_citing(answer, citation)
+        if not statements:
+            continue
+        evidence = [str(sources[citation - 1].get("text") or "")]
+        try:
+            if FAITHFULNESS_JUDGE_MODE == "two_step":
+                result = judge_support_two_step(
+                    "".join(statements),
+                    evidence,
+                    lambda prompt: _generate_for_model(prompt, model, task="judge"),
+                    batch_verdicts=True,
+                )
+            else:
+                result = judge_support(
+                    "".join(statements),
+                    evidence,
+                    lambda prompt: _generate_for_model(prompt, model, task="judge"),
+                )
+            verdicts = result.get("verdicts") or []
+            labels = [str(item.get("label")) for item in verdicts if isinstance(item, dict)]
+            save_citation_judgment(
+                answer=answer,
+                citation=citation,
+                novel=str(sources[citation - 1].get("novel") or ""),
+                chunk_id=int(sources[citation - 1].get("chunk_id", 0)),
+                label=str(result.get("label", "uncertain")),
+                method=f"shadow_{FAITHFULNESS_JUDGE_MODE}",
+                model=model,
+                claim_count=len(labels),
+                supported_count=labels.count("supported"),
+                contradicted_count=labels.count("contradicted"),
+                not_found_count=labels.count("not_found"),
+                session_id=session_id,
+                turn_index=turn_index,
+            )
+        except Exception as exc:
+            # 影子核验永远不能把用户已经拿到的回答变成失败请求。
+            logger.warning(f"引用影子核验失败（忽略）：{type(exc).__name__}: {exc}")
+
+
+def _schedule_faithfulness_shadow(
+    *,
+    answer: str,
+    sources: list[dict],
+    model: str,
+    session_id: str | None,
+    turn_index: int | None,
+) -> None:
+    if not FAITHFULNESS_SHADOW_ENABLED or not answer or not sources:
+        return
+    worker = threading.Thread(
+        target=_persist_faithfulness_shadow,
+        kwargs={
+            "answer": answer,
+            "sources": sources,
+            "model": model,
+            "session_id": session_id,
+            "turn_index": turn_index,
+        },
+        name="citation-faithfulness-shadow",
+        daemon=True,
+    )
+    worker.start()
 
 
 @app.post("/api/ask")
@@ -621,6 +751,7 @@ async def ask(req: AskRequest, request: Request):
     run_config = _build_run_config(
         route_mode=decision.route.value, route_reason=decision.reason, model=model
     )
+    generation_stats: list[model_gateway.GenerationStats] = []
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
     session_id = req.session_id
@@ -795,7 +926,7 @@ async def ask(req: AskRequest, request: Request):
             )
             # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
             # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
-            token_iter = _generate_for_model(prompt, model)
+            token_iter = _generate_for_model(prompt, model, stats=generation_stats)
 
         parts: list[str] = []
         interrupted = False
@@ -826,10 +957,8 @@ async def ask(req: AskRequest, request: Request):
         finally:
             if interrupted:
                 token_iter.close()
+            final_status = "interrupted" if interrupted else ("error" if error else "complete")
             if session_id and assistant_index is not None:
-                final_status = (
-                    "interrupted" if interrupted else ("error" if error else "complete")
-                )
                 try:
                     save_turn(
                         session_id,
@@ -843,12 +972,24 @@ async def ask(req: AskRequest, request: Request):
                         # error_message 只记异常类型+摘要，不含用户输入原文
                         run_config={
                             **run_config,
+                            "generation": [item.snapshot() for item in generation_stats],
+                            "citation_metrics": _citation_metric_snapshot(
+                                "".join(parts), payload
+                            ),
                             "final_status": final_status,
                             **({"error": error[:200]} if error else {}),
                         },
                     )
                 except Exception as exc:
                     logger.warning(f"保存回答失败（忽略）：{exc}")
+            if final_status == "complete" and decision.route is AnswerMode.grounded:
+                _schedule_faithfulness_shadow(
+                    answer="".join(parts),
+                    sources=payload,
+                    model=model,
+                    session_id=session_id,
+                    turn_index=assistant_index,
+                )
 
         if not interrupted:
             yield "event: done\ndata: {}\n\n"
@@ -868,13 +1009,13 @@ async def agent_ask(req: AgentAskRequest, request: Request):
         # 普通回答可以边生成边展示；工具规划不同，必须先拿到完整 JSON 才能校验
         # tool/args，不能收到半个对象就执行。这里仍复用同一模型适配器，只在边界
         # 处把 token 流合并成一次 action。
-        return "".join(_generate_for_model(prompt, model))
+        return "".join(_generate_for_model(prompt, model, task="answer"))
 
     iterator = run_agent(
         req.question,
         rag=rag,
         planner=planner,
-        answerer=lambda prompt: _generate_for_model(prompt, model),
+        answerer=lambda prompt: _generate_for_model(prompt, model, task="answer"),
         max_steps=req.max_steps,
     )
     # M3.5-③：本次 Agent 运行的 run_id。request_id 只覆盖单次 HTTP 请求，而
@@ -985,7 +1126,7 @@ async def verify_citation(req: VerifyCitationRequest):
         judge_support,
         "".join(statements),
         req.evidence,
-        lambda prompt: _generate_for_model(prompt, model),
+        lambda prompt: _generate_for_model(prompt, model, task="judge"),
     )
     return VerifyCitationResult(
         label=result["label"],
@@ -993,6 +1134,29 @@ async def verify_citation(req: VerifyCitationRequest):
         statement="".join(statements),
         model=model,
     )
+
+
+@app.post("/api/citations/feedback", response_model=CitationFeedbackResult)
+def citation_feedback(req: CitationFeedbackRequest):
+    """记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。
+
+    反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有
+    session_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。
+    """
+    try:
+        save_citation_feedback(
+            answer=req.answer,
+            citation=req.citation,
+            novel=req.novel,
+            chunk_id=req.chunk_id,
+            feedback=req.feedback,
+            session_id=req.session_id,
+            turn_index=req.turn_index,
+            comment=req.comment,
+        )
+    except Exception as exc:
+        raise APIError(500, ErrorCode.session_write_failed, f"保存引用反馈失败：{exc}") from exc
+    return CitationFeedbackResult(feedback=req.feedback)
 
 
 # ----------------------------------------------------------------- 会话历史

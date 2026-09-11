@@ -84,6 +84,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/citations/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Citation Feedback
+         * @description 记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。
+         *
+         *     反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有
+         *     session_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。
+         */
+        post: operations["citation_feedback_api_citations_feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/citations/verify": {
         parameters: {
             query?: never;
@@ -413,6 +436,47 @@ export interface components {
         BookList: {
             /** Books */
             books: string[];
+        };
+        /**
+         * CitationFeedbackRequest
+         * @description 记录用户对单条引用的轻量反馈。
+         *
+         *     ``answer`` 只用于服务端计算指纹，不会落库；原文也不随反馈请求提交，
+         *     避免为了建立质量数据飞轮而复制版权内容。
+         */
+        CitationFeedbackRequest: {
+            /** Answer */
+            answer: string;
+            /** Chunk Id */
+            chunk_id: number;
+            /** Citation */
+            citation: number;
+            /** Comment */
+            comment?: string | null;
+            /**
+             * Feedback
+             * @enum {string}
+             */
+            feedback: "helpful" | "incorrect";
+            /** Novel */
+            novel: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Turn Index */
+            turn_index?: number | null;
+        };
+        /** CitationFeedbackResult */
+        CitationFeedbackResult: {
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+            /**
+             * Feedback
+             * @enum {string}
+             */
+            feedback: "helpful" | "incorrect";
         };
         /** CurrentModel */
         CurrentModel: {
@@ -880,6 +944,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    citation_feedback_api_citations_feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitationFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationFeedbackResult"];
                 };
             };
             /** @description Validation Error */

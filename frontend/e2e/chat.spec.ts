@@ -119,6 +119,7 @@ test.describe('按需核实引用', () => {
   test('只有被引用的出处才有核实按钮，点击后展示判定和理由', async ({ page }) => {
     await mockApi(page);
     let requestBody: unknown = null;
+    let feedbackBody: unknown = null;
     await page.route('**/api/citations/verify', async (route) => {
       requestBody = route.request().postDataJSON();
       await route.fulfill({
@@ -130,6 +131,14 @@ test.describe('按需核实引用', () => {
           statement: '雾隐山庄的庄主是顾长风[1]。',
           model: 'glm:glm-4-flash',
         }),
+      });
+    });
+    await page.route('**/api/citations/feedback', async (route) => {
+      feedbackBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accepted: true, feedback: 'helpful' }),
       });
     });
 
@@ -155,5 +164,14 @@ test.describe('按需核实引用', () => {
 
     // 请求里带的是这条出处的原文，且指明核实第几条引用
     expect(requestBody).toMatchObject({ citation: 1 });
+
+    await sources.nth(0).getByRole('button', { name: '有帮助' }).click();
+    await expect(sources.nth(0).getByRole('button', { name: '✓ 有帮助' })).toBeVisible();
+    expect(feedbackBody).toMatchObject({
+      citation: 1,
+      novel: '雾隐山庄',
+      chunk_id: 0,
+      feedback: 'helpful',
+    });
   });
 });

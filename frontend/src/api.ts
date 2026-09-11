@@ -323,6 +323,35 @@ export async function verifyCitation(
   return res.json();
 }
 
+export type CitationFeedbackResult = Schemas['CitationFeedbackResult'];
+
+/** 记录用户对某条引用的反馈；后端只保存回答指纹，不保存回答或原文。 */
+export async function submitCitationFeedback(input: {
+  answer: string;
+  citation: number;
+  novel: string;
+  chunkId: number;
+  feedback: 'helpful' | 'incorrect';
+  sessionId?: string;
+  turnIndex?: number;
+}): Promise<CitationFeedbackResult> {
+  const res = await fetch('/api/citations/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      answer: input.answer,
+      citation: input.citation,
+      novel: input.novel,
+      chunk_id: input.chunkId,
+      feedback: input.feedback,
+      session_id: input.sessionId,
+      turn_index: input.turnIndex,
+    }),
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '提交反馈失败'));
+  return res.json();
+}
+
 // ── 人物关系审核（M4 质量闭环）──────────────────────────────────────────────
 // 关系边 = 建图时抽出的人物对（含证据类型/置信度/来源定位），共现推断必然
 // 产生假边，所以每条边都要经过人工通过/拒绝。这里的两个接口就是审核面板的

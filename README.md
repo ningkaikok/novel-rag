@@ -287,6 +287,14 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `CONTEXTUAL_WORKERS` | `8` | 生成上下文的并发数 |
 | `QUERY_REWRITE_ENABLED` | `1` | 多轮追问时先补全指代再检索；设成 `0` 关闭 |
 | `QUERY_REWRITE_MODEL` | `glm:glm-4-flash` | 改写用的模型（用便宜快速的小模型，别用推理型大模型） |
+| `MODEL_ROUTING_ENABLED` | `1` | 启用任务级模型路由；回答仍尊重界面当前选择的模型 |
+| `MODEL_QUERY_REWRITE` | 同 `QUERY_REWRITE_MODEL` | Model Gateway 为查询改写任务选择的模型 |
+| `MODEL_SUMMARY` | 同 `HISTORY_SUMMARY_MODEL` | Model Gateway 为会话摘要任务选择的模型 |
+| `MODEL_QUERY_EXPAND` | 同 `QUERY_EXPAND_MODEL` | Model Gateway 为查询扩展任务选择的模型 |
+| `MODEL_JUDGE` | 空 | Model Gateway 为引用 Judge 任务选择的模型；为空时沿用当前模型 |
+| `MODEL_FALLBACK_MODEL` | 空 | 首个 token 前模型失败时的显式备用模型；空值不自动切换 |
+| `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
+| `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |
 | `HISTORY_MAX_TURNS` | `6` | 背景段最多带几轮历史，超出丢最旧的 |
 | `HISTORY_MAX_CHARS` | `1200` | 背景段的总字数预算，超出继续从最旧的整轮丢弃 |

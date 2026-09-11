@@ -163,7 +163,7 @@ def test_refresh_falls_back_to_previous_summary_when_generation_fails(monkeypatc
         "save_session_summary",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("失败时不该落库")),
     )
-    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m: _boom(_p))
+    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m, **_k: _boom(_p))
 
     errors: list[str] = []
     assert main._refresh_session_summary("s-1", _turns(12), errors) == "上一版摘要"
@@ -191,7 +191,7 @@ def test_refresh_uses_the_new_summary_even_if_persisting_it_fails(monkeypatch):
         "save_session_summary",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("数据库断开")),
     )
-    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m: iter(["新摘要"]))
+    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m, **_k: iter(["新摘要"]))
 
     errors: list[str] = []
     assert main._refresh_session_summary("s-1", _turns(12), errors) == "新摘要"
@@ -236,7 +236,11 @@ def test_ask_carries_the_summary_into_the_prompt_when_enabled(client, monkeypatc
     monkeypatch.setattr(main, "load_turns", lambda _sid: _turns(12))
     monkeypatch.setattr(main, "load_session_summary", lambda _sid: None)
     monkeypatch.setattr(main, "save_session_summary", lambda *a, **k: None)
-    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m: iter(["更早在聊雾隐山庄"]))
+    monkeypatch.setattr(
+        main,
+        "_generate_for_model",
+        lambda _p, _m, **_k: iter(["更早在聊雾隐山庄"]),
+    )
     monkeypatch.setattr(main, "generate_ollama_prompt_stream", lambda p, model: iter(["好"]))
 
     resp = client.post("/api/ask", json={"question": "他后来呢", "session_id": "s-on"})
@@ -255,7 +259,7 @@ def test_refresh_records_how_far_the_summary_covers(monkeypatch):
         "save_session_summary",
         lambda sid, summary, covers, model: saved.update(covers=covers, summary=summary),
     )
-    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m: iter(["新摘要"]))
+    monkeypatch.setattr(main, "_generate_for_model", lambda _p, _m, **_k: iter(["新摘要"]))
 
     main._refresh_session_summary("s-1", _turns(12), [])
 

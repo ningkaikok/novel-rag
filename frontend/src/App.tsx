@@ -157,6 +157,7 @@ function Main() {
   // 组件内部，trace 数据随消息数组由该 hook 维护。
   const {
     messages,
+    sessionId,
     input,
     setInput,
     busy,
@@ -242,7 +243,9 @@ function Main() {
               {messages.length === 0 ? (
                 <Welcome onPick={ask} />
               ) : (
-                messages.map((m, i) => <MessageBubble key={i} msg={m} />)
+                messages.map((m, i) => (
+                  <MessageBubble key={i} msg={m} sessionId={sessionId} turnIndex={i} />
+                ))
               )}
             </div>
             {showJumpToLatest && messages.length > 0 && (

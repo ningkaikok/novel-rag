@@ -2,6 +2,7 @@ import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Avatar, Button, Collapse, Tooltip, Typography } from 'antd';
 import {
   verifyCitation,
+  submitCitationFeedback,
   type AgentStep,
   type RetrievalCandidate,
   type Source,
@@ -229,11 +230,15 @@ const Sources = memo(function Sources({
   groupId,
   activeIndex,
   answer,
+  sessionId,
+  turnIndex,
 }: {
   sources: Source[];
   groupId: string;
   activeIndex: number | null;
   answer: string;
+  sessionId?: string;
+  turnIndex?: number;
 }) {
   return (
     <div className="sources-list">
@@ -258,7 +263,15 @@ const Sources = memo(function Sources({
           >
             {s.text}
           </Typography.Paragraph>
-          <VerifyCitation answer={answer} citation={i + 1} evidence={s.text} />
+          <VerifyCitation
+            answer={answer}
+            citation={i + 1}
+            evidence={s.text}
+            novel={s.novel}
+            chunkId={s.chunk_id}
+            sessionId={sessionId}
+            turnIndex={turnIndex}
+          />
         </div>
       ))}
     </div>
@@ -282,14 +295,24 @@ function VerifyCitation({
   answer,
   citation,
   evidence,
+  novel,
+  chunkId,
+  sessionId,
+  turnIndex,
 }: {
   answer: string;
   citation: number;
   evidence: string;
+  novel: string;
+  chunkId: number;
+  sessionId?: string;
+  turnIndex?: number;
 }) {
   const [result, setResult] = useState<VerifyCitationResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState<'helpful' | 'incorrect' | null>(null);
+  const [feedbackRunning, setFeedbackRunning] = useState(false);
 
   // 回答里没引用这条出处时，核实无从谈起（后端也会拒绝），直接不显示按钮
   if (!new RegExp(`\\[${citation}]`).test(answer)) return null;
@@ -306,15 +329,43 @@ function VerifyCitation({
     }
   }
 
+  async function sendFeedback(value: 'helpful' | 'incorrect') {
+    setFeedbackRunning(true);
+    setError('');
+    try {
+      await submitCitationFeedback({
+        answer,
+        citation,
+        novel,
+        chunkId,
+        feedback: value,
+        sessionId,
+        turnIndex,
+      });
+      setFeedback(value);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFeedbackRunning(false);
+    }
+  }
+
   if (result) {
     const verdict = VERDICT_LABELS[result.label] ?? VERDICT_LABELS.uncertain;
     return (
-      <div className={`verify-result ${verdict.className}`}>
-        <span className="verify-verdict">{verdict.text}</span>
-        <Tooltip title={`判定模型：${result.model}。仅供参考，请自行核对原文。`}>
-          <span className="verify-reason">{result.reason}</span>
-        </Tooltip>
-      </div>
+      <>
+        <div className={`verify-result ${verdict.className}`}>
+          <span className="verify-verdict">{verdict.text}</span>
+          <Tooltip title={`判定模型：${result.model}。仅供参考，请自行核对原文。`}>
+            <span className="verify-reason">{result.reason}</span>
+          </Tooltip>
+        </div>
+        <FeedbackButtons
+          value={feedback}
+          running={feedbackRunning}
+          onSelect={sendFeedback}
+        />
+      </>
     );
   }
 
@@ -323,8 +374,43 @@ function VerifyCitation({
       <Button size="small" type="link" loading={running} onClick={run}>
         {running ? '核实中…' : '核实这条'}
       </Button>
+      <FeedbackButtons value={feedback} running={feedbackRunning} onSelect={sendFeedback} />
       {error && <span className="verify-error">{error}</span>}
     </div>
+  );
+}
+
+function FeedbackButtons({
+  value,
+  running,
+  onSelect,
+}: {
+  value: 'helpful' | 'incorrect' | null;
+  running: boolean;
+  onSelect: (value: 'helpful' | 'incorrect') => void;
+}) {
+  return (
+    <span className="citation-feedback" aria-label="引用反馈">
+      <Button
+        size="small"
+        type="link"
+        disabled={running}
+        className={value === 'helpful' ? 'citation-feedback-selected' : undefined}
+        onClick={() => onSelect('helpful')}
+      >
+        {value === 'helpful' ? '✓ 有帮助' : '有帮助'}
+      </Button>
+      <Button
+        size="small"
+        type="link"
+        danger={value === 'incorrect'}
+        disabled={running}
+        className={value === 'incorrect' ? 'citation-feedback-selected' : undefined}
+        onClick={() => onSelect('incorrect')}
+      >
+        {value === 'incorrect' ? '✓ 有问题' : '有问题'}
+      </Button>
+    </span>
   );
 }
 
@@ -372,7 +458,15 @@ function CitedContent({
   return <>{nodes}</>;
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({
+  msg,
+  sessionId,
+  turnIndex,
+}: {
+  msg: ChatMessage;
+  sessionId?: string;
+  turnIndex?: number;
+}) {
   const isUser = msg.role === 'user';
   // useId 生成每条气泡唯一的出处锚点前缀（替换掉冒号，避免和 DOM id/CSS
   // 选择器的转义规则冲突）；正文 [n] 点击时按它定位到第 n 张出处卡片。
@@ -439,6 +533,8 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             groupId={groupId}
             activeIndex={activeSource}
             answer={msg.content}
+            sessionId={sessionId}
+            turnIndex={turnIndex}
           />
         )}
       </div>

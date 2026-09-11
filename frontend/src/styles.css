@@ -913,6 +913,24 @@ body {
   font-size: 0.78rem;
 }
 
+.citation-feedback {
+  display: inline-flex;
+  gap: 0.15rem;
+  margin-left: auto;
+}
+
+.citation-feedback .ant-btn {
+  padding: 0;
+  height: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.citation-feedback .ant-btn:hover,
+.citation-feedback-selected {
+  color: var(--ink) !important;
+}
+
 .verify-verdict {
   font-weight: 600;
   white-space: nowrap;

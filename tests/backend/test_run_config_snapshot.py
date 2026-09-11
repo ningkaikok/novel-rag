@@ -72,6 +72,10 @@ def test_ask_saves_run_config_snapshot(client, monkeypatch):
     assert snapshot["answer_mode"] in ("auto", "grounded", "free")
     assert snapshot["route_reason"]
     assert snapshot["generate_model"] == "fake-model"
+    assert snapshot["model_gateway"]["requested_answer_model"] == "fake-model"
+    assert snapshot["generation"][0]["completed"] is True
+    assert snapshot["citation_metrics"]["valid_number_ratio"] == 0.0
+    assert snapshot["citation_metrics"]["faithfulness"] == "not_automatically_judged"
     assert isinstance(snapshot["rerank_enabled"], bool)
     assert "reranker_model" in snapshot
     # 最终状态并入快照且同步到 status 列
@@ -96,6 +100,7 @@ def test_run_config_snapshot_respects_privacy_red_lines(client, monkeypatch):
     assert "顾长风所患的是奇毒蚀骨散" not in serialized
     # 也不含完整 prompt
     assert "[证据]" not in serialized
+    assert "uncited_statements" not in serialized
 
 
 def test_free_mode_run_config_records_mode_and_reason(client, monkeypatch):
@@ -174,6 +179,8 @@ def test_ensure_chat_schema_adds_run_config_column_idempotently(monkeypatch):
     assert any("ADD COLUMN IF NOT EXISTS run_config JSONB" in sql for sql in alter_sql), (
         "幂等迁移必须包含 run_config 补列"
     )
+    assert any("CREATE TABLE IF NOT EXISTS citation_feedback" in sql for sql in conn.sql)
+    assert any("CREATE TABLE IF NOT EXISTS citation_judgments" in sql for sql in conn.sql)
 
 
 # ---------------------------------------------------------------- 历史透出
