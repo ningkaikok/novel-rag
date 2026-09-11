@@ -146,6 +146,17 @@ QUERY_EXPAND_MODEL = os.environ.get("QUERY_EXPAND_MODEL", QUERY_REWRITE_MODEL)
 # 而变体之间措辞越往后越发散、语义漂移风险越大，边际收益很快变负。
 QUERY_EXPAND_MAX_VARIANTS = int(os.environ.get("QUERY_EXPAND_MAX_VARIANTS", 3))
 
+# --- 引用忠实度影子核验（P0：默认关闭，直到真实数据达到启用门槛）---
+# 开启后，完成一条有出处的 grounded 回答时在后台运行一次 Judge，不增加用户等待，
+# 也不改变回答正文。数据库只保存回答哈希、引用定位和聚合计数，不保存断言/原文。
+FAITHFULNESS_SHADOW_ENABLED = os.environ.get("FAITHFULNESS_SHADOW_ENABLED", "0") == "1"
+FAITHFULNESS_JUDGE_MODE = os.environ.get("FAITHFULNESS_JUDGE_MODE", "two_step").strip().lower()
+if FAITHFULNESS_JUDGE_MODE not in {"single_step", "two_step"}:
+    raise ValueError(
+        "FAITHFULNESS_JUDGE_MODE 必须是 single_step/two_step，"
+        f"收到：{FAITHFULNESS_JUDGE_MODE!r}"
+    )
+
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500))  # 每个片段的字符数上限
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", 80))  # 相邻片段的重叠字符数
 
@@ -174,6 +185,12 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 TOP_K = int(os.environ.get("TOP_K", 3))
 # 召回候选数量。候选池大于最终上下文，避免过早截断相关片段。
 RECALL_K = int(os.environ.get("RECALL_K", 20))
+
+# --- 普通查询缓存（只缓存检索结果，不缓存回答正文）---
+# 单进程本地缓存足以覆盖重复追问和页面重试；索引指纹会进入缓存键，索引成功
+# 更新后后端也会主动清空。默认开启但有界，避免把基础设施复杂度提前引入。
+QUERY_CACHE_ENABLED = os.environ.get("QUERY_CACHE_ENABLED", "1") != "0"
+QUERY_CACHE_MAX_ENTRIES = int(os.environ.get("QUERY_CACHE_MAX_ENTRIES", 128))
 
 # 「长上下文取舍」的另一面：整本书小到能全塞进模型窗口时，**RAG 本身就是多余的**。
 # 与其检索出几段（可能漏掉关键信息），不如把全文给模型——不会有任何信息损失。

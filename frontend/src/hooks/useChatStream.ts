@@ -422,6 +422,7 @@ export function useChatStream({ topK, answerMode, workspaceMode }: UseChatStream
 
   return {
     messages,
+    sessionId: sessionIdRef.current,
     setMessages,
     input,
     setInput,

@@ -172,6 +172,108 @@
     "title": "BookList",
     "type": "object"
    },
+   "CitationFeedbackRequest": {
+    "description": "记录用户对单条引用的轻量反馈。\n\n``answer`` 只用于服务端计算指纹，不会落库；原文也不随反馈请求提交，\n避免为了建立质量数据飞轮而复制版权内容。",
+    "properties": {
+     "answer": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Answer",
+      "type": "string"
+     },
+     "chunk_id": {
+      "minimum": 0.0,
+      "title": "Chunk Id",
+      "type": "integer"
+     },
+     "citation": {
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Citation",
+      "type": "integer"
+     },
+     "comment": {
+      "anyOf": [
+       {
+        "maxLength": 500,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Comment"
+     },
+     "feedback": {
+      "enum": [
+       "helpful",
+       "incorrect"
+      ],
+      "title": "Feedback",
+      "type": "string"
+     },
+     "novel": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Novel",
+      "type": "string"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "turn_index": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Turn Index"
+     }
+    },
+    "required": [
+     "answer",
+     "citation",
+     "novel",
+     "chunk_id",
+     "feedback"
+    ],
+    "title": "CitationFeedbackRequest",
+    "type": "object"
+   },
+   "CitationFeedbackResult": {
+    "properties": {
+     "accepted": {
+      "default": true,
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "feedback": {
+      "enum": [
+       "helpful",
+       "incorrect"
+      ],
+      "title": "Feedback",
+      "type": "string"
+     }
+    },
+    "required": [
+     "feedback"
+    ],
+    "title": "CitationFeedbackResult",
+    "type": "object"
+   },
    "CurrentModel": {
     "properties": {
      "current": {
@@ -581,6 +683,66 @@
     "title": "ModelList",
     "type": "object"
    },
+   "QueryCacheMetrics": {
+    "properties": {
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "entries": {
+      "title": "Entries",
+      "type": "integer"
+     },
+     "evictions": {
+      "title": "Evictions",
+      "type": "integer"
+     },
+     "hit_rate": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hit Rate"
+     },
+     "hits": {
+      "title": "Hits",
+      "type": "integer"
+     },
+     "max_entries": {
+      "title": "Max Entries",
+      "type": "integer"
+     },
+     "misses": {
+      "title": "Misses",
+      "type": "integer"
+     },
+     "request_hit": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Request Hit"
+     }
+    },
+    "required": [
+     "enabled",
+     "hits",
+     "misses",
+     "entries",
+     "max_entries",
+     "evictions"
+    ],
+    "title": "QueryCacheMetrics",
+    "type": "object"
+   },
    "RetrievalCandidate": {
     "properties": {
      "chapter_title": {
@@ -651,6 +813,106 @@
      "rank"
     ],
     "title": "RetrievalCandidate",
+    "type": "object"
+   },
+   "RunEvent": {
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "elapsed_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elapsed Ms"
+     },
+     "event_type": {
+      "title": "Event Type",
+      "type": "string"
+     },
+     "route": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Route"
+     },
+     "stage": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "tool": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tool"
+     }
+    },
+    "required": [
+     "event_type"
+    ],
+    "title": "RunEvent",
+    "type": "object"
+   },
+   "RunEventList": {
+    "properties": {
+     "events": {
+      "items": {
+       "$ref": "#/components/schemas/RunEvent"
+      },
+      "title": "Events",
+      "type": "array"
+     },
+     "run_id": {
+      "title": "Run Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "run_id",
+     "events"
+    ],
+    "title": "RunEventList",
     "type": "object"
    },
    "SearchMatch": {
@@ -1315,6 +1577,45 @@
     "summary": "Delete Book"
    }
   },
+  "/api/citations/feedback": {
+   "post": {
+    "description": "记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。\n\n反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有\nsession_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。",
+    "operationId": "citation_feedback_api_citations_feedback_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CitationFeedbackRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CitationFeedbackResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Citation Feedback"
+   }
+  },
   "/api/citations/verify": {
    "post": {
     "description": "核实某一条 ``[n]`` 引用是否真的被它指向的原文支持。\n\n**为什么做成用户点一下才跑，而不是每次回答自动核实**：\n\n`docs/experiments/m35-faithfulness-calibration.md` 给忠实度判定定了两档启用\n门槛，最轻的一档（UI 显示\"忠实度不确定\"提示）要求一致率 ≥80%，而实测最好的\n配置只有 67.9%，所以自动、全局地给回答打忠实度标记目前不达标——尤其是\n\"反对\"方向的精确率只有 50%，自动告警每两次就有一次冤枉，比不提示更糟。\n\n按需核实绕开的正是这个问题：判定由用户主动发起、只作用于他指定的那一条引用，\n返回的是**原始判定和理由**（连同判定用的模型名），而不是系统给整段回答盖章。\n用户自己能看着理由决定信不信，这和那张阈值表管的\"自动标注\"是两回事。\n\n成本也因此可控：不点不花钱、不增加任何一次回答的延迟。",
@@ -1618,6 +1919,25 @@
     "summary": "Retry Index Task"
    }
   },
+  "/api/metrics/query-cache": {
+   "get": {
+    "description": "返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。",
+    "operationId": "query_cache_metrics_api_metrics_query_cache_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QueryCacheMetrics"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Query Cache Metrics"
+   }
+  },
   "/api/model": {
    "post": {
     "operationId": "set_model_api_model_post",
@@ -1713,6 +2033,46 @@
      }
     },
     "summary": "Reindex"
+   }
+  },
+  "/api/runs/{run_id}/events": {
+   "get": {
+    "description": "读取一次运行的事件元数据，不返回聊天正文或工具结果。",
+    "operationId": "run_events_api_runs__run_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunEventList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Run Events"
    }
   },
   "/api/search": {

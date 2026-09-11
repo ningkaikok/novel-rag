@@ -27,6 +27,7 @@ from tool_spec import (
 )
 
 EXPECTED_TOOLS = {
+    "query_library",
     "list_books",
     "search_novels",
     "read_neighbors",
@@ -191,7 +192,7 @@ def _mcp_server():
 def test_mcp_registration_matches_registry():
     mcp_server = _mcp_server()
     tools = {t.name: t for t in asyncio.run(mcp_server.server.list_tools())}
-    # MCP 只暴露数据查询四件套；answer_with_citations 需要 LLM，属 Agent 循环
+    # MCP 只暴露数据查询工具；answer_with_citations 需要 LLM，属 Agent 循环
     assert set(tools) == EXPECTED_TOOLS - {"answer_with_citations"}
 
     for name, tool in tools.items():
@@ -206,7 +207,12 @@ def test_mcp_registration_matches_registry():
         # MCP 是 Agent Lab 接口的子集（例如 search 未暴露 novel 过滤）
         assert set(actual_props) <= set(expected), name
         for param, meta in actual_props.items():
-            assert meta["type"] == expected[param]["type"], (name, param)
+            expected_meta = expected[param]
+            expected_types = expected_meta.get("type") or [
+                item["type"] for item in expected_meta.get("anyOf", [])
+            ]
+            actual_type = meta.get("type") or [item["type"] for item in meta.get("anyOf", [])]
+            assert actual_type == expected_types, (name, param)
 
         expected_required = {
             rename.get(key, key)

@@ -205,9 +205,10 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   回退）；批大小探针显示默认 batch_size=32 与最优差 <1%。结论：默认值 3 已在安全区
   （2~3），不改；生产精排延迟的进一步优化（RECALL_K 下限/设备/更小模型）另行立项
   （见 [重排候选数调优实验](experiments/m34-rerank-tuning.md)）
-- [ ] **普通查询缓存与命中率观测**：对 (问题, 索引指纹) 做查询级缓存并记录命中率，
-  作为「下一问预取」的前置数据。命中率日志证明追问模式可预测之前，预取仍留在
-  暂缓清单
+- [x] **普通查询缓存与命中率观测**：对 (问题, 索引指纹) 做有界的单进程 LRU 查询级
+  缓存并记录命中率；缓存只保存检索来源，索引重建后主动清空，配置变化进入缓存键。
+  `/api/metrics/query-cache` 提供聚合统计，作为「下一问预取」的前置数据。命中率
+  日志证明追问模式可预测之前，预取仍留在暂缓清单
 - [ ] BGE-M3 对照实验按递进矩阵执行：① 基线 ✅；② BGE-M3 dense + BM25 + 现有
   reranker ✅（小语料无质量收益、成本更高，见实验报告）；③ BGE-M3 dense + sparse
   （需 pgvector `sparsevec` 列与稀疏检索通路）；④ multi-vector late interaction
@@ -254,6 +255,19 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   （`chat_turns.run_config` JSONB 幂等补列，快照含 reranker 开关与模型名、生成
   模型、回答模式与路由原因、`PROMPT_TEMPLATE_VERSION` 和最终状态
   complete/interrupted/error；隐私红线有测试断言）
+- [x] 记录线上引用规则指标并收集用户反馈：答案落库 `valid_number_ratio`、引用完整性
+  等不含正文的摘要指标；出处卡片支持「有帮助/有问题」，反馈表只保存书目定位和回答
+  哈希，不复制小说原文。反馈用于后续校准 Judge，当前不自动阻断回答。
+- [x] P0 Model Gateway 前置：统一 Ollama、Claude 和智谱的任务级路由、首 token 前显式
+  降级和不含正文的生成耗时/字符数观测；回答任务尊重用户选模，改写/摘要/扩展/Judge
+  可独立配置。完整的 token/成本预算、权限和服务边界仍属于 M6.3。
+- [x] 引用忠实度影子核验可配置后台运行：完成回答后按引用启动 Judge，不阻塞 SSE、不
+  回写答案；`FAITHFULNESS_SHADOW_ENABLED=1` 时只落库回答哈希、来源定位和断言聚合
+  计数，默认关闭，先用真实反馈校准再考虑用户提示或自动修订。
+
+- [x] 真实反馈校准管线：`scripts/eval_faithfulness_feedback.py` 关联反馈与最新影子
+  Judge 结果，按方法/模型输出弱标签混淆矩阵；反馈仍不是金标准，未达到门槛前不触发
+  用户提示、拒答或自动修订。
 
 验收：引用三类指标可以分别计算；影子评测能展示自动判断与人工标签的差异；一次回答可
 关联到使用的数据源/索引配置和在线模型配置；在没有可靠阈值前不会因自动支持度误判而
@@ -372,22 +386,30 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 注册、可授权、可观测、可恢复的边界。先用普通 Python 保持学习链路透明，再按真实
 需求评估 MCP、OpenTelemetry 和 LangGraph。
 
-- [ ] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
+- [x] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
   权限、风险等级、超时和启停；运行时只读取经过验证的不可变快照。前置工作：把现有
   `ToolResult`（summary/sources/facts）正式化为 Pydantic/JSON Schema 并增加
   `schema_version`，为后续 MCP 适配打基础。✅ 前置项已落地（2026-08-23）：
-  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与五工具不可变 `TOOL_REGISTRY`
+  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与六工具不可变 `TOOL_REGISTRY`
   （answer_with_citations 结果 schema 单独定义），MCP 服务器已改为从 Registry 生成注册；
-  Registry 落地但 Gateway、权限、启停均未做，待 M6.1/M6.2 正式项
+  当前已补齐 query_library、权限、版本、启停字段，并由冻结的 Registry 提供运行时快照。
 - [ ] M6.2：增加 Tool Gateway，集中做鉴权、参数校验、出站白名单、Prompt Injection
   隔离、限流、超时、幂等、分类重试、熔断和审计
-- [ ] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录 token/耗时/成本，
-  支持按任务选模、预算上限、超时和显式降级
+  当前已完成统一执行入口、权限与参数校验、重复调用/调用次数闸门、超时观测和不含正文
+  的审计摘要；出站工具、写操作重试和跨进程熔断仍待真实需求出现后补齐。
+- [x] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录估算 token/耗时/成本，
+  支持按任务选模、输出/成本预算、云端权限边界和首 token 前显式降级；真实供应商 token
+  对账和多租户配额仍属于 M6.7 的生产化工作
 - [ ] M6.4：统一 Agent 事件，串起 Router、Planner、Tool、检索、LLM 和 SSE 的 `run_id`；
   同时建立路由准确率、工具成功率、答案依据率、延迟和成本的评测闭环
+  当前普通问答与 Agent 已将不含正文的 `run_started/route_selected/evidence_added/`
+  `answer_generated/run_finished` 事件独立落到 `run_events`，可通过
+  `/api/runs/{run_id}/events` 查询；完整的跨端点评测与 SSE 事件版本化仍待补齐。
 - [ ] M6.5：拆分 Chat History、Run State 和 Event Log；短问答继续 SSE，长任务改为
   `job_id + worker`，并补 checkpoint、幂等、取消、恢复和死信处理；前端可恢复 SSE
   依赖此阶段的 Event Log，不提前实现
+  当前已先把短问答/Agent 的 Event Log 从 `chat_turns` 正文中拆出；索引任务已有
+  `job_id` 状态机，跨进程 worker、checkpoint 和恢复仍待下一阶段。
 - [ ] M6.6：在工具需要跨客户端复用时增加 MCP 适配，不绕过内部权限和审计边界。
   允许的提前项：M3.3.5 完成后可做一个只读、stdio 传输的最小 MCP PoC 作为低成本探针，
   用真实客户端（Claude Code 等）暴露 ToolResult Schema 的设计问题并反哺 M6.1；

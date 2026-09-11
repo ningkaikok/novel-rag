@@ -84,6 +84,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/citations/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Citation Feedback
+         * @description 记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。
+         *
+         *     反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有
+         *     session_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。
+         */
+        post: operations["citation_feedback_api_citations_feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/citations/verify": {
         parameters: {
             query?: never;
@@ -249,6 +272,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics/query-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query Cache Metrics
+         * @description 返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。
+         */
+        get: operations["query_cache_metrics_api_metrics_query_cache_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/model": {
         parameters: {
             query?: never;
@@ -297,6 +340,26 @@ export interface paths {
          * @description 启动后台同步。默认只处理变化文件；force=true 强制重新处理所有现存书。
          */
         post: operations["reindex_api_reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Events
+         * @description 读取一次运行的事件元数据，不返回聊天正文或工具结果。
+         */
+        get: operations["run_events_api_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -413,6 +476,47 @@ export interface components {
         BookList: {
             /** Books */
             books: string[];
+        };
+        /**
+         * CitationFeedbackRequest
+         * @description 记录用户对单条引用的轻量反馈。
+         *
+         *     ``answer`` 只用于服务端计算指纹，不会落库；原文也不随反馈请求提交，
+         *     避免为了建立质量数据飞轮而复制版权内容。
+         */
+        CitationFeedbackRequest: {
+            /** Answer */
+            answer: string;
+            /** Chunk Id */
+            chunk_id: number;
+            /** Citation */
+            citation: number;
+            /** Comment */
+            comment?: string | null;
+            /**
+             * Feedback
+             * @enum {string}
+             */
+            feedback: "helpful" | "incorrect";
+            /** Novel */
+            novel: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Turn Index */
+            turn_index?: number | null;
+        };
+        /** CitationFeedbackResult */
+        CitationFeedbackResult: {
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+            /**
+             * Feedback
+             * @enum {string}
+             */
+            feedback: "helpful" | "incorrect";
         };
         /** CurrentModel */
         CurrentModel: {
@@ -557,6 +661,25 @@ export interface components {
             /** Models */
             models: string[];
         };
+        /** QueryCacheMetrics */
+        QueryCacheMetrics: {
+            /** Enabled */
+            enabled: boolean;
+            /** Entries */
+            entries: number;
+            /** Evictions */
+            evictions: number;
+            /** Hit Rate */
+            hit_rate?: number | null;
+            /** Hits */
+            hits: number;
+            /** Max Entries */
+            max_entries: number;
+            /** Misses */
+            misses: number;
+            /** Request Hit */
+            request_hit?: boolean | null;
+        };
         /** RetrievalCandidate */
         RetrievalCandidate: {
             /** Chapter Title */
@@ -578,6 +701,30 @@ export interface components {
              * @default false
              */
             selected: boolean;
+        };
+        /** RunEvent */
+        RunEvent: {
+            /** Created At */
+            created_at?: string | null;
+            /** Elapsed Ms */
+            elapsed_ms?: number | null;
+            /** Event Type */
+            event_type: string;
+            /** Route */
+            route?: string | null;
+            /** Stage */
+            stage?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Tool */
+            tool?: string | null;
+        };
+        /** RunEventList */
+        RunEventList: {
+            /** Events */
+            events: components["schemas"]["RunEvent"][];
+            /** Run Id */
+            run_id: string;
         };
         /** SearchMatch */
         SearchMatch: {
@@ -893,6 +1040,39 @@ export interface operations {
             };
         };
     };
+    citation_feedback_api_citations_feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitationFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationFeedbackResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     verify_citation_api_citations_verify_post: {
         parameters: {
             query?: never;
@@ -1125,6 +1305,26 @@ export interface operations {
             };
         };
     };
+    query_cache_metrics_api_metrics_query_cache_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryCacheMetrics"];
+                };
+            };
+        };
+    };
     set_model_api_model_post: {
         parameters: {
             query?: never;
@@ -1196,6 +1396,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexTaskStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_events_api_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEventList"];
                 };
             };
             /** @description Validation Error */

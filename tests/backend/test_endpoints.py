@@ -39,6 +39,30 @@ def test_health_with_rag_loaded(client):
     assert resp.json() == {"ok": True, "ready": True}
 
 
+def test_run_events_endpoint_returns_metadata_only(client, monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_run_events",
+        lambda _run_id: [{"event_type": "run_finished", "status": "complete"}],
+    )
+    resp = client.get("/api/runs/run-1/events")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "run_id": "run-1",
+        "events": [
+            {
+                "event_type": "run_finished",
+                "status": "complete",
+                "route": None,
+                "stage": None,
+                "tool": None,
+                "elapsed_ms": None,
+                "created_at": None,
+            }
+        ],
+    }
+
+
 def test_list_books_reads_novels_dir(client, tmp_path, monkeypatch):
     (tmp_path / "凡人修仙传.txt").write_text("……")
     (tmp_path / "诡秘之主.txt").write_text("……")
@@ -740,3 +764,50 @@ def test_verify_citation_passes_through_uncertain_verdict(client, monkeypatch):
 
     assert body["label"] == "uncertain"
     assert "超时" in body["reason"]
+
+
+def test_citation_feedback_does_not_persist_answer_or_source_text(client, monkeypatch):
+    captured = {}
+
+    def fake_save(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main, "save_citation_feedback", fake_save)
+
+    resp = client.post(
+        "/api/citations/feedback",
+        json={
+            "answer": "顾长风中了蚀骨散[1]。",
+            "citation": 1,
+            "novel": "雾隐山庄",
+            "chunk_id": 3,
+            "feedback": "incorrect",
+            "session_id": "s-feedback",
+            "turn_index": 1,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"accepted": True, "feedback": "incorrect"}
+    assert captured["answer"] == "顾长风中了蚀骨散[1]。"
+    assert captured["novel"] == "雾隐山庄"
+    assert "evidence" not in captured
+
+
+def test_citation_feedback_rejects_unknown_label(client, monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "save_citation_feedback",
+        lambda **_kwargs: pytest.fail("非法反馈不应落库"),
+    )
+    resp = client.post(
+        "/api/citations/feedback",
+        json={
+            "answer": "答案[1]。",
+            "citation": 1,
+            "novel": "雾隐山庄",
+            "chunk_id": 0,
+            "feedback": "maybe",
+        },
+    )
+    assert resp.status_code == 422

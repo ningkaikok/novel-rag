@@ -50,12 +50,15 @@
 （在项目根目录 novel-rag/ 下运行）
 """
 
+import hashlib
 import json
 import sys
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import requests
 from fastapi import FastAPI, Query, Request, UploadFile
@@ -83,7 +86,11 @@ logger = get_logger("main")
 
 import ingest  # noqa: E402
 from agent_lab import run_agent  # noqa: E402
-from backend import claude_cli, zhipu  # noqa: E402
+from backend import (  # noqa: E402
+    claude_cli,
+    model_gateway,
+    zhipu,
+)
 from backend.errors import APIError, ErrorCode, register_exception_handlers  # noqa: E402
 from backend.index_tasks import (  # noqa: E402
     IndexTaskManager,
@@ -92,11 +99,14 @@ from backend.index_tasks import (  # noqa: E402
     TaskNotFound,
 )
 from backend.middleware import RequestIDMiddleware  # noqa: E402
+from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AgentAskRequest,
     AgentStep,
     AskRequest,
     BookList,
+    CitationFeedbackRequest,
+    CitationFeedbackResult,
     CurrentModel,
     DeleteResult,
     GraphEdgeItem,
@@ -106,6 +116,9 @@ from backend.schemas import (  # noqa: E402
     HealthStatus,
     IndexTaskStatus,
     ModelList,
+    QueryCacheMetrics,
+    RunEvent,
+    RunEventList,
     SearchMatch,
     SearchResult,
     SessionClearResult,
@@ -118,8 +131,17 @@ from backend.schemas import (  # noqa: E402
     VerifyCitationRequest,
     VerifyCitationResult,
 )
-from citation_eval import judge_support, statements_citing  # noqa: E402
+from citation_eval import (  # noqa: E402
+    evaluate_citations,
+    judge_support,
+    judge_support_two_step,
+    statements_citing,
+)
 from config import (  # noqa: E402
+    CHAPTER_EXPANSION_MODE,
+    FAITHFULNESS_JUDGE_MODE,
+    FAITHFULNESS_SHADOW_ENABLED,
+    HIERARCHY_ENABLED,
     HISTORY_IN_PROMPT,
     HISTORY_MAX_TURNS,
     HISTORY_SUMMARY_ENABLED,
@@ -129,10 +151,14 @@ from config import (  # noqa: E402
     NOVELS_DIR,
     OLLAMA_HOST,
     OLLAMA_MODEL,
+    QUERY_CACHE_ENABLED,
+    QUERY_CACHE_MAX_ENTRIES,
     QUERY_EXPAND_ENABLED,
     QUERY_EXPAND_MODEL,
     QUERY_REWRITE_ENABLED,
     QUERY_REWRITE_MODEL,
+    RECALL_K,
+    RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     RERANKER_MODEL,
 )
@@ -150,9 +176,14 @@ from postgres import (  # noqa: E402
     has_index,
     init_pool,
     list_relation_edges,
+    load_index_manifest,
+    load_run_events,
     load_session_summary,
     load_turns,
     next_turn_index,
+    save_citation_feedback,
+    save_citation_judgment,
+    save_run_events,
     save_session_summary,
     save_turn,
     set_relation_review,
@@ -174,6 +205,48 @@ from session_summary import (  # noqa: E402
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
 index_tasks = IndexTaskManager()
+query_cache = QueryCache(enabled=QUERY_CACHE_ENABLED, max_entries=QUERY_CACHE_MAX_ENTRIES)
+
+
+def _index_fingerprint() -> str | None:
+    """生成当前索引的稳定指纹，只包含 manifest 元数据，不包含小说正文。"""
+    try:
+        manifests = load_index_manifest()
+    except Exception as exc:
+        logger.warning(f"读取索引指纹失败，跳过查询缓存：{exc}")
+        return None
+    payload = [
+        {
+            "novel": novel,
+            "source_hash": record.get("source_hash"),
+            "pipeline_hash": record.get("pipeline_hash"),
+            "chunk_count": record.get("chunk_count"),
+        }
+        for novel, record in sorted(manifests.items())
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _retrieval_cache_key(question: str, top_k: int) -> CacheKey | None:
+    """构造检索缓存键；没有可信索引指纹时宁可绕过缓存。"""
+    index_fingerprint = state.get("index_fingerprint")
+    if not index_fingerprint:
+        return None
+    retrieval_config = {
+        "rerank_enabled": RERANK_ENABLED,
+        "reranker_model": RERANKER_MODEL if RERANK_ENABLED else None,
+        "rerank_candidate_multiplier": RERANK_CANDIDATE_MULTIPLIER,
+        "recall_k": RECALL_K,
+        "hierarchy_enabled": HIERARCHY_ENABLED,
+        "chapter_expansion_mode": CHAPTER_EXPANSION_MODE,
+    }
+    config_text = json.dumps(retrieval_config, sort_keys=True, separators=(",", ":"))
+    return CacheKey(
+        question=question.strip(),
+        index_fingerprint=index_fingerprint,
+        retrieval_fingerprint=config_text,
+    )
 
 
 @asynccontextmanager
@@ -233,15 +306,18 @@ def _try_load_rag() -> NovelRAG | None:
     try:
         service = NovelRAG(embedder=state["embedder"])
     except Exception:
+        state["index_fingerprint"] = None
         return None  # PostgreSQL 索引还没建立
+    # 索引重建成功后刷新指纹并清空旧结果；外部修改索引但未更新 manifest 时，
+    # 指纹读取失败会让缓存自动绕过，而不是冒险复用旧证据。
+    state["index_fingerprint"] = _index_fingerprint()
+    query_cache.clear()
     # 自适应查询扩展（M3.4）：rag.py 不依赖云端 SDK，生成函数由 Web 层按
     # QUERY_EXPAND_MODEL 前缀路由注入（和上面 _rewrite_for_search 的路由
     # 是同一个模式）。开关默认关闭，关闭时这里什么都不挂、零开销。
     if QUERY_EXPAND_ENABLED:
-        service.expand_generate_fn = lambda prompt: (
-            zhipu.generate_stream(prompt, QUERY_EXPAND_MODEL)
-            if QUERY_EXPAND_MODEL.startswith(zhipu.MODEL_PREFIX)
-            else claude_cli.generate_stream(prompt, QUERY_EXPAND_MODEL)
+        service.expand_generate_fn = lambda prompt: _generate_for_model(
+            prompt, QUERY_EXPAND_MODEL, task="query_expand"
         )
     return service
 
@@ -352,6 +428,9 @@ def _start_index_task(
         )
         # NovelRAG 自身不缓存片段，但首次建库前 state["rag"] 是 None；成功后要补上。
         state["rag"] = _try_load_rag() if result["chunk_count"] else None
+        if not result["chunk_count"]:
+            state["index_fingerprint"] = None
+            query_cache.clear()
         return result
 
     try:
@@ -494,7 +573,7 @@ def _refresh_session_summary(session_id: str, turns: list[dict], errors: list) -
     summary = build_summary(
         previous,
         pending,
-        lambda prompt: _generate_for_model(prompt, HISTORY_SUMMARY_MODEL),
+        lambda prompt: _generate_for_model(prompt, HISTORY_SUMMARY_MODEL, task="summary"),
         errors=errors,
     )
     if not summary:
@@ -528,11 +607,7 @@ def _rewrite_for_search(req: AskRequest, turns: list[dict]) -> str:
     rewritten = rewrite_query(
         req.question,
         turns,
-        lambda prompt: (
-            zhipu.generate_stream(prompt, QUERY_REWRITE_MODEL)
-            if QUERY_REWRITE_MODEL.startswith(zhipu.MODEL_PREFIX)
-            else claude_cli.generate_stream(prompt, QUERY_REWRITE_MODEL)
-        ),
+        lambda prompt: _generate_for_model(prompt, QUERY_REWRITE_MODEL, task="query_rewrite"),
         errors,
     )
     for reason in errors:
@@ -553,13 +628,26 @@ def _next_or_sentinel(iterator):
     return next(iterator, _SENTINEL)
 
 
-def _generate_for_model(prompt: str, model: str):
-    """统一三种生成后端，普通问答和 Agent Lab 共用同一条模型路由。"""
-    if model.startswith(claude_cli.MODEL_PREFIX):
-        return claude_cli.generate_stream(prompt, model)
-    if model.startswith(zhipu.MODEL_PREFIX):
-        return zhipu.generate_stream(prompt, model)
-    return generate_ollama_prompt_stream(prompt, model=model)
+def _generate_for_model(
+    prompt: str,
+    model: str,
+    *,
+    task: model_gateway.ModelTask = "answer",
+    stats: list[model_gateway.GenerationStats] | None = None,
+):
+    """统一三种生成后端和任务级路由，保留测试可替换的后端入口。"""
+    return model_gateway.generate_stream(
+        prompt,
+        model,
+        task=task,
+        stats=stats,
+        # 保持旧测试和本地调用方可以 monkeypatch main 模块里的后端函数。
+        ollama_factory=lambda selected, text: generate_ollama_prompt_stream(
+            text, model=selected
+        ),
+        claude_factory=lambda selected, text: claude_cli.generate_stream(text, selected),
+        zhipu_factory=lambda selected, text: zhipu.generate_stream(text, selected),
+    )
 
 
 def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict:
@@ -586,7 +674,111 @@ def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict
         # 查询改写/扩展是否可能参与本轮检索
         "query_rewrite_enabled": QUERY_REWRITE_ENABLED,
         "query_expand_enabled": QUERY_EXPAND_ENABLED,
+        "faithfulness_shadow_enabled": FAITHFULNESS_SHADOW_ENABLED,
+        "faithfulness_judge_mode": FAITHFULNESS_JUDGE_MODE,
+        "model_gateway": model_gateway.routing_snapshot(model),
+        "query_cache": query_cache.snapshot(),
     }
+
+
+def _citation_metric_snapshot(answer: str, sources: list[dict]) -> dict:
+    """生成可安全落库的引用规则指标，不把回答句子复制到配置快照。
+
+    这是 P0 的第一道低风险观测：规则只统计编号合法性和引用完整性，绝不把
+    它冒充成语义忠实度。后续用户反馈和影子 Judge 可以在同一份样本上校准。
+    """
+    metrics = evaluate_citations(answer, sources)
+    completeness = metrics["completeness"]
+    return {
+        "valid_number_ratio": metrics["valid_number_ratio"],
+        "cited_source_count": metrics["cited_source_count"],
+        "invalid_citation_count": len(metrics["invalid_citation_numbers"]),
+        "factual_statement_count": completeness["factual_statement_count"],
+        "cited_statement_count": completeness["cited_statement_count"],
+        "uncited_statement_count": completeness["uncited_statement_count"],
+        "uncited_ratio": completeness["uncited_ratio"],
+        "faithfulness": "not_automatically_judged",
+    }
+
+
+def _persist_faithfulness_shadow(
+    *,
+    answer: str,
+    sources: list[dict],
+    model: str,
+    session_id: str | None,
+    turn_index: int | None,
+) -> None:
+    """后台运行引用 Judge，并只保存聚合计数。
+
+    这是观测链路，不是回答质量门禁：任何单条失败都只记录为 uncertain，
+    不回写答案，也不让后台异常影响已经完成的请求。
+    """
+    metrics = evaluate_citations(answer, sources)
+    for citation in metrics["valid_citation_numbers"]:
+        statements = statements_citing(answer, citation)
+        if not statements:
+            continue
+        evidence = [str(sources[citation - 1].get("text") or "")]
+        try:
+            if FAITHFULNESS_JUDGE_MODE == "two_step":
+                result = judge_support_two_step(
+                    "".join(statements),
+                    evidence,
+                    lambda prompt: _generate_for_model(prompt, model, task="judge"),
+                    batch_verdicts=True,
+                )
+            else:
+                result = judge_support(
+                    "".join(statements),
+                    evidence,
+                    lambda prompt: _generate_for_model(prompt, model, task="judge"),
+                )
+            verdicts = result.get("verdicts") or []
+            labels = [str(item.get("label")) for item in verdicts if isinstance(item, dict)]
+            save_citation_judgment(
+                answer=answer,
+                citation=citation,
+                novel=str(sources[citation - 1].get("novel") or ""),
+                chunk_id=int(sources[citation - 1].get("chunk_id", 0)),
+                label=str(result.get("label", "uncertain")),
+                method=f"shadow_{FAITHFULNESS_JUDGE_MODE}",
+                model=model,
+                claim_count=len(labels),
+                supported_count=labels.count("supported"),
+                contradicted_count=labels.count("contradicted"),
+                not_found_count=labels.count("not_found"),
+                session_id=session_id,
+                turn_index=turn_index,
+            )
+        except Exception as exc:
+            # 影子核验永远不能把用户已经拿到的回答变成失败请求。
+            logger.warning(f"引用影子核验失败（忽略）：{type(exc).__name__}: {exc}")
+
+
+def _schedule_faithfulness_shadow(
+    *,
+    answer: str,
+    sources: list[dict],
+    model: str,
+    session_id: str | None,
+    turn_index: int | None,
+) -> None:
+    if not FAITHFULNESS_SHADOW_ENABLED or not answer or not sources:
+        return
+    worker = threading.Thread(
+        target=_persist_faithfulness_shadow,
+        kwargs={
+            "answer": answer,
+            "sources": sources,
+            "model": model,
+            "session_id": session_id,
+            "turn_index": turn_index,
+        },
+        name="citation-faithfulness-shadow",
+        daemon=True,
+    )
+    worker.start()
 
 
 @app.post("/api/ask")
@@ -616,11 +808,17 @@ async def ask(req: AskRequest, request: Request):
     )
 
     model = state["model"]
+    run_id = uuid.uuid4().hex[:12]
+    run_events: list[dict[str, object]] = [{"type": "run_started", "run_id": run_id}]
+    run_started_at = time.perf_counter()
     # M3.5-④：在线配置快照在生成前定格——它描述"这轮回答用了什么配置"，
     # 不随生成成败变化；最终状态（complete/interrupted/error）落库时才补上。
     run_config = _build_run_config(
         route_mode=decision.route.value, route_reason=decision.reason, model=model
     )
+    run_config["run_id"] = run_id
+    run_config["events"] = run_events
+    generation_stats: list[model_gateway.GenerationStats] = []
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
     session_id = req.session_id
@@ -646,6 +844,9 @@ async def ask(req: AskRequest, request: Request):
         #    前 2 秒界面上什么都没有。现在每完成一步就推一条，界面可以像
         #    成熟的 AI 应用那样把步骤一条条点亮。等待时长没变，但心理感受完全不同。
         trace_payload: list[dict] = []
+        run_events.append(
+            {"type": "route_selected", "run_id": run_id, "route": decision.route.value}
+        )
         route_step = TraceStep(
             step="回答路径",
             detail=(
@@ -732,22 +933,53 @@ async def ask(req: AskRequest, request: Request):
                 trace_payload.append(structured_step)
                 yield f"event: step\ndata: {json.dumps(structured_step, ensure_ascii=False)}\n\n"
             else:
-                step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
-                while True:
-                    # 和下面消费模型 token 用的是同一套模式：同步生成器丢线程池里逐个取，
-                    # 每个 await 都是一次让出控制权的机会。
-                    item = await run_in_threadpool(_next_or_sentinel, step_iter)
-                    if item is _SENTINEL:
-                        break
-                    kind, value = item
-                    if kind == "result":
-                        sources = value
-                        continue
-                    # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
-                    # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
-                    payload_step = TraceStep(**value).model_dump()
-                    trace_payload.append(payload_step)
-                    yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+                cache_key = _retrieval_cache_key(search_question, req.top_k)
+                cached_sources = query_cache.get(cache_key) if cache_key else None
+                cache_hit = cached_sources is not None
+                run_config["query_cache"] = query_cache.snapshot(request_hit=cache_hit)
+                if cache_key is None:
+                    run_config["query_cache"]["bypass_reason"] = (
+                        "index_fingerprint_unavailable"
+                    )
+                if cached_sources is not None:
+                    sources = cached_sources
+                    cache_step = TraceStep(
+                        step="查询缓存",
+                        detail="命中当前索引与检索配置的缓存，跳过向量/BM25/重排",
+                        ms=0,
+                    ).model_dump()
+                    trace_payload.append(cache_step)
+                    run_events.append(
+                        {"type": "evidence_added", "run_id": run_id, "stage": "query_cache"}
+                    )
+                    yield f"event: step\ndata: {json.dumps(cache_step, ensure_ascii=False)}\n\n"
+                else:
+                    step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+                    while True:
+                        # 和下面消费模型用的是同一套模式：同步生成器丢线程池里逐个取，
+                        # 每个 await 都是一次让出控制权的机会。
+                        item = await run_in_threadpool(_next_or_sentinel, step_iter)
+                        if item is _SENTINEL:
+                            break
+                        kind, value = cast(tuple[str, object], item)
+                        if kind == "result":
+                            sources = value
+                            continue
+                        # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
+                        # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
+                        payload_step = TraceStep(**cast(dict[str, Any], value)).model_dump()
+                        trace_payload.append(payload_step)
+                        run_events.append(
+                            {
+                                "type": "evidence_added",
+                                "run_id": run_id,
+                                "stage": payload_step.get("stage_key") or payload_step["step"],
+                                "elapsed_ms": payload_step.get("ms"),
+                            }
+                        )
+                        yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
+                    if cache_key is not None:
+                        query_cache.put(cache_key, cast(list[Any], sources))
 
                 context_sources, expand_step = rag.build_answer_context(sources)
                 if expand_step is not None:
@@ -795,7 +1027,7 @@ async def ask(req: AskRequest, request: Request):
             )
             # grounded 和 free 都使用已经构造好的 prompt，避免 grounded 本地路径
             # 再 build_prompt 一次（图线索查询等工作也会被重复执行）。
-            token_iter = _generate_for_model(prompt, model)
+            token_iter = _generate_for_model(prompt, model, stats=generation_stats)
 
         parts: list[str] = []
         interrupted = False
@@ -810,7 +1042,7 @@ async def ask(req: AskRequest, request: Request):
                     break
                 if not chunk:
                     continue
-                parts.append(chunk)
+                parts.append(cast(str, chunk))
                 yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 # 协作式取消：不强杀线程，而是发现客户端走了就自己收手，
                 # 并且关掉生成器（close() 会让上游 requests/subprocess 连接断开，
@@ -825,11 +1057,30 @@ async def ask(req: AskRequest, request: Request):
             raise
         finally:
             if interrupted:
-                token_iter.close()
+                getattr(token_iter, "close", lambda: None)()
+            final_status = "interrupted" if interrupted else ("error" if error else "complete")
+            elapsed_ms = round((time.perf_counter() - run_started_at) * 1000)
+            run_events.append(
+                {
+                    "type": "answer_generated" if not error else "answer_failed",
+                    "run_id": run_id,
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+            run_events.append(
+                {
+                    "type": "run_finished",
+                    "run_id": run_id,
+                    "status": final_status,
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+            if session_id:
+                try:
+                    save_run_events(run_id, run_events, session_id=session_id)
+                except Exception as exc:
+                    logger.warning(f"保存运行事件失败（忽略）：{exc}")
             if session_id and assistant_index is not None:
-                final_status = (
-                    "interrupted" if interrupted else ("error" if error else "complete")
-                )
                 try:
                     save_turn(
                         session_id,
@@ -843,12 +1094,24 @@ async def ask(req: AskRequest, request: Request):
                         # error_message 只记异常类型+摘要，不含用户输入原文
                         run_config={
                             **run_config,
+                            "generation": [item.snapshot() for item in generation_stats],
+                            "citation_metrics": _citation_metric_snapshot(
+                                "".join(parts), payload
+                            ),
                             "final_status": final_status,
                             **({"error": error[:200]} if error else {}),
                         },
                     )
                 except Exception as exc:
                     logger.warning(f"保存回答失败（忽略）：{exc}")
+            if final_status == "complete" and decision.route is AnswerMode.grounded:
+                _schedule_faithfulness_shadow(
+                    answer="".join(parts),
+                    sources=payload,
+                    model=model,
+                    session_id=session_id,
+                    turn_index=assistant_index,
+                )
 
         if not interrupted:
             yield "event: done\ndata: {}\n\n"
@@ -868,13 +1131,13 @@ async def agent_ask(req: AgentAskRequest, request: Request):
         # 普通回答可以边生成边展示；工具规划不同，必须先拿到完整 JSON 才能校验
         # tool/args，不能收到半个对象就执行。这里仍复用同一模型适配器，只在边界
         # 处把 token 流合并成一次 action。
-        return "".join(_generate_for_model(prompt, model))
+        return "".join(_generate_for_model(prompt, model, task="answer"))
 
     iterator = run_agent(
         req.question,
         rag=rag,
         planner=planner,
-        answerer=lambda prompt: _generate_for_model(prompt, model),
+        answerer=lambda prompt: _generate_for_model(prompt, model, task="answer"),
         max_steps=req.max_steps,
     )
     # M3.5-③：本次 Agent 运行的 run_id。request_id 只覆盖单次 HTTP 请求，而
@@ -882,6 +1145,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
     # 轻量 id 注入每个 agent_step——同一次运行的所有步骤共享同一个值，
     # 落库后可以按它还原完整事件顺序。不重构现有事件结构，只加一个可选字段。
     run_id = uuid.uuid4().hex[:12]
+    run_events: list[dict[str, object]] = [{"type": "run_started", "run_id": run_id}]
 
     # 和 /api/ask 同一套模式：有 session_id 才落库，没有就纯内存、行为不变。
     # 这个端点上线时漏了这一步——Agent Lab 里的每一次对话都不会落库，
@@ -910,10 +1174,20 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                 item = await run_in_threadpool(_next_or_sentinel, iterator)
                 if item is _SENTINEL:
                     break
-                kind, value = item
+                kind, value = cast(tuple[str, object], item)
                 if kind == "agent_step":
-                    payload = AgentStep(run_id=run_id, **value).model_dump()
+                    payload = AgentStep(
+                        run_id=run_id, **cast(dict[str, Any], value)
+                    ).model_dump()
                     agent_steps_payload.append(payload)
+                    run_events.append(
+                        {
+                            "type": "tool_finished",
+                            "run_id": run_id,
+                            "tool": payload["tool"],
+                            "status": "observed",
+                        }
+                    )
                     yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif kind == "sources":
                     sources_payload = [
@@ -923,20 +1197,32 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                             chapter_title=source.chapter_title,
                             text=source.text,
                         ).model_dump()
-                        for source in value
+                        for source in cast(list[Any], value)
                     ]
                     yield f"event: sources\ndata: {json.dumps(sources_payload, ensure_ascii=False)}\n\n"
                 elif kind == "token":
-                    parts.append(value)
+                    parts.append(cast(str, value))
                     yield f"event: token\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
                 elif kind == "done":
                     yield "event: done\ndata: {}\n\n"
                 if await request.is_disconnected():
                     interrupted = True
-                    iterator.close()
+                    getattr(iterator, "close", lambda: None)()
                     break
         finally:
-            iterator.close()
+            getattr(iterator, "close", lambda: None)()
+            run_events.append(
+                {
+                    "type": "run_finished",
+                    "run_id": run_id,
+                    "status": "interrupted" if interrupted else "complete",
+                }
+            )
+            if session_id:
+                try:
+                    save_run_events(run_id, run_events, session_id=session_id)
+                except Exception as exc:
+                    logger.warning(f"保存 Agent 运行事件失败（忽略）：{exc}")
             if session_id and assistant_index is not None:
                 try:
                     save_turn(
@@ -946,6 +1232,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                         "".join(parts),
                         sources=sources_payload,
                         agent_steps=agent_steps_payload,
+                        run_config={"run_id": run_id, "events": run_events},
                         status="interrupted" if interrupted else "complete",
                     )
                 except Exception as exc:
@@ -985,7 +1272,7 @@ async def verify_citation(req: VerifyCitationRequest):
         judge_support,
         "".join(statements),
         req.evidence,
-        lambda prompt: _generate_for_model(prompt, model),
+        lambda prompt: _generate_for_model(prompt, model, task="judge"),
     )
     return VerifyCitationResult(
         label=result["label"],
@@ -993,6 +1280,31 @@ async def verify_citation(req: VerifyCitationRequest):
         statement="".join(statements),
         model=model,
     )
+
+
+@app.post("/api/citations/feedback", response_model=CitationFeedbackResult)
+def citation_feedback(req: CitationFeedbackRequest):
+    """记录用户对单条引用的反馈，作为后续忠实度评测的真实样本。
+
+    反馈接口只把回答做 SHA-256 后保存；完整回答和原文不会进入反馈表。没有
+    session_id 的临时会话也允许提交，这样本地隐私模式不会损失反馈信号。
+    """
+    try:
+        save_citation_feedback(
+            answer=req.answer,
+            citation=req.citation,
+            novel=req.novel,
+            chunk_id=req.chunk_id,
+            feedback=req.feedback,
+            session_id=req.session_id,
+            turn_index=req.turn_index,
+            comment=req.comment,
+        )
+    except Exception as exc:
+        raise APIError(
+            500, ErrorCode.session_write_failed, f"保存引用反馈失败：{exc}"
+        ) from exc
+    return CitationFeedbackResult(feedback=req.feedback)
 
 
 # ----------------------------------------------------------------- 会话历史
@@ -1140,6 +1452,21 @@ def set_model(req: SetModelRequest):
 @app.get("/api/health", response_model=HealthStatus)
 def health():
     return HealthStatus(ok=True, ready=state.get("rag") is not None)
+
+
+@app.get("/api/metrics/query-cache", response_model=QueryCacheMetrics)
+def query_cache_metrics():
+    """返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。"""
+    return query_cache.snapshot()
+
+
+@app.get("/api/runs/{run_id}/events", response_model=RunEventList)
+def run_events(run_id: str):
+    """读取一次运行的事件元数据，不返回聊天正文或工具结果。"""
+    return RunEventList(
+        run_id=run_id,
+        events=[RunEvent.model_validate(event) for event in load_run_events(run_id)],
+    )
 
 
 # ------------------------------------------------------------- 前端静态托管（生产）

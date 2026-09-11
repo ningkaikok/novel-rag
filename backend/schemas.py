@@ -8,6 +8,8 @@ TS 类型，这里就是唯一真源，不用再靠人肉对着 main.py 的返�
 （`from config import TOP_K` 才能找到）——不要在别处独立导入这个模块。
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from config import TOP_K
@@ -133,6 +135,54 @@ class VerifyCitationResult(BaseModel):
     reason: str
     statement: str
     model: str
+
+
+class CitationFeedbackRequest(BaseModel):
+    """记录用户对单条引用的轻量反馈。
+
+    ``answer`` 只用于服务端计算指纹，不会落库；原文也不随反馈请求提交，
+    避免为了建立质量数据飞轮而复制版权内容。
+    """
+
+    answer: str = Field(min_length=1, max_length=20000)
+    citation: int = Field(ge=1, le=50)
+    novel: str = Field(min_length=1, max_length=500)
+    chunk_id: int = Field(ge=0)
+    feedback: Literal["helpful", "incorrect"]
+    session_id: str | None = None
+    turn_index: int | None = Field(default=None, ge=0)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class CitationFeedbackResult(BaseModel):
+    accepted: bool = True
+    feedback: Literal["helpful", "incorrect"]
+
+
+class QueryCacheMetrics(BaseModel):
+    enabled: bool
+    request_hit: bool | None = None
+    hits: int
+    misses: int
+    hit_rate: float | None = None
+    entries: int
+    max_entries: int
+    evictions: int
+
+
+class RunEvent(BaseModel):
+    event_type: str
+    status: str | None = None
+    route: str | None = None
+    stage: str | None = None
+    tool: str | None = None
+    elapsed_ms: int | None = None
+    created_at: str | None = None
+
+
+class RunEventList(BaseModel):
+    run_id: str
+    events: list[RunEvent]
 
 
 class AgentStep(BaseModel):
