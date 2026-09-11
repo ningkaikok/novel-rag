@@ -8,7 +8,7 @@ MCP PoC（scripts/mcp_server.py）用真实客户端验证过 ToolResult 的投�
 - ``AnswerWithCitationsV1``：回答型工具单独的结果 schema；
 - ``ToolSpec``：一个工具的完整静态描述——名称、描述、参数/结果 JSON Schema、
   只读属性、风险等级、超时；
-- ``TOOL_REGISTRY``：五个 Agent Lab 工具的不可变注册表。MCP 服务器从它生成
+- ``TOOL_REGISTRY``：六个 Agent Lab 工具的不可变注册表。MCP 服务器从它生成
   注册；后续 M6.1 正式项的权限/启停和 M6.2 的 Tool Gateway 也以它为准。
 
 参数 schema 从 ``agent_lab.AgentToolbox`` 各方法签名推导，再对照方法体内的
@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # 结果形状版本号：结构变更时递增，消费方按它判断能否直接读取 facts/sources。
 TOOL_RESULT_SCHEMA_VERSION: Literal["1"] = "1"
@@ -71,10 +71,11 @@ class AnswerWithCitationsV1(BaseModel):
 class ToolSpec(BaseModel):
     """单个工具的静态描述——M6.1 Tool Registry 的最小可行单元。
 
-    权限（permission）、启停和版本快照等 Control Plane 能力留给 M6.1 正式项；
-    这里先固化 MCP PoC 验证过有用的六类元数据。所有字段都是声明式的：
+    所有字段都是声明式的：
     工具实现仍可以是普通 Python 方法，不与 spec 绑定。
     """
+
+    model_config = ConfigDict(frozen=True)
 
     name: str
     description: str
@@ -83,6 +84,9 @@ class ToolSpec(BaseModel):
     readonly: bool = True
     risk_level: Literal["low", "medium", "high"] = "low"
     timeout_s: int = 30
+    permission: str = "novel:read"
+    version: str = "1.0.0"
+    enabled: bool = True
 
 
 def _params(properties: dict[str, object], required: list[str]) -> dict[str, object]:
@@ -93,6 +97,26 @@ def _params(properties: dict[str, object], required: list[str]) -> dict[str, obj
 # ---- 参数 schema：从 AgentToolbox 方法签名推导，边界对照方法内夹取逻辑核对 --
 
 _LIST_BOOKS_PARAMS = _params({}, [])
+
+# AgentToolbox.query_library(domain, operation, novel, chapter, limit)
+_QUERY_LIBRARY_PARAMS = _params(
+    {
+        "domain": {
+            "type": "string",
+            "enum": ["books", "chapters", "chunks"],
+            "default": "books",
+        },
+        "operation": {
+            "type": "string",
+            "enum": ["list", "count"],
+            "default": "list",
+        },
+        "novel": {"type": ["string", "null"]},
+        "chapter": {"type": ["string", "null"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100},
+    },
+    [],
+)
 
 # AgentToolbox.search_novels(query, novel=None, limit=5)，实现内夹取 top_k 到 1~8
 _SEARCH_NOVELS_PARAMS = _params(
@@ -160,10 +184,17 @@ _ANSWER_WITH_CITATIONS_PARAMS = _params(
 _QUERY_RESULT_SCHEMA = ToolResultV1.model_json_schema()
 _ANSWER_RESULT_SCHEMA = AnswerWithCitationsV1.model_json_schema()
 
-# 前四个描述沿用 MCP PoC 发布时客户端可见的文案；answer_with_citations 是
+# 查询工具描述沿用 MCP PoC 发布时客户端可见的文案；answer_with_citations 是
 # Agent 循环内部的收尾动作，不暴露给 MCP。
 TOOL_REGISTRY: Mapping[str, ToolSpec] = MappingProxyType(
     {
+        "query_library": ToolSpec(
+            name="query_library",
+            description="查询书籍、章节或片段的结构化目录与统计信息",
+            params_json_schema=_QUERY_LIBRARY_PARAMS,
+            result_schema=_QUERY_RESULT_SCHEMA,
+            timeout_s=10,
+        ),
         "list_books": ToolSpec(
             name="list_books",
             description="列出书架上全部小说及各自片段数",

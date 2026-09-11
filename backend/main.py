@@ -803,11 +803,16 @@ async def ask(req: AskRequest, request: Request):
     )
 
     model = state["model"]
+    run_id = uuid.uuid4().hex[:12]
+    run_events: list[dict] = [{"type": "run_started", "run_id": run_id}]
+    run_started_at = time.perf_counter()
     # M3.5-④：在线配置快照在生成前定格——它描述"这轮回答用了什么配置"，
     # 不随生成成败变化；最终状态（complete/interrupted/error）落库时才补上。
     run_config = _build_run_config(
         route_mode=decision.route.value, route_reason=decision.reason, model=model
     )
+    run_config["run_id"] = run_id
+    run_config["events"] = run_events
     generation_stats: list[model_gateway.GenerationStats] = []
 
     # 有 session_id 就落库，便于刷新页面后恢复历史；没有就纯内存、行为跟以前一致。
@@ -834,6 +839,9 @@ async def ask(req: AskRequest, request: Request):
         #    前 2 秒界面上什么都没有。现在每完成一步就推一条，界面可以像
         #    成熟的 AI 应用那样把步骤一条条点亮。等待时长没变，但心理感受完全不同。
         trace_payload: list[dict] = []
+        run_events.append(
+            {"type": "route_selected", "run_id": run_id, "route": decision.route.value}
+        )
         route_step = TraceStep(
             step="回答路径",
             detail=(
@@ -934,6 +942,9 @@ async def ask(req: AskRequest, request: Request):
                         ms=0,
                     ).model_dump()
                     trace_payload.append(cache_step)
+                    run_events.append(
+                        {"type": "evidence_added", "run_id": run_id, "stage": "query_cache"}
+                    )
                     yield f"event: step\ndata: {json.dumps(cache_step, ensure_ascii=False)}\n\n"
                 else:
                     step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
@@ -951,6 +962,14 @@ async def ask(req: AskRequest, request: Request):
                         # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
                         payload_step = TraceStep(**value).model_dump()
                         trace_payload.append(payload_step)
+                        run_events.append(
+                            {
+                                "type": "evidence_added",
+                                "run_id": run_id,
+                                "stage": payload_step.get("stage_key") or payload_step["step"],
+                                "elapsed_ms": payload_step.get("ms"),
+                            }
+                        )
                         yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
                     if cache_key is not None:
                         query_cache.put(cache_key, sources)
@@ -1033,6 +1052,22 @@ async def ask(req: AskRequest, request: Request):
             if interrupted:
                 token_iter.close()
             final_status = "interrupted" if interrupted else ("error" if error else "complete")
+            elapsed_ms = round((time.perf_counter() - run_started_at) * 1000)
+            run_events.append(
+                {
+                    "type": "answer_generated" if not error else "answer_failed",
+                    "run_id": run_id,
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+            run_events.append(
+                {
+                    "type": "run_finished",
+                    "run_id": run_id,
+                    "status": final_status,
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
             if session_id and assistant_index is not None:
                 try:
                     save_turn(
@@ -1098,6 +1133,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
     # 轻量 id 注入每个 agent_step——同一次运行的所有步骤共享同一个值，
     # 落库后可以按它还原完整事件顺序。不重构现有事件结构，只加一个可选字段。
     run_id = uuid.uuid4().hex[:12]
+    run_events: list[dict] = [{"type": "run_started", "run_id": run_id}]
 
     # 和 /api/ask 同一套模式：有 session_id 才落库，没有就纯内存、行为不变。
     # 这个端点上线时漏了这一步——Agent Lab 里的每一次对话都不会落库，
@@ -1130,6 +1166,14 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                 if kind == "agent_step":
                     payload = AgentStep(run_id=run_id, **value).model_dump()
                     agent_steps_payload.append(payload)
+                    run_events.append(
+                        {
+                            "type": "tool_finished",
+                            "run_id": run_id,
+                            "tool": payload["tool"],
+                            "status": "observed",
+                        }
+                    )
                     yield f"event: agent_step\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif kind == "sources":
                     sources_payload = [
@@ -1153,6 +1197,13 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                     break
         finally:
             iterator.close()
+            run_events.append(
+                {
+                    "type": "run_finished",
+                    "run_id": run_id,
+                    "status": "interrupted" if interrupted else "complete",
+                }
+            )
             if session_id and assistant_index is not None:
                 try:
                     save_turn(
@@ -1162,6 +1213,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                         "".join(parts),
                         sources=sources_payload,
                         agent_steps=agent_steps_payload,
+                        run_config={"run_id": run_id, "events": run_events},
                         status="interrupted" if interrupted else "complete",
                     )
                 except Exception as exc:

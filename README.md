@@ -295,6 +295,12 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `MODEL_QUERY_EXPAND` | 同 `QUERY_EXPAND_MODEL` | Model Gateway 为查询扩展任务选择的模型 |
 | `MODEL_JUDGE` | 空 | Model Gateway 为引用 Judge 任务选择的模型；为空时沿用当前模型 |
 | `MODEL_FALLBACK_MODEL` | 空 | 首个 token 前模型失败时的显式备用模型；空值不自动切换 |
+| `MODEL_CLOUD_ALLOWED` | `1` | 是否允许 Claude/智谱等云端模型；设 `0` 可强制本地模型边界 |
+| `MODEL_MAX_OUTPUT_CHARACTERS` | `0` | 单次生成输出字符预算，`0` 表示不限制 |
+| `MODEL_MAX_ESTIMATED_COST_USD` | `0` | 单次生成估算成本上限，`0` 表示不限制 |
+| `MODEL_CHARS_PER_TOKEN` | `1.5` | 无供应商 tokenizer 时用于成本观测的字符/token 估算比例 |
+| `MODEL_INPUT_USD_PER_MILLION_TOKENS` | `0` | 输入 token 估算单价；需按实际供应商价格配置 |
+| `MODEL_OUTPUT_USD_PER_MILLION_TOKENS` | `0` | 输出 token 估算单价；需按实际供应商价格配置 |
 | `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
 | `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |

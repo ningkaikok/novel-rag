@@ -11,6 +11,7 @@ import os
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from math import ceil
 from typing import Literal
 
 from backend import claude_cli, zhipu
@@ -26,6 +27,16 @@ ModelFactory = Callable[[str, str], Iterator[str]]
 
 MODEL_ROUTING_ENABLED = os.environ.get("MODEL_ROUTING_ENABLED", "1") != "0"
 MODEL_FALLBACK_MODEL = os.environ.get("MODEL_FALLBACK_MODEL", "").strip()
+MODEL_CLOUD_ALLOWED = os.environ.get("MODEL_CLOUD_ALLOWED", "1") != "0"
+MODEL_MAX_OUTPUT_CHARACTERS = int(os.environ.get("MODEL_MAX_OUTPUT_CHARACTERS", 0))
+MODEL_MAX_ESTIMATED_COST_USD = float(os.environ.get("MODEL_MAX_ESTIMATED_COST_USD", 0))
+MODEL_CHARS_PER_TOKEN = float(os.environ.get("MODEL_CHARS_PER_TOKEN", 1.5))
+MODEL_INPUT_USD_PER_MILLION_TOKENS = float(
+    os.environ.get("MODEL_INPUT_USD_PER_MILLION_TOKENS", 0)
+)
+MODEL_OUTPUT_USD_PER_MILLION_TOKENS = float(
+    os.environ.get("MODEL_OUTPUT_USD_PER_MILLION_TOKENS", 0)
+)
 TASK_MODELS: dict[str, str] = {
     "query_rewrite": os.environ.get("MODEL_QUERY_REWRITE", QUERY_REWRITE_MODEL),
     "summary": os.environ.get("MODEL_SUMMARY", HISTORY_SUMMARY_MODEL),
@@ -46,6 +57,9 @@ class GenerationStats:
     fallback_used: bool = False
     chunks: int = 0
     characters: int = 0
+    estimated_input_tokens: int = 0
+    estimated_output_tokens: int = 0
+    estimated_cost_usd: float | None = None
     elapsed_ms: int | None = None
     completed: bool = False
     error_type: str | None = None
@@ -60,6 +74,9 @@ class GenerationStats:
             "fallback_used": self.fallback_used,
             "chunks": self.chunks,
             "characters": self.characters,
+            "estimated_input_tokens": self.estimated_input_tokens,
+            "estimated_output_tokens": self.estimated_output_tokens,
+            "estimated_cost_usd": self.estimated_cost_usd,
             "elapsed_ms": self.elapsed_ms,
             "completed": self.completed,
             "error_type": self.error_type,
@@ -89,6 +106,12 @@ def routing_snapshot(requested_model: str) -> dict:
         "requested_answer_model": requested_model,
         "task_models": dict(TASK_MODELS),
         "fallback_model": MODEL_FALLBACK_MODEL or None,
+        "cloud_allowed": MODEL_CLOUD_ALLOWED,
+        "max_output_characters": MODEL_MAX_OUTPUT_CHARACTERS or None,
+        "max_estimated_cost_usd": MODEL_MAX_ESTIMATED_COST_USD or None,
+        "cost_rate_configured": bool(
+            MODEL_INPUT_USD_PER_MILLION_TOKENS or MODEL_OUTPUT_USD_PER_MILLION_TOKENS
+        ),
     }
 
 
@@ -125,6 +148,7 @@ def generate_stream(
         selected_model=selected,
         provider=provider_name(selected),
         fallback_model=fallback,
+        estimated_input_tokens=max(0, ceil(len(prompt) / max(MODEL_CHARS_PER_TOKEN, 0.1))),
     )
     if stats is not None:
         stats.append(record)
@@ -140,12 +164,30 @@ def generate_stream(
         for attempt, model in enumerate(candidates):
             produced = False
             try:
+                if provider_name(model) in {"claude", "zhipu"} and not MODEL_CLOUD_ALLOWED:
+                    raise RuntimeError("云端模型调用已被 MODEL_CLOUD_ALLOWED=0 禁止")
                 iterator = factories[provider_name(model)](model, prompt)
                 for chunk in iterator:
                     if chunk:
                         produced = True
                         record.chunks += 1
                         record.characters += len(chunk)
+                        record.estimated_output_tokens = max(
+                            0,
+                            ceil(record.characters / max(MODEL_CHARS_PER_TOKEN, 0.1)),
+                        )
+                        if (
+                            MODEL_MAX_OUTPUT_CHARACTERS
+                            and record.characters > MODEL_MAX_OUTPUT_CHARACTERS
+                        ):
+                            raise RuntimeError("超过单次模型输出字符预算")
+                        record.estimated_cost_usd = _estimated_cost(record)
+                        if (
+                            MODEL_MAX_ESTIMATED_COST_USD
+                            and record.estimated_cost_usd is not None
+                            and record.estimated_cost_usd > MODEL_MAX_ESTIMATED_COST_USD
+                        ):
+                            raise RuntimeError("超过单次模型估算成本预算")
                     yield chunk
                 record.selected_model = model
                 record.provider = provider_name(model)
@@ -160,3 +202,13 @@ def generate_stream(
                 raise
     finally:
         record.elapsed_ms = round((time.monotonic() - started) * 1000)
+
+
+def _estimated_cost(record: GenerationStats) -> float | None:
+    if not (MODEL_INPUT_USD_PER_MILLION_TOKENS or MODEL_OUTPUT_USD_PER_MILLION_TOKENS):
+        return None
+    amount = (
+        record.estimated_input_tokens * MODEL_INPUT_USD_PER_MILLION_TOKENS
+        + record.estimated_output_tokens * MODEL_OUTPUT_USD_PER_MILLION_TOKENS
+    ) / 1_000_000
+    return round(amount, 8)

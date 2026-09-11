@@ -31,6 +31,8 @@ def test_generation_records_metadata_without_prompt_or_answer(monkeypatch):
     assert snapshot["completed"] is True
     assert snapshot["chunks"] == 2
     assert snapshot["characters"] == 4
+    assert snapshot["estimated_input_tokens"] > 0
+    assert snapshot["estimated_output_tokens"] > 0
     assert "秘密正文" not in snapshot
     assert "你好世界" not in snapshot
 
@@ -75,3 +77,31 @@ def test_partial_generation_error_is_not_silently_retried(monkeypatch):
         assert str(exc) == "stream broken"
     else:  # pragma: no cover - 防止测试被错误吞掉
         raise AssertionError("部分输出后的错误不能静默切换模型")
+
+
+def test_cloud_permission_and_output_budget_are_enforced(monkeypatch):
+    monkeypatch.setattr(model_gateway, "MODEL_CLOUD_ALLOWED", False)
+    monkeypatch.setattr(model_gateway, "MODEL_FALLBACK_MODEL", "")
+    try:
+        list(
+            model_gateway.generate_stream(
+                "问题", "glm:flash", zhipu_factory=lambda _model, _prompt: iter(["答案"])
+            )
+        )
+    except RuntimeError as exc:
+        assert "MODEL_CLOUD_ALLOWED" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("云端权限关闭时不应调用模型")
+
+    monkeypatch.setattr(model_gateway, "MODEL_CLOUD_ALLOWED", True)
+    monkeypatch.setattr(model_gateway, "MODEL_MAX_OUTPUT_CHARACTERS", 2)
+    try:
+        list(
+            model_gateway.generate_stream(
+                "问题", "qwen2.5:7b", ollama_factory=lambda _model, _prompt: iter(["超过预算"])
+            )
+        )
+    except RuntimeError as exc:
+        assert "输出字符预算" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("输出预算未生效")

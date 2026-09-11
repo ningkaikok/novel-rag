@@ -382,19 +382,24 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 注册、可授权、可观测、可恢复的边界。先用普通 Python 保持学习链路透明，再按真实
 需求评估 MCP、OpenTelemetry 和 LangGraph。
 
-- [ ] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
+- [x] M6.1：建立轻量 Control Plane，用统一 `ToolSpec` / Tool Registry 管理 schema、版本、
   权限、风险等级、超时和启停；运行时只读取经过验证的不可变快照。前置工作：把现有
   `ToolResult`（summary/sources/facts）正式化为 Pydantic/JSON Schema 并增加
   `schema_version`，为后续 MCP 适配打基础。✅ 前置项已落地（2026-08-23）：
-  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与五工具不可变 `TOOL_REGISTRY`
+  `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与六工具不可变 `TOOL_REGISTRY`
   （answer_with_citations 结果 schema 单独定义），MCP 服务器已改为从 Registry 生成注册；
-  Registry 落地但 Gateway、权限、启停均未做，待 M6.1/M6.2 正式项
+  当前已补齐 query_library、权限、版本、启停字段，并由冻结的 Registry 提供运行时快照。
 - [ ] M6.2：增加 Tool Gateway，集中做鉴权、参数校验、出站白名单、Prompt Injection
   隔离、限流、超时、幂等、分类重试、熔断和审计
-- [ ] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录 token/耗时/成本，
-  支持按任务选模、预算上限、超时和显式降级
+  当前已完成统一执行入口、权限与参数校验、重复调用/调用次数闸门、超时观测和不含正文
+  的审计摘要；出站工具、写操作重试和跨进程熔断仍待真实需求出现后补齐。
+- [x] M6.3：增加 Model Gateway，统一 Ollama、Claude 和智谱适配，记录估算 token/耗时/成本，
+  支持按任务选模、输出/成本预算、云端权限边界和首 token 前显式降级；真实供应商 token
+  对账和多租户配额仍属于 M6.7 的生产化工作
 - [ ] M6.4：统一 Agent 事件，串起 Router、Planner、Tool、检索、LLM 和 SSE 的 `run_id`；
   同时建立路由准确率、工具成功率、答案依据率、延迟和成本的评测闭环
+  当前普通问答与 Agent 已记录不含正文的 `run_started/route_selected/evidence_added/`
+  `answer_generated/run_finished` 事件；完整的跨端点评测与 SSE 事件版本化仍待补齐。
 - [ ] M6.5：拆分 Chat History、Run State 和 Event Log；短问答继续 SSE，长任务改为
   `job_id + worker`，并补 checkpoint、幂等、取消、恢复和死信处理；前端可恢复 SSE
   依赖此阶段的 Event Log，不提前实现

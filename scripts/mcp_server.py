@@ -108,6 +108,23 @@ def list_books() -> ToolResultV1:
     return _to_payload(_toolbox_lazy(with_search=False).list_books())
 
 
+def query_library(
+    domain: str = "books",
+    operation: str = "list",
+    novel: str | None = None,
+    chapter: str | None = None,
+    limit: int = 100,
+) -> ToolResultV1:
+    result = _toolbox_lazy(with_search=False).query_library(
+        domain=domain,
+        operation=operation,
+        novel=novel,
+        chapter=chapter,
+        limit=limit,
+    )
+    return _to_payload(result)
+
+
 def search_novels(question: str, limit: int = 5) -> ToolResultV1:
     # 对外参数名是 question；AgentToolbox.search_novels 的形参是 query
     result = _toolbox_lazy(with_search=True).search_novels(query=question, limit=limit)
@@ -125,6 +142,7 @@ def get_chapter(novel: str, chapter_title: str, limit: int = 8) -> ToolResultV1:
 
 
 _TOOLBOX_CALLS = {
+    "query_library": query_library,
     "list_books": list_books,
     "search_novels": search_novels,
     "read_neighbors": read_neighbors,

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from config import AGENT_TOOL_MAX_CHARS
 from postgres import connect
 from rag import NovelRAG, SourceChunk, _mentions_novel
+from tool_gateway import ToolGateway, ToolGatewayError
 
 Planner = Callable[[str], str]
 Answerer = Callable[[str], Iterator[str]]
@@ -641,6 +642,7 @@ def run_agent(
     """运行有限步工具循环，逐步产出 ``agent_step/sources/token/done`` 事件。"""
     max_steps = max(3, min(int(max_steps), 5))
     toolbox = AgentToolbox(rag)
+    gateway = ToolGateway(toolbox, max_calls=max_steps)
     observations: list[dict] = []
     source_registry: dict[str, SourceChunk] = {}
     # 与原文证据分开保存；原文可能是 top-k 局部召回，不能代表数据库全集。
@@ -720,6 +722,13 @@ def run_agent(
 
         if tool == "answer_with_citations":
             requested = [str(value) for value in args.get("source_ids", [])]
+            try:
+                gateway.accept(tool, {"source_ids": requested})
+            except ToolGatewayError as exc:
+                tool = "search_novels"
+                args = {"query": question, "limit": 5}
+                reason = f"终止动作未通过 Gateway（{exc.category}），先检索原文"
+                requested = []
             selected = [source_registry[sid] for sid in requested if sid in source_registry]
             if not selected:
                 selected = list(source_registry.values())
@@ -758,7 +767,7 @@ def run_agent(
                 return
 
         try:
-            result = toolbox.execute(tool, args)
+            result = gateway.execute(tool, args)
             source_ids: list[str] = []
             for source in result.sources:
                 key = next(
@@ -780,7 +789,8 @@ def run_agent(
             tool_failure_streak[tool] = 0
         except Exception as exc:
             source_ids = []
-            observation = f"工具执行失败：{type(exc).__name__}: {exc}"
+            category = getattr(exc, "category", type(exc).__name__)
+            observation = f"工具执行失败：{category}: {exc}"
             tool_failure_streak[tool] = tool_failure_streak.get(tool, 0) + 1
 
         event = {

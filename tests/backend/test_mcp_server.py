@@ -11,11 +11,12 @@ import mcp_server
 import tool_spec
 
 
-def test_four_readonly_tools_registered():
+def test_readonly_tools_registered():
     import asyncio
 
     tools = asyncio.run(mcp_server.server.list_tools())
     assert {t.name for t in tools} == {
+        "query_library",
         "list_books",
         "search_novels",
         "read_neighbors",
