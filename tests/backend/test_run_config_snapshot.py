@@ -185,6 +185,7 @@ def test_ensure_chat_schema_adds_run_config_column_idempotently(monkeypatch):
     )
     assert any("CREATE TABLE IF NOT EXISTS citation_feedback" in sql for sql in conn.sql)
     assert any("CREATE TABLE IF NOT EXISTS citation_judgments" in sql for sql in conn.sql)
+    assert any("CREATE TABLE IF NOT EXISTS run_events" in sql for sql in conn.sql)
 
 
 # ---------------------------------------------------------------- 历史透出

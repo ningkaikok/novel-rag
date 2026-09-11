@@ -116,6 +116,7 @@ from backend.schemas import (  # noqa: E402
     IndexTaskStatus,
     ModelList,
     QueryCacheMetrics,
+    RunEventList,
     SearchMatch,
     SearchResult,
     SessionClearResult,
@@ -174,11 +175,13 @@ from postgres import (  # noqa: E402
     init_pool,
     list_relation_edges,
     load_index_manifest,
+    load_run_events,
     load_session_summary,
     load_turns,
     next_turn_index,
     save_citation_feedback,
     save_citation_judgment,
+    save_run_events,
     save_session_summary,
     save_turn,
     set_relation_review,
@@ -1068,6 +1071,11 @@ async def ask(req: AskRequest, request: Request):
                     "elapsed_ms": elapsed_ms,
                 }
             )
+            if session_id:
+                try:
+                    save_run_events(run_id, run_events, session_id=session_id)
+                except Exception as exc:
+                    logger.warning(f"保存运行事件失败（忽略）：{exc}")
             if session_id and assistant_index is not None:
                 try:
                     save_turn(
@@ -1204,6 +1212,11 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                     "status": "interrupted" if interrupted else "complete",
                 }
             )
+            if session_id:
+                try:
+                    save_run_events(run_id, run_events, session_id=session_id)
+                except Exception as exc:
+                    logger.warning(f"保存 Agent 运行事件失败（忽略）：{exc}")
             if session_id and assistant_index is not None:
                 try:
                     save_turn(
@@ -1437,6 +1450,12 @@ def health():
 def query_cache_metrics():
     """返回当前进程的普通查询缓存命中统计，不包含问题或来源正文。"""
     return query_cache.snapshot()
+
+
+@app.get("/api/runs/{run_id}/events", response_model=RunEventList)
+def run_events(run_id: str):
+    """读取一次运行的事件元数据，不返回聊天正文或工具结果。"""
+    return RunEventList(run_id=run_id, events=load_run_events(run_id))
 
 
 # ------------------------------------------------------------- 前端静态托管（生产）

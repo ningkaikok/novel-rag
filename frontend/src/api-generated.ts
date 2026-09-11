@@ -346,6 +346,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Events
+         * @description 读取一次运行的事件元数据，不返回聊天正文或工具结果。
+         */
+        get: operations["run_events_api_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -681,6 +701,30 @@ export interface components {
              * @default false
              */
             selected: boolean;
+        };
+        /** RunEvent */
+        RunEvent: {
+            /** Created At */
+            created_at?: string | null;
+            /** Elapsed Ms */
+            elapsed_ms?: number | null;
+            /** Event Type */
+            event_type: string;
+            /** Route */
+            route?: string | null;
+            /** Stage */
+            stage?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Tool */
+            tool?: string | null;
+        };
+        /** RunEventList */
+        RunEventList: {
+            /** Events */
+            events: components["schemas"]["RunEvent"][];
+            /** Run Id */
+            run_id: string;
         };
         /** SearchMatch */
         SearchMatch: {
@@ -1352,6 +1396,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexTaskStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_events_api_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEventList"];
                 };
             };
             /** @description Validation Error */

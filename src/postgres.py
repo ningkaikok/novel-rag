@@ -887,6 +887,24 @@ def ensure_chat_schema() -> None:
             "CREATE INDEX IF NOT EXISTS chat_turns_session_idx "
             "ON chat_turns (session_id, turn_index)"
         )
+        # M6.4/M6.5：事件日志与 Chat History 分开，事件只保存状态、耗时和定位元数据。
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS run_events (
+                id          BIGSERIAL PRIMARY KEY,
+                run_id      TEXT NOT NULL,
+                session_id  UUID,
+                event_type  TEXT NOT NULL,
+                status      TEXT,
+                route       TEXT,
+                stage       TEXT,
+                tool        TEXT,
+                elapsed_ms  INTEGER,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id)")
         # M3.6：滚动会话摘要。一个会话一行，覆盖到哪一轮记在 covers_through，
         # 靠它判断"哪些轮次还没进摘要"——不记的话每次都得重新摘要全部历史，
         # 那就不叫滚动了。摘要是派生数据，丢了只是回到"只有最近几轮原文"。
@@ -1031,6 +1049,7 @@ def clear_session(session_id: str) -> int:
         conn.execute("DELETE FROM chat_session_summaries WHERE session_id = %s", (session_id,))
         conn.execute("DELETE FROM citation_feedback WHERE session_id = %s", (session_id,))
         conn.execute("DELETE FROM citation_judgments WHERE session_id = %s", (session_id,))
+        conn.execute("DELETE FROM run_events WHERE session_id = %s", (session_id,))
     return max(0, int(deleted_turns))
 
 
@@ -1115,6 +1134,82 @@ def save_citation_judgment(
                 answer_hash,
             ),
         )
+
+
+def load_citation_calibration_rows(limit: int = 10000) -> list[dict]:
+    """关联用户反馈与最新影子 Judge 结果，供离线校准使用。
+
+    反馈只表达用户对引用是否有帮助，属于噪声较高的弱标签；这里不直接开启
+    自动拒答，而是把它导出给评测脚本按 method/model 计算混淆矩阵。查询只返回
+    标签、定位和模型元数据，不返回回答或小说正文。
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT f.feedback, f.novel, f.chunk_id, f.citation,
+                   j.label, j.method, j.model
+            FROM citation_feedback AS f
+            JOIN LATERAL (
+                SELECT label, method, model
+                FROM citation_judgments AS j
+                WHERE j.answer_hash = f.answer_hash
+                  AND j.citation = f.citation
+                  AND j.novel = f.novel
+                  AND j.chunk_id = f.chunk_id
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS j ON TRUE
+            ORDER BY f.created_at
+            LIMIT %s
+            """,
+            (max(1, min(int(limit), 100000)),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_run_events(
+    run_id: str, events: list[dict], session_id: str | None = None
+) -> None:
+    """保存运行事件的安全子集，不接受 Prompt、回答、原文或工具参数。"""
+    rows = [
+        (
+            run_id,
+            session_id,
+            event.get("type", "unknown"),
+            event.get("status"),
+            event.get("route"),
+            event.get("stage"),
+            event.get("tool"),
+            event.get("elapsed_ms"),
+        )
+        for event in events
+    ]
+    if not rows:
+        return
+    with connect() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            """
+                INSERT INTO run_events
+                    (run_id, session_id, event_type, status, route, stage, tool, elapsed_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+            rows,
+        )
+
+
+def load_run_events(run_id: str) -> list[dict]:
+    """读取某次运行的事件元数据。"""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT event_type, status, route, stage, tool, elapsed_ms, created_at
+            FROM run_events
+            WHERE run_id = %s
+            ORDER BY id
+            """,
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def load_session_summary(session_id: str) -> dict | None:

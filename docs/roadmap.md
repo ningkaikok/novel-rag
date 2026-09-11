@@ -265,6 +265,10 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   回写答案；`FAITHFULNESS_SHADOW_ENABLED=1` 时只落库回答哈希、来源定位和断言聚合
   计数，默认关闭，先用真实反馈校准再考虑用户提示或自动修订。
 
+- [x] 真实反馈校准管线：`scripts/eval_faithfulness_feedback.py` 关联反馈与最新影子
+  Judge 结果，按方法/模型输出弱标签混淆矩阵；反馈仍不是金标准，未达到门槛前不触发
+  用户提示、拒答或自动修订。
+
 验收：引用三类指标可以分别计算；影子评测能展示自动判断与人工标签的差异；一次回答可
 关联到使用的数据源/索引配置和在线模型配置；在没有可靠阈值前不会因自动支持度误判而
 静默删除正确回答。
@@ -398,11 +402,14 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
   对账和多租户配额仍属于 M6.7 的生产化工作
 - [ ] M6.4：统一 Agent 事件，串起 Router、Planner、Tool、检索、LLM 和 SSE 的 `run_id`；
   同时建立路由准确率、工具成功率、答案依据率、延迟和成本的评测闭环
-  当前普通问答与 Agent 已记录不含正文的 `run_started/route_selected/evidence_added/`
-  `answer_generated/run_finished` 事件；完整的跨端点评测与 SSE 事件版本化仍待补齐。
+  当前普通问答与 Agent 已将不含正文的 `run_started/route_selected/evidence_added/`
+  `answer_generated/run_finished` 事件独立落到 `run_events`，可通过
+  `/api/runs/{run_id}/events` 查询；完整的跨端点评测与 SSE 事件版本化仍待补齐。
 - [ ] M6.5：拆分 Chat History、Run State 和 Event Log；短问答继续 SSE，长任务改为
   `job_id + worker`，并补 checkpoint、幂等、取消、恢复和死信处理；前端可恢复 SSE
   依赖此阶段的 Event Log，不提前实现
+  当前已先把短问答/Agent 的 Event Log 从 `chat_turns` 正文中拆出；索引任务已有
+  `job_id` 状态机，跨进程 worker、checkpoint 和恢复仍待下一阶段。
 - [ ] M6.6：在工具需要跨客户端复用时增加 MCP 适配，不绕过内部权限和审计边界。
   允许的提前项：M3.3.5 完成后可做一个只读、stdio 传输的最小 MCP PoC 作为低成本探针，
   用真实客户端（Claude Code 等）暴露 ToolResult Schema 的设计问题并反哺 M6.1；

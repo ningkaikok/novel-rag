@@ -815,6 +815,106 @@
     "title": "RetrievalCandidate",
     "type": "object"
    },
+   "RunEvent": {
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "elapsed_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Elapsed Ms"
+     },
+     "event_type": {
+      "title": "Event Type",
+      "type": "string"
+     },
+     "route": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Route"
+     },
+     "stage": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "tool": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tool"
+     }
+    },
+    "required": [
+     "event_type"
+    ],
+    "title": "RunEvent",
+    "type": "object"
+   },
+   "RunEventList": {
+    "properties": {
+     "events": {
+      "items": {
+       "$ref": "#/components/schemas/RunEvent"
+      },
+      "title": "Events",
+      "type": "array"
+     },
+     "run_id": {
+      "title": "Run Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "run_id",
+     "events"
+    ],
+    "title": "RunEventList",
+    "type": "object"
+   },
    "SearchMatch": {
     "properties": {
      "chapter_title": {
@@ -1933,6 +2033,46 @@
      }
     },
     "summary": "Reindex"
+   }
+  },
+  "/api/runs/{run_id}/events": {
+   "get": {
+    "description": "读取一次运行的事件元数据，不返回聊天正文或工具结果。",
+    "operationId": "run_events_api_runs__run_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunEventList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Run Events"
    }
   },
   "/api/search": {

@@ -39,6 +39,30 @@ def test_health_with_rag_loaded(client):
     assert resp.json() == {"ok": True, "ready": True}
 
 
+def test_run_events_endpoint_returns_metadata_only(client, monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_run_events",
+        lambda _run_id: [{"event_type": "run_finished", "status": "complete"}],
+    )
+    resp = client.get("/api/runs/run-1/events")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "run_id": "run-1",
+        "events": [
+            {
+                "event_type": "run_finished",
+                "status": "complete",
+                "route": None,
+                "stage": None,
+                "tool": None,
+                "elapsed_ms": None,
+                "created_at": None,
+            }
+        ],
+    }
+
+
 def test_list_books_reads_novels_dir(client, tmp_path, monkeypatch):
     (tmp_path / "凡人修仙传.txt").write_text("……")
     (tmp_path / "诡秘之主.txt").write_text("……")

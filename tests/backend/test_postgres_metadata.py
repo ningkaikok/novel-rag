@@ -84,3 +84,16 @@ def test_citation_judgment_stores_only_hash_and_aggregates(monkeypatch):
     assert params[9:12] == (1, 0, 1)
     assert params[-1] != "顾长风中了蚀骨散[1]。"
     assert len(params[-1]) == 64
+
+
+def test_load_citation_calibration_rows_returns_only_labels(monkeypatch):
+    class _RowsConn(_FakeConn):
+        def fetchall(self):
+            return [{"feedback": "helpful", "label": "supported", "method": "m", "model": "x"}]
+
+    conn = _RowsConn()
+    monkeypatch.setattr(postgres, "connect", lambda: conn)
+    rows = postgres.load_citation_calibration_rows(limit=3)
+    assert rows == [{"feedback": "helpful", "label": "supported", "method": "m", "model": "x"}]
+    assert "JOIN LATERAL" in conn.calls[-1][0]
+    assert conn.calls[-1][1] == (3,)

@@ -170,6 +170,21 @@ class QueryCacheMetrics(BaseModel):
     evictions: int
 
 
+class RunEvent(BaseModel):
+    event_type: str
+    status: str | None = None
+    route: str | None = None
+    stage: str | None = None
+    tool: str | None = None
+    elapsed_ms: int | None = None
+    created_at: str | None = None
+
+
+class RunEventList(BaseModel):
+    run_id: str
+    events: list[RunEvent]
+
+
 class AgentStep(BaseModel):
     step: int
     reason: str
