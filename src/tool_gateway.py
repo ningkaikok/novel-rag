@@ -12,7 +12,7 @@ import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
 from tool_spec import ToolSpec, get_tool_spec
 
@@ -33,7 +33,11 @@ class ToolAudit:
     elapsed_ms: int
 
 
-def _type_matches(value: object, expected: str | list[str]) -> bool:
+class ToolboxProtocol(Protocol):
+    def execute(self, name: str, args: dict[str, Any]) -> Any: ...
+
+
+def _type_matches(value: Any, expected: str | list[str]) -> bool:
     expected_types = [expected] if isinstance(expected, str) else expected
     for kind in expected_types:
         if kind == "null" and value is None:
@@ -55,10 +59,10 @@ def _type_matches(value: object, expected: str | list[str]) -> bool:
     return False
 
 
-def validate_tool_args(spec: ToolSpec, args: Mapping[str, object]) -> None:
-    schema = spec.params_json_schema
-    properties = schema.get("properties", {})
-    required = schema.get("required", [])
+def validate_tool_args(spec: ToolSpec, args: Mapping[str, Any]) -> None:
+    schema = cast(dict[str, Any], spec.params_json_schema)
+    properties = cast(dict[str, dict[str, Any]], schema.get("properties", {}))
+    required = cast(list[str], schema.get("required", []))
     missing = [name for name in required if name not in args]
     if missing:
         raise ToolGatewayError("invalid_args", f"缺少必填参数：{', '.join(missing)}")
@@ -78,7 +82,9 @@ def validate_tool_args(spec: ToolSpec, args: Mapping[str, object]) -> None:
                 raise ToolGatewayError("invalid_args", f"参数 {name} 大于最大值")
         if rule.get("type") == "array" and "items" in rule:
             item_type = rule["items"].get("type", "object")
-            if not all(_type_matches(item, item_type) for item in value):
+            if not isinstance(value, list) or not all(
+                _type_matches(item, item_type) for item in value
+            ):
                 raise ToolGatewayError("invalid_args", f"参数 {name} 包含非法数组元素")
 
 
@@ -87,7 +93,7 @@ class ToolGateway:
 
     def __init__(
         self,
-        toolbox: object,
+        toolbox: ToolboxProtocol,
         *,
         permissions: set[str] | frozenset[str] | None = None,
         max_calls: int = 5,
@@ -99,7 +105,7 @@ class ToolGateway:
         self._seen: set[str] = set()
         self._audits: list[ToolAudit] = []
 
-    def _authorize(self, name: str, args: Mapping[str, object]) -> ToolSpec:
+    def _authorize(self, name: str, args: Mapping[str, Any]) -> ToolSpec:
         try:
             spec = get_tool_spec(name)
         except KeyError as exc:
@@ -118,7 +124,7 @@ class ToolGateway:
         self._calls += 1
         return spec
 
-    def execute(self, name: str, args: Mapping[str, object]):
+    def execute(self, name: str, args: Mapping[str, Any]):
         spec = self._authorize(name, args)
         started = time.perf_counter()
         try:
@@ -132,7 +138,7 @@ class ToolGateway:
             raise ToolGatewayError("timeout", f"工具执行超过 {spec.timeout_s}s：{name}")
         return result
 
-    def accept(self, name: str, args: Mapping[str, object]) -> ToolSpec:
+    def accept(self, name: str, args: Mapping[str, Any]) -> ToolSpec:
         """校验不由 Toolbox 执行的终止动作（如 answer_with_citations）。"""
         spec = self._authorize(name, args)
         self._audits.append(ToolAudit(name, spec.version, "accepted", 0))

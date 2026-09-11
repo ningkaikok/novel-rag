@@ -58,6 +58,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import requests
 from fastapi import FastAPI, Query, Request, UploadFile
@@ -116,6 +117,7 @@ from backend.schemas import (  # noqa: E402
     IndexTaskStatus,
     ModelList,
     QueryCacheMetrics,
+    RunEvent,
     RunEventList,
     SearchMatch,
     SearchResult,
@@ -807,7 +809,7 @@ async def ask(req: AskRequest, request: Request):
 
     model = state["model"]
     run_id = uuid.uuid4().hex[:12]
-    run_events: list[dict] = [{"type": "run_started", "run_id": run_id}]
+    run_events: list[dict[str, object]] = [{"type": "run_started", "run_id": run_id}]
     run_started_at = time.perf_counter()
     # M3.5-④：在线配置快照在生成前定格——它描述"这轮回答用了什么配置"，
     # 不随生成成败变化；最终状态（complete/interrupted/error）落库时才补上。
@@ -959,13 +961,13 @@ async def ask(req: AskRequest, request: Request):
                         item = await run_in_threadpool(_next_or_sentinel, step_iter)
                         if item is _SENTINEL:
                             break
-                        kind, value = item
+                        kind, value = cast(tuple[str, object], item)
                         if kind == "result":
                             sources = value
                             continue
                         # 过一遍 Pydantic 模型再转回 dict：StreamingResponse 不支持声明
                         # response_model，这里手动保证发出去和存进库的形状不会手滑写错字段。
-                        payload_step = TraceStep(**value).model_dump()
+                        payload_step = TraceStep(**cast(dict[str, Any], value)).model_dump()
                         trace_payload.append(payload_step)
                         run_events.append(
                             {
@@ -977,7 +979,7 @@ async def ask(req: AskRequest, request: Request):
                         )
                         yield f"event: step\ndata: {json.dumps(payload_step, ensure_ascii=False)}\n\n"
                     if cache_key is not None:
-                        query_cache.put(cache_key, sources)
+                        query_cache.put(cache_key, cast(list[Any], sources))
 
                 context_sources, expand_step = rag.build_answer_context(sources)
                 if expand_step is not None:
@@ -1040,7 +1042,7 @@ async def ask(req: AskRequest, request: Request):
                     break
                 if not chunk:
                     continue
-                parts.append(chunk)
+                parts.append(cast(str, chunk))
                 yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 # 协作式取消：不强杀线程，而是发现客户端走了就自己收手，
                 # 并且关掉生成器（close() 会让上游 requests/subprocess 连接断开，
@@ -1055,7 +1057,7 @@ async def ask(req: AskRequest, request: Request):
             raise
         finally:
             if interrupted:
-                token_iter.close()
+                getattr(token_iter, "close", lambda: None)()
             final_status = "interrupted" if interrupted else ("error" if error else "complete")
             elapsed_ms = round((time.perf_counter() - run_started_at) * 1000)
             run_events.append(
@@ -1143,7 +1145,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
     # 轻量 id 注入每个 agent_step——同一次运行的所有步骤共享同一个值，
     # 落库后可以按它还原完整事件顺序。不重构现有事件结构，只加一个可选字段。
     run_id = uuid.uuid4().hex[:12]
-    run_events: list[dict] = [{"type": "run_started", "run_id": run_id}]
+    run_events: list[dict[str, object]] = [{"type": "run_started", "run_id": run_id}]
 
     # 和 /api/ask 同一套模式：有 session_id 才落库，没有就纯内存、行为不变。
     # 这个端点上线时漏了这一步——Agent Lab 里的每一次对话都不会落库，
@@ -1172,9 +1174,11 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                 item = await run_in_threadpool(_next_or_sentinel, iterator)
                 if item is _SENTINEL:
                     break
-                kind, value = item
+                kind, value = cast(tuple[str, object], item)
                 if kind == "agent_step":
-                    payload = AgentStep(run_id=run_id, **value).model_dump()
+                    payload = AgentStep(
+                        run_id=run_id, **cast(dict[str, Any], value)
+                    ).model_dump()
                     agent_steps_payload.append(payload)
                     run_events.append(
                         {
@@ -1193,20 +1197,20 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                             chapter_title=source.chapter_title,
                             text=source.text,
                         ).model_dump()
-                        for source in value
+                        for source in cast(list[Any], value)
                     ]
                     yield f"event: sources\ndata: {json.dumps(sources_payload, ensure_ascii=False)}\n\n"
                 elif kind == "token":
-                    parts.append(value)
+                    parts.append(cast(str, value))
                     yield f"event: token\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
                 elif kind == "done":
                     yield "event: done\ndata: {}\n\n"
                 if await request.is_disconnected():
                     interrupted = True
-                    iterator.close()
+                    getattr(iterator, "close", lambda: None)()
                     break
         finally:
-            iterator.close()
+            getattr(iterator, "close", lambda: None)()
             run_events.append(
                 {
                     "type": "run_finished",
@@ -1459,7 +1463,10 @@ def query_cache_metrics():
 @app.get("/api/runs/{run_id}/events", response_model=RunEventList)
 def run_events(run_id: str):
     """读取一次运行的事件元数据，不返回聊天正文或工具结果。"""
-    return RunEventList(run_id=run_id, events=load_run_events(run_id))
+    return RunEventList(
+        run_id=run_id,
+        events=[RunEvent.model_validate(event) for event in load_run_events(run_id)],
+    )
 
 
 # ------------------------------------------------------------- 前端静态托管（生产）

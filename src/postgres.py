@@ -21,7 +21,7 @@ Web 请求复用连接池，脚本则临时创建连接。业务代码不需要�
 
 import hashlib
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 
 import psycopg
@@ -1169,7 +1169,9 @@ def load_citation_calibration_rows(limit: int = 10000) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def save_run_events(run_id: str, events: list[dict], session_id: str | None = None) -> None:
+def save_run_events(
+    run_id: str, events: Sequence[Mapping[str, object]], session_id: str | None = None
+) -> None:
     """保存运行事件的安全子集，不接受 Prompt、回答、原文或工具参数。"""
     rows = [
         (
