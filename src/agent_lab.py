@@ -19,9 +19,12 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from config import AGENT_TOOL_MAX_CHARS
+from domain_models import RetrievalScope
 from postgres import connect
 from rag import NovelRAG, SourceChunk, _mentions_novel
 from tool_gateway import ToolGateway, ToolGatewayError, isolate_untrusted_text
+from v2_retrieval import V2KnowledgeRetriever
+from v2_source_adapter import fuse_v2_hits, source_chunk_from_v2_hit
 
 Planner = Callable[[str], str]
 Answerer = Callable[[str], Iterator[str]]
@@ -139,7 +142,7 @@ def _summarize_items(items: list[str], max_chars: int = 800) -> str:
 
 
 class AgentToolbox:
-    """五个只读工具的显式注册表；工具名之外的 action 一律拒绝。"""
+    """只读工具的显式注册表；工具名之外的 action 一律拒绝。"""
 
     def __init__(self, rag: NovelRAG):
         self.rag = rag
@@ -337,6 +340,66 @@ class AgentToolbox:
             },
         )
 
+    def _resolve_document_scope(self, requested: str) -> RetrievalScope:
+        """把规划器给的文档标题字符串解析成 V2 里的 document_id。
+
+        和 ``_resolve_novel`` 同一个理由：规划器经常把用户原话里的标题原样填进
+        ``document`` 参数，可能有错字或只是部分标题，子串匹配同样需要模糊容错，
+        避免规划器在同一个打错的标题上反复重试、白白烧掉步数预算。
+        """
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT id, title FROM knowledge_v2.documents ORDER BY title"
+            ).fetchall()
+        documents = [(row["id"], row["title"]) for row in rows]
+        exact = [doc_id for doc_id, title in documents if title == requested]
+        if exact:
+            return RetrievalScope(document_id=exact[0])
+        fuzzy = [
+            doc_id
+            for doc_id, title in documents
+            if requested.casefold() in title.casefold()
+            or title.casefold() in requested.casefold()
+        ]
+        if len(fuzzy) == 1:
+            return RetrievalScope(document_id=fuzzy[0])
+        raise ValueError(f"无法唯一确定文档：{requested}")
+
+    def search_documents(
+        self, query: str, document: str | None = None, limit: int = 5
+    ) -> ToolResult:
+        """检索知识库里上传的通用文档（Markdown/PDF 等，非小说）。
+
+        和 ``search_novels`` 对应但查的是完全不同的表（``knowledge_v2.*``，
+        `/api/knowledge/documents` 上传写入的那张）——`search_novels` 只读
+        `novel_chunks`（V1），从不覆盖这里；两者是互补的两条只读检索路径，
+        不合并成一个工具是因为 V1/V2 的 ID、embedding 空间和分词都不共享，
+        勉强融合排名没有意义。
+        """
+        limit = max(1, min(int(limit), 8))
+        scope = self._resolve_document_scope(document) if document else None
+        retriever = V2KnowledgeRetriever(embedder=self.rag.embedder)
+        # search_novels 已经覆盖小说；小说经 LegacyNovelAdapter 影子发布进同一张
+        # V2 表，体量比真正的 V2 文档大得多，不排除的话会把真正想找的文档挤到
+        # 候选榜外（实测：诡秘之主一本就 1.2 万+片段，远超普通上传文档）。
+        vector_hits = retriever.search(
+            query, scope=scope, top_k=limit, exclude_legacy_novels=True
+        )
+        keyword_hits = retriever.keyword_search(
+            query, scope=scope, top_k=limit, exclude_legacy_novels=True
+        )
+        fused = fuse_v2_hits(vector_hits, keyword_hits)[:limit]
+        sources = [source_chunk_from_v2_hit(hit) for hit in fused]
+        return ToolResult(
+            f"检索到 {len(sources)} 个相关文档片段",
+            sources,
+            facts={
+                "kind": "document_passages",
+                "coverage": "partial",
+                "matched_count": len(sources),
+            },
+        )
+
     def read_neighbors(self, novel: str, chunk_id: int, radius: int = 1) -> ToolResult:
         resolved = self._resolve_novel(novel)
         radius = max(0, min(int(radius), 3))
@@ -410,6 +473,12 @@ class AgentToolbox:
                 str(args["novel"]) if args.get("novel") else None,
                 int(args.get("limit", 5)),
             )
+        if name == "search_documents":
+            return self.search_documents(
+                str(args.get("query", "")),
+                str(args["document"]) if args.get("document") else None,
+                int(args.get("limit", 5)),
+            )
         if name == "read_neighbors":
             return self.read_neighbors(
                 str(args.get("novel", "")),
@@ -434,6 +503,8 @@ _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个
 - query_library: {{"domain": "books|chapters|chunks", "operation": "list|count", "novel": "可选", "chapter": "可选", "limit": 1到100}}
 - list_books: {{}}（兼容旧 action，优先使用 query_library）
 - search_novels: {{"query": "检索问题", "novel": "可选书名", "limit": 1到8}}
+- search_documents: {{"query": "检索问题", "document": "可选文档标题", "limit": 1到8}}
+  （检索知识库里上传的文档，如 Markdown/PDF；不是小说时用这个，不要用 search_novels）
 - read_neighbors: {{"novel": "书名", "chunk_id": 片段号, "radius": 0到3}}
 - get_chapter: {{"novel": "书名", "chapter_title": "章节名", "limit": 1到12}}
 - answer_with_citations: {{"source_ids": ["S1", "S2"]}}
@@ -444,7 +515,9 @@ _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个
 3. 证据足够就选择 answer_with_citations，不要无意义重复搜索。
 4. “一共/全部/有哪些/多少”等全集问题必须选择能声明 `coverage=complete` 的工具；
    搜索片段是 partial，不能用召回数量推断全集数量。
-5. 只输出一个 JSON 对象：
+5. read_neighbors/get_chapter 只认小说片段编号，search_documents 找到的证据不能
+   传给它们读取上下文——文档内容不完整时改用更大的 limit 重新 search_documents。
+6. 只输出一个 JSON 对象：
    {{"reason": "一句可展示的理由", "tool": "工具名", "args": {{...}}}}
 
 用户问题：{question}

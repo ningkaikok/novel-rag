@@ -31,20 +31,28 @@ class V2SearchHit:
     distance: float
 
 
-def _scope_conditions(scope: RetrievalScope | None) -> tuple[str, list[object]]:
-    if scope is None:
-        return "", []
+def _scope_conditions(
+    scope: RetrievalScope | None, *, exclude_legacy_novels: bool = False
+) -> tuple[str, list[object]]:
     conditions: list[str] = []
     params: list[object] = []
-    if scope.collection_id:
-        conditions.append("c.id = %s")
-        params.append(scope.collection_id)
-    if scope.document_id:
-        conditions.append("d.id = %s")
-        params.append(scope.document_id)
-    if scope.version_id:
-        conditions.append("dv.id = %s")
-        params.append(scope.version_id)
+    if scope is not None:
+        if scope.collection_id:
+            conditions.append("c.id = %s")
+            params.append(scope.collection_id)
+        if scope.document_id:
+            conditions.append("d.id = %s")
+            params.append(scope.document_id)
+        if scope.version_id:
+            conditions.append("dv.id = %s")
+            params.append(scope.version_id)
+    if exclude_legacy_novels:
+        # 小说（V1 novel_chunks）经 LegacyNovelAdapter 影子发布进同一张 V2 表，
+        # 靠 document.metadata 里这个已有标记（v2_shadow_reader.py 同样依赖它）
+        # 把它们和真正的 V2 原生上传区分开——否则通用文档检索会被体量大得多的
+        # 小说语料挤到候选榜外，重现"上传的文档怎么检索不到"这个问题，
+        # 只是换了个触发方式。
+        conditions.append("d.metadata->>'legacy_novel' IS NULL")
     return (" AND ".join(conditions), params) if conditions else ("", [])
 
 
@@ -145,11 +153,14 @@ class V2ReadRepository:
         *,
         top_k: int = 5,
         scope: RetrievalScope | None = None,
+        exclude_legacy_novels: bool = False,
     ) -> list[V2SearchHit]:
         if top_k <= 0:
             return []
         query_vector = vector_literal(query_embedding)
-        conditions, scope_params = _scope_conditions(scope)
+        conditions, scope_params = _scope_conditions(
+            scope, exclude_legacy_novels=exclude_legacy_novels
+        )
         sql = f"""
             SELECT {_SELECT_FIELDS}, dc.embedding <=> %s::vector AS distance
             FROM {V2_SCHEMA_NAME}.document_chunks dc
@@ -175,6 +186,7 @@ class V2ReadRepository:
         per_term_limit: int = DEFAULT_PER_TERM_LIMIT,
         k1: float = 1.2,
         b: float = 0.75,
+        exclude_legacy_novels: bool = False,
     ) -> list[V2SearchHit]:
         clean_terms = tuple(dict.fromkeys(term for term in terms if term))
         if not clean_terms or top_k <= 0 or per_term_limit <= 0:
@@ -183,9 +195,15 @@ class V2ReadRepository:
             raise ValueError("BM25 参数无效")
 
         values_sql = ", ".join("(%s)" for _ in clean_terms)
-        corpus_conditions, corpus_params = _scope_conditions(scope)
-        df_conditions, df_params = _scope_conditions(scope)
-        candidate_conditions, candidate_params = _scope_conditions(scope)
+        corpus_conditions, corpus_params = _scope_conditions(
+            scope, exclude_legacy_novels=exclude_legacy_novels
+        )
+        df_conditions, df_params = _scope_conditions(
+            scope, exclude_legacy_novels=exclude_legacy_novels
+        )
+        candidate_conditions, candidate_params = _scope_conditions(
+            scope, exclude_legacy_novels=exclude_legacy_novels
+        )
         sql = f"""
             WITH q(term) AS (VALUES {values_sql}),
             corpus AS (
@@ -278,9 +296,12 @@ class V2KnowledgeRetriever:
         *,
         scope: RetrievalScope | None = None,
         top_k: int = 5,
+        exclude_legacy_novels: bool = False,
     ) -> list[V2SearchHit]:
         encoded = self.embedder.encode([question], normalize_embeddings=True)
-        return self.repository.vector_search(encoded[0], top_k=top_k, scope=scope)
+        return self.repository.vector_search(
+            encoded[0], top_k=top_k, scope=scope, exclude_legacy_novels=exclude_legacy_novels
+        )
 
     def retrieve(
         self,
@@ -297,5 +318,11 @@ class V2KnowledgeRetriever:
         *,
         scope: RetrievalScope | None = None,
         top_k: int = 5,
+        exclude_legacy_novels: bool = False,
     ) -> list[V2SearchHit]:
-        return self.repository.keyword_search(query_terms(question), top_k=top_k, scope=scope)
+        return self.repository.keyword_search(
+            query_terms(question),
+            top_k=top_k,
+            scope=scope,
+            exclude_legacy_novels=exclude_legacy_novels,
+        )

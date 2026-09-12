@@ -74,6 +74,28 @@ def test_vector_search_returns_generic_identity_and_applies_scope():
     assert connection.cursor.params == ["[0.1,0.2]", "c-1", "d-1", "[0.1,0.2]", 3]
 
 
+def test_vector_search_can_exclude_legacy_novel_shadow_copies():
+    """search_documents（Agent Lab）需要排掉小说经 LegacyNovelAdapter 影子发布
+    进 V2 的那部分——小说语料体量大得多，混在一起会把真正的 V2 文档挤出候选榜。
+    """
+    connection = _Connection([_row()])
+    repository = V2ReadRepository(lambda: connection)
+
+    repository.vector_search([0.1, 0.2], top_k=3, exclude_legacy_novels=True)
+
+    assert "metadata->>'legacy_novel' IS NULL" in connection.cursor.query
+
+
+def test_vector_search_without_exclusion_flag_does_not_filter_legacy_novels():
+    """默认行为不变：V2ShadowReader 等既有调用方仍要能看到小说的影子副本。"""
+    connection = _Connection([_row()])
+    repository = V2ReadRepository(lambda: connection)
+
+    repository.vector_search([0.1, 0.2], top_k=3)
+
+    assert "legacy_novel" not in connection.cursor.query
+
+
 def test_keyword_search_builds_scoped_bm25_query():
     connection = _Connection(
         [_row(distance=-1.5), {**_row(distance=-0.5), "chunk_id": "ch-2"}]
