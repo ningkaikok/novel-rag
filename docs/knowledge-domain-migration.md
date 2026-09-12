@@ -50,6 +50,8 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `scripts/compare_v1_v2_shadow.py`：只读比较 V1/V2 的稳定身份、数量和 locator，不输出正文。
 - `src/v2_ingest.py`：把 TXT/Markdown/PDF parser 接入分批 embedding、BM25 term 和显式
   V2 发布；`POST /api/knowledge/documents` 通过后台索引任务调用它，默认发布到 shadow。
+- `src/v2_shadow_reader.py`：在显式 `V2_SHADOW_ENABLED=1` 时，将 V2 向量/BM25 候选接入现有
+  RAG trace；V1 仍负责最终回答，shadow 失败只记录错误，不会阻断主链路。
 - `src/retrieval_scope.py`：提供 `RetrievalScope` 到 V1 小说名单的安全投影；未传 scope
   返回兼容的未限制状态，无法证明映射关系时返回空集合，不会扩大为全库。
 - `src/retrieval_mixins.py` / `src/rag.py`：V1 向量、BM25、结构性和 hybrid 检索可接收
@@ -67,9 +69,9 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
   不包含完整正文。
 
 V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。V2 schema 已完成真实
-shadow 数据导入，向量/BM25 只读 smoke test 和 V1/V2 稳定 locator 比较均通过；但当前代码
-不会因为该配置自动把 NovelRAG/API/Agent 切到 V2，RAG shadow read、候选差异观测和质量评测
-仍需完成。Agent/MCP 目前只是本地单用户只读兼容层。
+shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比较和可选 RAG shadow read
+均已接通；候选差异和延迟评测仍需积累，当前代码不会因为该配置自动把 NovelRAG/API/Agent
+切到 V2。Agent/MCP 目前只是本地单用户只读兼容层。
 
 ## Phase 4 的安全边界
 

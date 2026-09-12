@@ -12,6 +12,8 @@ KNOWLEDGE_DIR = ROOT_DIR / "data" / "knowledge"
 STORAGE_SCHEMA = os.environ.get("STORAGE_SCHEMA", "v1").strip().lower()
 if STORAGE_SCHEMA not in {"v1", "v2", "shadow"}:
     raise ValueError("STORAGE_SCHEMA 必须是 v1/v2/shadow")
+# 只读 shadow 观测开关：开启后 RAG 仍以 V1 结果回答，只额外记录 V2 候选差异。
+V2_SHADOW_ENABLED = os.environ.get("V2_SHADOW_ENABLED", "0") == "1"
 
 # 单个上传文件的大小上限（默认 20MB）。上传接口按 1MB 一块流式读取，一旦超过
 # 这个值立即报错中断，避免误选超大文件把整个进程的内存吃光、或让 embedding

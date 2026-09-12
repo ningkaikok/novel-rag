@@ -9,7 +9,9 @@
 - [x] 增加通用 V2 只读 repository，支持向量检索、BM25 检索和 collection/document/version
   scope；真实 PostgreSQL smoke test 已通过
 - [x] 增加 V1/V2 shadow 稳定身份、chunk 数量和 locator 比较脚本；当前 6 个文档 mismatch=0
-- [ ] 将 V2 检索接入真实 RAG shadow read，记录候选差异、延迟和质量指标；验证完成前默认仍为 V1
+- [x] 增加 `V2_SHADOW_ENABLED=1` 的真实 RAG shadow read；V1 继续负责回答，trace 记录 V2
+  候选数量、缺失/新增数量和耗时，V2 异常不会阻断回答
+- [ ] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1
 - [x] 新增 `/api/knowledge/documents` 通用上传入口，接入 TXT/Markdown/PDF parser、分批
   embedding、BM25 和 V2 shadow 索引任务；旧 `/api/books` 兼容入口保持不变
 - [ ] 补齐通用文档版本重建/删除、V2 catalog 真实读取和前端上传界面

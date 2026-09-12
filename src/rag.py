@@ -52,6 +52,7 @@ from config import (
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     TOP_K,
+    V2_SHADOW_ENABLED,
 )
 from domain_models import RetrievalScope
 from embedder import load_embedder
@@ -109,6 +110,7 @@ from postgres import (
 from query_expander import expand_query_variants
 from reranker import rerank_with_scores
 from retrieval_mixins import RetrievalMixin
+from v2_shadow_reader import V2ShadowReader
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
@@ -708,6 +710,39 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 # 是重排后的最终结果；没触发/失败时是 None，保持原 result。
                 if stop.value is not None:
                     result = stop.value
+
+        if V2_SHADOW_ENABLED:
+            try:
+                observation = V2ShadowReader(self.embedder).observe(
+                    question,
+                    result,
+                    top_k=top_k,
+                    scope=scope,
+                )
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": (
+                            f"V2 只读候选 {observation.v2_count} 条；"
+                            f"相对当前 V1 缺失 {observation.missing_count} 条、"
+                            f"新增 {observation.extra_count} 条"
+                        ),
+                        **observation.payload(),
+                    },
+                )
+            except Exception as exc:
+                # shadow 只能提供观测，V2 不可用时绝不能阻断 V1 回答。
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": f"V2 shadow 暂不可用，V1 结果保持不变（{exc}）",
+                        "error": exc.__class__.__name__,
+                    },
+                )
 
         yield "result", result
 

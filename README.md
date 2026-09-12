@@ -302,6 +302,7 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `MODEL_CHARS_PER_TOKEN` | `1.5` | 无供应商 tokenizer 时用于成本观测的字符/token 估算比例 |
 | `MODEL_INPUT_USD_PER_MILLION_TOKENS` | `0` | 输入 token 估算单价；需按实际供应商价格配置 |
 | `MODEL_OUTPUT_USD_PER_MILLION_TOKENS` | `0` | 输出 token 估算单价；需按实际供应商价格配置 |
+| `V2_SHADOW_ENABLED` | `0` | 设为 `1` 时额外读取 V2 候选并写入 trace；V1 仍负责最终回答 |
 | `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
 | `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |
