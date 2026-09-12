@@ -72,6 +72,7 @@ class DocumentChunk(DomainModel):
     ordinal: int = Field(ge=0)
     text: str = Field(min_length=1)
     section_path: tuple[str, ...] = ()
+    page_number: int | None = Field(default=None, ge=1)
     context: str = ""
     metadata: dict[str, object] = Field(default_factory=dict)
 

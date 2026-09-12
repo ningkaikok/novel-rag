@@ -76,7 +76,12 @@ def read_text_with_metadata(path: Path) -> tuple[str, dict[str, object]]:
     ``errors="ignore"`` 仍然是最后的兼容兜底，但现在会把降级记录到索引质量
     报告，避免编码错误悄悄变成“检索效果不好”。
     """
-    raw_bytes = path.read_bytes()
+    return read_text_bytes_with_metadata(path.read_bytes())
+
+
+def read_text_bytes_with_metadata(raw_bytes: bytes) -> tuple[str, dict[str, object]]:
+    """按现有小说流程解码内存中的文本字节，供通用 TXT parser 复用。"""
+
     for enc in _CANDIDATE_ENCODINGS:
         try:
             return raw_bytes.decode(enc), {

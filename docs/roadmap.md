@@ -12,10 +12,10 @@
 - [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
 
 当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
-后续 Phase 2 才处理 V2 数据库与可回滚迁移；Markdown/PDF 解析、通用文档 API、前端知识库
-界面和生产化多租户能力均未完成。详细迁移策略见 `docs/knowledge-domain-migration.md`。
+Phase 2 已在下方补充 V2 schema 与 dry-run 基础；Markdown/PDF 解析、通用文档 API、前端
+知识库界面和生产化多租户能力仍未完成。详细迁移策略见 `docs/knowledge-domain-migration.md`。
 
-## 通用知识库切换：Phase 2（进行中，schema + dry-run 基础已完成）
+## 通用知识库切换：Phase 2（已完成 schema + dry-run 基础，2026-09-12）
 
 - [x] 在独立 `knowledge_v2` schema 定义 collections、documents、document_versions、
   document_chunks、chunk_terms、index_manifests 及必要索引
@@ -27,6 +27,20 @@
 
 本阶段刻意只交付 schema + dry-run validator 最小闭环，尚未将任何 V1 数据写入 V2，
 也没有删除或覆盖现有表。
+
+## 通用知识库切换：Phase 3（进行中，解析器基础已完成）
+
+- [x] 新增 TXT parser，复用现有小说清洗、章节识别和固定尺寸切分逻辑
+- [x] 新增 Markdown parser，保留嵌套 heading 的 `section_path`
+- [x] 新增文本型 PDF parser，优先 pdfplumber、回退 pypdf，保留页码引用；不做 OCR
+- [x] 增加字节数、PDF 页数、片段数限制，并把 parser name/version 纳入版本 metadata
+- [x] 新增 parser、section/page locator、限制和 TXT 兼容性单元测试
+- [ ] 将 parser 接入 V2 repository、embedding/BM25 原子索引发布
+- [ ] 实现 V1 snapshot 的真实事务 upsert、shadow read、回滚切换和 parser 级检索评测
+- [ ] 接入通用文档 API、前端知识库界面和多租户能力
+
+Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中的通用
+`DocumentChunk`，不会修改 `novel_chunks` 或自动切换生产读写。
 
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、
