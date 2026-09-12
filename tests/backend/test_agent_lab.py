@@ -12,6 +12,38 @@ def _source(chunk_id: int) -> SourceChunk:
     return SourceChunk("雾隐山庄", chunk_id, f"证据{chunk_id}", 0.0, "第一章")
 
 
+class _NoDocumentsConn:
+    """假的 postgres 连接：知识库里没有任何 V2 文档。
+
+    ``run_agent`` 的兜底检索现在会查一次 ``knowledge_v2.documents`` 判断问题
+    是不是在问某份已上传文档；这里让它查到"没有文档"，兜底行为回到默认的
+    search_novels，和这份文件"不调用真实 PostgreSQL"的约定保持一致。
+    """
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, *_args):
+        return self
+
+    def fetchall(self):
+        return []
+
+
+@pytest.fixture(autouse=True)
+def _no_v2_documents_by_default(monkeypatch):
+    """兜底检索（``_fallback_search_action``）现在会查一次
+    ``knowledge_v2.documents`` 判断问题是不是在问某份已上传文档；默认让它查到
+    "没有文档"，保持这份文件"不连真实 PostgreSQL"的约定，不依赖本机数据库
+    里恰好有什么内容。需要模拟"确实有匹配文档"的测试自己在测试体内覆盖
+    ``agent_lab.connect``（覆盖会在该测试内生效，不影响其他测试）。
+    """
+    monkeypatch.setattr(agent_lab, "connect", lambda: _NoDocumentsConn())
+
+
 class _FakeRag:
     def __init__(self):
         self.prompt = ""
@@ -334,3 +366,141 @@ def test_repeated_failures_are_blocked_even_when_args_differ(monkeypatch):
     steps = [value for kind, value in events if kind == "agent_step"]
     assert steps[-1]["tool"] == "search_novels"
     assert "反复失败" in steps[-1]["reason"]
+
+
+# ------------------------------------------------- 兜底检索：小说 vs 上传文档
+
+
+class _OneDocumentConn:
+    """假的 postgres 连接：知识库里恰好有一份指定标题的 V2 文档。"""
+
+    def __init__(self, title):
+        self._title = title
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, *_args):
+        return self
+
+    def fetchall(self):
+        return [{"title": self._title}]
+
+
+def test_document_display_title_strips_extension_and_underscores():
+    assert (
+        agent_lab._document_display_title("方案C历史推演_2022决定2023入学.md")
+        == "方案C历史推演 2022决定2023入学"
+    )
+
+
+def test_shares_long_substring_matches_meaningful_overlap():
+    assert agent_lab._shares_long_substring(
+        "方案C历史推演 内容总结", "方案C历史推演 2022决定2023入学"
+    )
+
+
+def test_shares_long_substring_rejects_unrelated_text():
+    assert not agent_lab._shares_long_substring("庄主是谁", "方案C历史推演 2022决定2023入学")
+
+
+def test_fallback_search_action_prefers_documents_when_title_matches(monkeypatch):
+    """兜底检索不能再硬编码猜"一定是小说"：问题明确提到了已上传文档的标题，
+    就该选 search_documents，而不是对着一份文档问题去搜小说。
+    """
+    monkeypatch.setattr(
+        agent_lab, "connect", lambda: _OneDocumentConn("方案C历史推演_2022决定2023入学.md")
+    )
+
+    action = agent_lab._fallback_search_action("方案C历史推演 内容总结", "测试")
+
+    assert action["tool"] == "search_documents"
+
+
+def test_fallback_search_action_defaults_to_novels_without_a_match(monkeypatch):
+    """问题没提到任何已知文档标题时，兜底仍然默认小说——这是改动前的行为，
+    不应该因为加了文档检索就对普通小说问题变得不确定。
+    """
+    monkeypatch.setattr(
+        agent_lab, "connect", lambda: _OneDocumentConn("方案C历史推演_2022决定2023入学.md")
+    )
+
+    action = agent_lab._fallback_search_action("庄主是谁", "测试")
+
+    assert action["tool"] == "search_novels"
+
+
+class _CatalogLoopToolbox:
+    """模拟规划器在 query_library 上反复兜圈子：域名一直换、也不报错，但从来
+    没有真正检索过内容——这是实测复现过的真实故障（截图：5 步全部选中
+    query_library，从未尝试过 search_documents，最终无法给出答案）。
+    """
+
+    def __init__(self, _rag):
+        self.calls: list[tuple[str, dict]] = []
+
+    def execute(self, name, args):
+        self.calls.append((name, dict(args)))
+        if name == "query_library":
+            return agent_lab.ToolResult(
+                "书架包含：甲、乙、丙",
+                facts={
+                    "kind": "library_query",
+                    "coverage": "complete",
+                    "domain": "books",
+                    "operation": "list",
+                    "total": 3,
+                    "items": ["甲", "乙", "丙"],
+                },
+            )
+        if name == "search_documents":
+            return agent_lab.ToolResult(
+                "检索到 1 个相关文档片段",
+                [_source(0)],
+            )
+        raise AssertionError(f"未预期的工具调用：{name}")
+
+
+def test_repeated_query_library_picks_are_capped_before_exhausting_budget(monkeypatch):
+    """query_library 是一次性目录工具：规划器反复选中它（哪怕参数不同、哪怕
+    每次都"成功"）不该烧光整个步数预算——第 3 次选中就该被拦下来，强制换成
+    真正的检索（并按标题匹配正确路由到 search_documents，而不是硬猜小说）。
+    """
+    toolbox_holder: dict[str, _CatalogLoopToolbox] = {}
+
+    def _make_toolbox(rag):
+        box = _CatalogLoopToolbox(rag)
+        toolbox_holder["box"] = box
+        return box
+
+    monkeypatch.setattr(agent_lab, "AgentToolbox", _make_toolbox)
+    monkeypatch.setattr(
+        agent_lab, "connect", lambda: _OneDocumentConn("方案C历史推演_2022决定2023入学.md")
+    )
+
+    actions = iter(
+        [
+            {"reason": "先看看目录", "tool": "query_library", "args": {"domain": "books"}},
+            {"reason": "再看看章节", "tool": "query_library", "args": {"domain": "chapters"}},
+            {"reason": "还是想看目录", "tool": "query_library", "args": {"domain": "chunks"}},
+        ]
+    )
+
+    events = list(
+        agent_lab.run_agent(
+            "方案C历史推演 内容总结",
+            rag=_FakeRag(),
+            planner=lambda _prompt: json.dumps(next(actions), ensure_ascii=False),
+            answerer=lambda _prompt: iter(["总结内容"]),
+            max_steps=5,
+        )
+    )
+
+    tool_sequence = [name for name, _args in toolbox_holder["box"].calls]
+    assert tool_sequence.count("query_library") <= 2, "一次性目录工具最多信任两次"
+    assert "search_documents" in tool_sequence, "反复卡住后必须换成真正的检索"
+    answer = "".join(value for kind, value in events if kind == "token")
+    assert answer == "总结内容", "应该真正拿到证据并生成回答，而不是耗光步数后拒答"

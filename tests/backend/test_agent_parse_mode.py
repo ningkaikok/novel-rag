@@ -67,6 +67,32 @@ class _FakeRag:
         return f"问题：{question}"
 
 
+class _NoDocumentsConn:
+    """假的 postgres 连接：知识库里没有任何 V2 文档。
+
+    兜底检索（``_fallback_search_action``）现在会查一次 ``knowledge_v2.documents``
+    判断问题是不是在问某份已上传文档；这里让它查到"没有文档"，保持本文件
+    "不连数据库"的约定。
+    """
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, *_args):
+        return self
+
+    def fetchall(self):
+        return []
+
+
+@pytest.fixture(autouse=True)
+def _no_v2_documents_by_default(monkeypatch):
+    monkeypatch.setattr(agent_lab, "connect", lambda: _NoDocumentsConn())
+
+
 # ----------------------------------------------------------------- 四档分得清
 
 
