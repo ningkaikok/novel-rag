@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { MOCK_INDEX_TASK, mockApi } from './mock-api';
+import { mockApi } from './mock-api';
 
 test.describe('上传文档', () => {
   test('选择 .txt 文件后触发通用上传，书架刷新，出现成功提示', async ({ page }) => {

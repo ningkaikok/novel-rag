@@ -60,7 +60,9 @@ export default function Sidebar({
                 onClick={() => {
                   const legacyName = document.metadata?.legacy_novel;
                   onDelete(
-                    typeof legacyName === 'string' ? legacyName.replace(/\.txt$/i, '') : document.title,
+                    typeof legacyName === 'string'
+                      ? legacyName.replace(/\.txt$/i, '')
+                      : document.title,
                   );
                 }}
               >
