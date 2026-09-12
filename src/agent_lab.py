@@ -498,19 +498,28 @@ def _row_to_source(row: dict) -> SourceChunk:
     return SourceChunk.from_legacy_row(row)
 
 
-_PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个工具，不要直接回答。
+_PLANNER_PROMPT = """你是知识库 RAG 的工具规划器。一次只选择一个工具，不要直接回答。
+
+默认先用 search_novels 或 search_documents 检索内容——这两个才能拿到能回答问题
+的原文/文档片段。query_library/list_books 只回答"有哪些/多少/列出"这类目录性
+问题，拿不到任何内容片段，问题不是在问目录列表或数量时不要选它们。
+
 可用工具：
-- query_library: {{"domain": "books|chapters|chunks", "operation": "list|count", "novel": "可选", "chapter": "可选", "limit": 1到100}}
-- list_books: {{}}（兼容旧 action，优先使用 query_library）
 - search_novels: {{"query": "检索问题", "novel": "可选书名", "limit": 1到8}}
+  （检索小说原文，问题在问某本小说的具体内容时用这个）
 - search_documents: {{"query": "检索问题", "document": "可选文档标题", "limit": 1到8}}
-  （检索知识库里上传的文档，如 Markdown/PDF；不是小说时用这个，不要用 search_novels）
+  （检索知识库里上传的文档，如 Markdown/PDF；问题不是在问小说内容时用这个，
+  不确定是小说还是文档就优先试这个）
+- query_library: {{"domain": "books|chapters|chunks", "operation": "list|count", "novel": "可选", "chapter": "可选", "limit": 1到100}}
+  （只用于"一共有几本/列出所有书/共有多少章"这类目录性问题，不要用来找具体内容）
+- list_books: {{}}（兼容旧 action，优先使用 query_library）
 - read_neighbors: {{"novel": "书名", "chunk_id": 片段号, "radius": 0到3}}
 - get_chapter: {{"novel": "书名", "chapter_title": "章节名", "limit": 1到12}}
 - answer_with_citations: {{"source_ids": ["S1", "S2"]}}
 
 规则：
-1. 没有证据时不能 answer；先搜索或列书。
+1. 没有证据时不能 answer；优先 search_novels 或 search_documents，不要一上来就用
+   query_library——除非问题明确是在问目录、数量或列表本身。
 2. 证据上下文不完整时可以读相邻片段或整章。
 3. 证据足够就选择 answer_with_citations，不要无意义重复搜索。
 4. “一共/全部/有哪些/多少”等全集问题必须选择能声明 `coverage=complete` 的工具；
@@ -557,6 +566,62 @@ def _library_action_for_question(question: str) -> dict[str, object]:
     if re.search(r"章节|章", text):
         return {"domain": "chapters", "operation": "list"}
     return {"domain": "books", "operation": "list"}
+
+
+_DOCUMENT_EXTENSION_RE = re.compile(r"\.(md|markdown|pdf|txt)$", re.IGNORECASE)
+
+
+def _document_display_title(title: str) -> str:
+    """把文件名形式的文档标题清理成更接近自然语言的短语（去扩展名、下划线）。"""
+    cleaned = _DOCUMENT_EXTENSION_RE.sub("", title)
+    return cleaned.replace("_", " ").replace("-", " ").strip()
+
+
+def _shares_long_substring(a: str, b: str, min_len: int = 4) -> bool:
+    """a、b 之间是否存在长度至少 ``min_len`` 的公共子串。
+
+    不用编辑距离容错（``_mentions_novel`` 那套）是因为文档标题往往比一句短
+    问题长得多（比如带着文件名里的日期、编号），``_fuzzy_contains`` 要求问题
+    至少和标题近似等长才能滑窗匹配，短问题反而永远匹配不上。这里只要问题和
+    标题共享一段有意义的连续文字就算数——足够覆盖"问题里提了标题的一部分"
+    这种最常见的情况，不追求处理错字。
+    """
+    if len(a) < min_len or len(b) < min_len:
+        return a in b or b in a
+    return any(a[i : i + min_len] in b for i in range(len(a) - min_len + 1))
+
+
+def _question_mentions_known_document(question: str) -> bool:
+    """兜底检索前判断一下：问题字面提到的是知识库里已上传的某份文档吗？
+
+    知识库现在有两种内容域——``novel_chunks`` 的小说、V2 的通用上传文档——
+    规划失败或反复卡住时"该兜底查哪边"不能再硬编码猜"一定是小说"。硬编码
+    过（``search_novels``），复现过的真实故障是：问题问的其实是上传的文档，
+    兜底却一直搜小说，要么白跑要么答错内容（比如拿小说片段回答文档问题）。
+
+    只在**明确匹配到已知文档标题**时才改选 ``search_documents``；匹配不上
+    仍然默认小说——这是绝大多数问题的实际归属，也是本函数改动前的行为，
+    不应该因为加了文档检索就反过来对普通小说问题变得不确定。
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT title FROM knowledge_v2.documents WHERE metadata->>'legacy_novel' IS NULL"
+        ).fetchall()
+    for row in rows:
+        title = _document_display_title(str(row["title"]))
+        if title and _shares_long_substring(question, title):
+            return True
+    return False
+
+
+def _fallback_search_action(question: str, reason: str) -> dict:
+    """规划失败/反复卡住且暂无证据时的兜底检索动作：默认检索小说，只有问题
+    明确提到某份已上传文档的标题时才改用 search_documents。
+    """
+    tool = (
+        "search_documents" if _question_mentions_known_document(question) else "search_novels"
+    )
+    return {"reason": reason, "tool": tool, "args": {"query": question, "limit": 5}}
 
 
 def _catalog_answer(question: str, facts: list[dict[str, object]]) -> str | None:
@@ -724,6 +789,14 @@ def run_agent(
     # 的信号：只要同一个工具名连续失败两次，就不再信任这个工具，不管第三次的
     # 参数长什么样。
     tool_failure_streak: dict[str, int] = {}
+    # query_library/list_books 是一次性目录查询：不像 search_novels/search_documents
+    # 那样带着不同关键词反复尝试有意义，同一份目录多问几次不会有更多信息。实测
+    # 复现过规划器在目录工具上反复兜圈子（换 domain 却一直传错），因为每次都换了
+    # 参数、又偶尔调用"成功"（哪怕返回的目录跟问题无关），上面按"连续失败"计数
+    # 的信号完全逮不住这种情况，五步预算全烧在目录工具上、从没真正检索过原文。
+    # 这里给一次性工具单独设一个更早触发的总次数上限，不看成功与否。
+    _ONE_SHOT_TOOLS = {"query_library", "list_books"}
+    tool_pick_count: dict[str, int] = {}
 
     for step in range(1, max_steps + 1):
         # 这一步的动作是怎么来的（M3.2.1 埋点）。规划器没有参与的步骤（强制收尾、
@@ -747,11 +820,7 @@ def run_agent(
                 # 规划输出偶尔不是合法 JSON。无证据先走搜索，有证据就结束回答，
                 # 让教学 demo 可用，同时在 reason 中如实显示降级原因。
                 action = (
-                    {
-                        "reason": f"规划格式无效，降级为检索（{exc}）",
-                        "tool": "search_novels",
-                        "args": {"query": question, "limit": 5},
-                    }
+                    _fallback_search_action(question, f"规划格式无效，降级为检索（{exc}）")
                     if not source_registry
                     else {
                         "reason": f"规划格式无效，使用已有证据回答（{exc}）",
@@ -773,17 +842,23 @@ def run_agent(
         tool = str(action.get("tool", ""))
         args = action.get("args") or {}
         reason = str(action.get("reason", "未提供理由"))[:240]
+        tool_pick_count[tool] = tool_pick_count.get(tool, 0) + 1
         signature = json.dumps([tool, args], sort_keys=True, ensure_ascii=False)
-        stuck = signature in seen_actions or tool_failure_streak.get(tool, 0) >= 2
+        stuck = (
+            signature in seen_actions
+            or tool_failure_streak.get(tool, 0) >= 2
+            or (tool in _ONE_SHOT_TOOLS and tool_pick_count[tool] > 2)
+        )
         if stuck and tool != "answer_with_citations":
             if source_registry:
                 tool = "answer_with_citations"
                 args = {"source_ids": list(source_registry)}
                 reason = "检测到反复失败或重复动作，停止循环并使用已有证据回答"
             else:
-                args = {"query": question, "limit": 5}
-                tool = "search_novels"
-                reason = "检测到反复失败或重复动作，改用原问题检索"
+                fallback = _fallback_search_action(
+                    question, "检测到反复失败或重复动作，改用原问题检索"
+                )
+                tool, args, reason = fallback["tool"], fallback["args"], fallback["reason"]
         seen_actions.add(signature)
 
         if tool == "answer_with_citations":
@@ -791,18 +866,18 @@ def run_agent(
             try:
                 gateway.accept(tool, {"source_ids": requested})
             except ToolGatewayError as exc:
-                tool = "search_novels"
-                args = {"query": question, "limit": 5}
-                reason = f"终止动作未通过 Gateway（{exc.category}），先检索原文"
+                fallback = _fallback_search_action(
+                    question, f"终止动作未通过 Gateway（{exc.category}），先检索原文"
+                )
+                tool, args, reason = fallback["tool"], fallback["args"], fallback["reason"]
                 requested = []
             selected = [source_registry[sid] for sid in requested if sid in source_registry]
             if not selected:
                 selected = list(source_registry.values())
             if not selected:
                 # 没有证据时禁止模型凭空回答；把动作改成搜索并继续循环。
-                tool = "search_novels"
-                args = {"query": question, "limit": 5}
-                reason = "尚无可引用证据，先检索小说原文"
+                fallback = _fallback_search_action(question, "尚无可引用证据，先检索原文")
+                tool, args, reason = fallback["tool"], fallback["args"], fallback["reason"]
             else:
                 yield (
                     "agent_step",
@@ -884,5 +959,5 @@ def run_agent(
 
     # 理论上只有连续工具失败且没有证据才会到这里。不要再额外虚构一个第 N+1 步；
     # 前端已经展示了最后一次失败观察，这里只给出明确拒答并结束 SSE。
-    yield "token", "经过最多五步检索仍没有找到足够的小说原文，因此无法给出有依据的回答。"
+    yield "token", "经过最多五步检索仍没有找到足够的原文或文档内容，因此无法给出有依据的回答。"
     yield "done", {}
