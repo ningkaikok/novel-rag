@@ -1,7 +1,15 @@
 import type { Page } from '@playwright/test';
 // mock 数据直接对齐前端类型契约（src/api.ts 从 api-generated.ts 取的别名）：
 // 用 satisfies 在编辑器/未来把 e2e 纳入 tsc 时就能发现 mock 与后端契约漂移。
-import type { AgentStep, IndexTask, ModelsInfo, Source, StoredTurn, TraceStep } from '../src/api';
+import type {
+  AgentStep,
+  IndexTask,
+  KnowledgeDocument,
+  ModelsInfo,
+  Source,
+  StoredTurn,
+  TraceStep,
+} from '../src/api';
 
 /**
  * e2e 测试只验证前端渲染逻辑，所有 /api/* 请求都在这里拦截、返回固定假数据。
@@ -213,6 +221,24 @@ export async function mockApi(
 ) {
   const books = opts.books ?? MOCK_BOOKS;
   const models = opts.models ?? MOCK_MODELS;
+  const documents = books.map((title, index) => ({
+    id: `legacy:document:${index}`,
+    collection_id: `legacy:collection:${index}`,
+    title,
+    source_type: 'novel',
+    metadata: { legacy_novel: `${title}.txt`, storage_schema: 'v1' },
+    status: 'indexed',
+    versions: [
+      {
+        id: `legacy:version:${index}`,
+        version_no: 1,
+        source_hash: `hash-${index}`,
+        parser_name: 'legacy-novel-txt',
+        parser_version: '1',
+        chunk_count: 3,
+      },
+    ],
+  })) satisfies KnowledgeDocument[];
 
   await page.route('**/api/sessions/**', async (route) => {
     if (route.request().method() === 'DELETE') {
@@ -228,6 +254,16 @@ export async function mockApi(
     } else {
       // 上传：读一下 multipart 里的文件名，回显为"已保存"，方便测试断言
       await route.fulfill({ json: { saved: books, task: MOCK_INDEX_TASK } });
+    }
+  });
+
+  await page.route('**/api/knowledge/documents**', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        json: { collection: '默认知识库', saved: ['新文档.md'], task: MOCK_INDEX_TASK },
+      });
+    } else {
+      await route.fulfill({ json: { documents } });
     }
   });
 

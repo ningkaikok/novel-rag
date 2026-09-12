@@ -272,6 +272,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Knowledge Collections */
+        get: operations["list_knowledge_collections_api_knowledge_collections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Knowledge Documents */
+        get: operations["list_knowledge_documents_api_knowledge_documents_get"];
+        put?: never;
+        /**
+         * Upload Knowledge Documents
+         * @description 上传通用文档并异步发布到 V2 shadow；TXT 旧入口保持不变。
+         */
+        post: operations["upload_knowledge_documents_api_knowledge_documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics/query-cache": {
         parameters: {
             query?: never;
@@ -494,6 +532,11 @@ export interface components {
             /** Files */
             files: string[];
         };
+        /** Body_upload_knowledge_documents_api_knowledge_documents_post */
+        Body_upload_knowledge_documents_api_knowledge_documents_post: {
+            /** Files */
+            files: string[];
+        };
         /** BookList */
         BookList: {
             /** Books */
@@ -675,6 +718,73 @@ export interface components {
             started_at?: string | null;
             /** Status */
             status: string;
+        };
+        /** KnowledgeCollectionList */
+        KnowledgeCollectionList: {
+            /** Collections */
+            collections: components["schemas"]["KnowledgeCollectionSummary"][];
+        };
+        /** KnowledgeCollectionSummary */
+        KnowledgeCollectionSummary: {
+            /** Document Count */
+            document_count: number;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** KnowledgeDocumentList */
+        KnowledgeDocumentList: {
+            /** Documents */
+            documents: components["schemas"]["KnowledgeDocumentSummary"][];
+        };
+        /**
+         * KnowledgeDocumentSummary
+         * @description 通用目录中的文档摘要，正文仍只存在于现有 V1 检索响应。
+         */
+        KnowledgeDocumentSummary: {
+            /** Collection Id */
+            collection_id: string;
+            /** Id */
+            id: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Source Type */
+            source_type: string;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+            /** Versions */
+            versions?: components["schemas"]["KnowledgeVersionSummary"][];
+        };
+        /** KnowledgeUploadResult */
+        KnowledgeUploadResult: {
+            /** Collection */
+            collection: string;
+            /** Saved */
+            saved: string[];
+            task: components["schemas"]["IndexTaskStatus"];
+        };
+        /**
+         * KnowledgeVersionSummary
+         * @description V1 映射出的版本元数据；不包含文档正文。
+         */
+        KnowledgeVersionSummary: {
+            /** Chunk Count */
+            chunk_count?: number | null;
+            /** Id */
+            id: string;
+            /** Parser Name */
+            parser_name: string;
+            /** Parser Version */
+            parser_version: string;
+            /** Source Hash */
+            source_hash?: string | null;
+            /** Version No */
+            version_no: number;
         };
         /** ModelList */
         ModelList: {
@@ -1357,6 +1467,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexTaskStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_collections_api_knowledge_collections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeCollectionList"];
+                };
+            };
+        };
+    };
+    list_knowledge_documents_api_knowledge_documents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDocumentList"];
+                };
+            };
+        };
+    };
+    upload_knowledge_documents_api_knowledge_documents_post: {
+        parameters: {
+            query?: {
+                collection?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_knowledge_documents_api_knowledge_documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUploadResult"];
                 };
             };
             /** @description Validation Error */

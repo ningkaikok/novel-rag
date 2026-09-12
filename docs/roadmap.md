@@ -1,5 +1,127 @@
 # 项目路线图
 
+## 通用知识库切换：Phase 7（shadow 数据与只读检索已完成，2026-09-12）
+
+- [x] 在本机 PostgreSQL 完成 V1 → `knowledge_v2` 的逐文档 shadow 导入；6 个文档、33,542
+  个 chunk、3,799,681 条 BM25 term 全部提交，V1 表未修改
+- [x] 增加可恢复的迁移脚本、预迁移备份和幂等发布；失败时按文档事务回滚，重复执行不会
+  产生重复 chunk/term
+- [x] 增加通用 V2 只读 repository，支持向量检索、BM25 检索和 collection/document/version
+  scope；真实 PostgreSQL smoke test 已通过
+- [x] 增加 V1/V2 shadow 稳定身份、chunk 数量和 locator 比较脚本；当前 6 个文档 mismatch=0
+- [x] 增加 `V2_SHADOW_ENABLED=1` 的真实 RAG shadow read；V1 继续负责回答，trace 记录 V2
+  候选数量、缺失/新增数量和耗时，V2 异常不会阻断回答
+- [ ] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1
+- [x] 新增 `/api/knowledge/documents` 通用上传入口，接入 TXT/Markdown/PDF parser、分批
+  embedding、BM25 和 V2 shadow 索引任务；旧 `/api/books` 兼容入口保持不变
+- [x] 同名文档重复上传按 source hash 幂等复用版本号，新内容自动递增 `version_no`，避免
+  版本唯一约束冲突
+- [x] V2 catalog 已优先读取真实 V2，前端已切换为通用多格式上传入口
+- [ ] 补齐通用文档版本历史、删除、重建和恢复操作
+
+## 通用知识库切换：Phase 1（已完成，2026-09-12）
+
+本阶段只建立领域边界，不改变当前小说问答行为：
+
+- [x] 新增版本化的 `Collection`、`Document`、`DocumentVersion`、`DocumentChunk`、
+  `SourceRef`、`SourceLocator` 和 `RetrievalScope` 模型与协议
+- [x] 新增 `LegacyNovelAdapter`，集中处理 `novel`、`chapter_title` 和旧片段编号，
+  为 `SourceChunk` 提供通用片段/引用视图
+- [x] 查询缓存键预留 collection/document/version scope，旧的三字段构造方式继续兼容
+- [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
+
+当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
+Phase 2、Phase 3、Phase 4 和 Phase 5A 已在下方补充 V2 schema、解析器、发布基础和
+V1 检索/引用通用化接缝；通用文档 API、
+前端知识库界面和生产化多租户能力仍未完成。详细迁移策略见
+`docs/knowledge-domain-migration.md`。
+
+## 通用知识库切换：Phase 2（已完成 schema + dry-run 基础，2026-09-12）
+
+- [x] 在独立 `knowledge_v2` schema 定义 collections、documents、document_versions、
+  document_chunks、chunk_terms、index_manifests 及必要索引
+- [x] 提供幂等 DDL 和显式 apply 函数；默认 `STORAGE_SCHEMA=v1`，不自动执行
+- [x] 提供 LegacyNovel snapshot → V2 migration plan、重复执行指纹和 dry-run validator
+- [x] 校验父子关系、chunk ordinal/locator、term 关系、source/pipeline hash 和 manifest 数量
+- [ ] 实现事务内数据 upsert、shadow read 和可回滚切换（Phase 4 基础已完成，真实接入仍待后续）
+- [ ] 接入 Markdown/PDF、通用文档 API 和前端知识库界面
+
+本阶段刻意只交付 schema + dry-run validator 最小闭环，尚未将任何 V1 数据写入 V2，
+也没有删除或覆盖现有表。
+
+## 通用知识库切换：Phase 3（已完成，解析器基础，2026-09-12）
+
+- [x] 新增 TXT parser，复用现有小说清洗、章节识别和固定尺寸切分逻辑
+- [x] 新增 Markdown parser，保留嵌套 heading 的 `section_path`
+- [x] 新增文本型 PDF parser，优先 pdfplumber、回退 pypdf，保留页码引用；不做 OCR
+- [x] 增加字节数、PDF 页数、片段数限制，并把 parser name/version 纳入版本 metadata
+- [x] 新增 parser、section/page locator、限制和 TXT 兼容性单元测试
+- [x] parser 已提供给 V2 repository/index publication contract；仍由调用者传入预计算的
+  embedding 与 BM25 term，不重复模型调用
+- [ ] 实现 V1 snapshot 的真实事务 upsert、shadow read、回滚切换和 parser 级检索评测
+- [ ] 接入通用文档 API、前端知识库界面和多租户能力
+
+Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中的通用
+`DocumentChunk`，不会修改 `novel_chunks` 或自动切换生产读写。
+
+## 通用知识库切换：Phase 4（已完成发布基础，2026-09-12）
+
+- [x] 新增 `V2IndexInput`、确定性 upsert 计划和最小 mockable DB executor
+- [x] 按 collection → document → version → 版本内旧派生行清理 → chunk → chunk_terms →
+  manifest 顺序发布；同一 version 重发布采用原子 replace，manifest 只在事务最后写入
+- [x] 校验 embedding 维度、有限值、source_hash、pipeline_hash、chunk ordinal、term
+  关系；事务异常由 executor rollback，失败不会发布 manifest
+- [x] 新增 `STORAGE_SCHEMA=v2|shadow` 的显式发布门禁，默认 `v1` 保持拒绝和不执行
+- [x] 新增 V1/V2 shadow 快照比较及 document/chunk/locator/candidate mismatch 分类
+- [ ] 尚未连接真实 PostgreSQL、执行真实 V1→V2 upsert、启用双写或切换 API/RAG
+- [ ] 尚未完成真实 shadow read 观测、embedding/BM25 线上接入、前端和通用文档 API
+
+Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 发布影响。清理
+独立 `knowledge_v2` schema 需要未来单独、显式、备份确认后的运维操作；当前不提供自动
+删除，也不触碰生产数据库。
+
+## 通用知识库切换：Phase 5A（已完成后端最小切片，2026-09-12）
+
+- [x] 新增 `RetrievalScope` → LegacyNovel 的安全 selector；collection/document 可映射
+  时限定 V1 `only_novels`，version 需 V1 manifest `source_hash` 证明后才放行
+- [x] V1 向量、BM25、结构性和 hybrid 检索保留无 scope 的旧调用，并支持安全传入 scope
+- [x] 未知或无法映射的 scope 返回空结果，不拒绝为全库搜索；默认 `STORAGE_SCHEMA=v1`
+  和现有 V1 行为保持不变
+- [x] 新增 `DocumentChunk`/Legacy `SourceChunk` → `SourceRef` 的纯 response adapter，
+  保留 document/version/chunk/locator，excerpt 限制为 80 字以内
+- [x] 补充 scope 隔离、未知/版本 scope、SourceRef 序列化与旧检索/缓存/trace 回归测试
+- [ ] 尚未实现真实 V2 read、V1/V2 shadow 检索接入和线上 mismatch 观测
+- [ ] 尚未修改 API response schema、前端引用卡或通用文档管理界面
+
+Phase 5A 的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；未知 scope 永远返回
+空结果，不会扩大搜索范围。V2 数据库、表和生产读写均未被本阶段自动切换或删除。
+
+## 通用知识库切换：Phase 5B（已完成目录 API + 前端最小切换，2026-09-12）
+
+- [x] 新增只读 `/api/knowledge/collections` 与 `/api/knowledge/documents`，从 V1 TXT
+  文件和 `index_manifest` 安全映射文档/版本摘要；无数据库时退化为 `source_only`
+- [x] 目录响应只返回身份、来源类型、状态、哈希、版本和计数，不返回正文；旧 `/api/books`
+  保持不变
+- [x] Sidebar 使用“知识库 / 文档”术语，展示来源类型和索引状态，小说上传/删除仍走
+  TXT/V1 兼容路径
+- [ ] 真实 V2 read/shadow、Markdown/PDF 生产上传和多租户权限仍未完成
+
+Phase 5B 的回滚方式是保持 V1 和旧 `/api/books`；目录 API 是只读投影，不会写 V2 或改变
+生产检索路径。
+
+## 通用知识库切换：Phase 6（已完成最小 AI-first 收口，2026-09-12）
+
+- [x] 保留 Agent Lab/MCP 现有工具名称、参数和 `ToolResult` 旧字段，ToolSpec 增加明确的
+  `knowledge:read` 只读权限语义；`novel:read` 作为旧调用方兼容别名
+- [x] 工具描述和 MCP instructions 使用通用知识库语义，小说明确定位为 legacy adapter
+- [x] 新增显式通用 `SourceRef` → `tool_spec.SourceRef` adapter，保留 document/version/
+  locator 扩展和旧定位字段；MCP/Agent 摘录继续限制为 80 字且不含完整正文
+- [x] 增加工具 schema、只读权限、摘要/引用字段和外部文本指令隔离的离线契约测试
+- [ ] V2 API/真实数据库 read、认证、权限策略、多租户、生产审计和多 Agent/LangGraph 仍未完成
+
+Phase 6 仍是本地单用户只读兼容层；外部文本中的指令不会改变 Tool Registry 权限。回滚只需
+保持 `STORAGE_SCHEMA=v1`、继续使用现有 Agent Lab/MCP 入口，不涉及表删除或生产切换。
+
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、
 工程加固、检索实验、答案忠实度和多轮上下文边界，再进入 M4 关系图质量和 M5/M6

@@ -26,6 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field
 # 结果形状版本号：结构变更时递增，消费方按它判断能否直接读取 facts/sources。
 TOOL_RESULT_SCHEMA_VERSION: Literal["1"] = "1"
 
+# 通用知识库只读能力；小说权限名作为旧调用方的兼容别名保留在 Gateway。
+KNOWLEDGE_READ_PERMISSION: Literal["knowledge:read"] = "knowledge:read"
+
 # 版权红线：sources 里每条摘录最长 80 字，完整原文只能凭定位信息自行查库。
 EXCERPT_MAX_CHARS = 80
 
@@ -33,14 +36,22 @@ EXCERPT_MAX_CHARS = 80
 class SourceRef(BaseModel):
     """证据定位信息 + 截断摘录。
 
-    novel/chapter/chunk_id 让消费方能自行取回完整原文；excerpt 超过
-    ``EXCERPT_MAX_CHARS`` 时构造直接校验失败，而不是静默外泄原文。
+    novel/chapter/chunk_id 是旧 ToolResult 的兼容定位字段；通用 document/version/
+    locator 字段由显式 adapter 填充。excerpt 超过 ``EXCERPT_MAX_CHARS`` 时构造直接
+    校验失败，而不是静默外泄原文。
     """
 
     novel: str
     chapter: str
     chunk_id: int
     excerpt: str = Field(max_length=EXCERPT_MAX_CHARS)
+    # Optional extensions keep old MCP/Agent clients working while carrying the
+    # generic identity chain. They are never inferred by the model layer.
+    document_id: str | None = None
+    version_id: str | None = None
+    locator_kind: str | None = None
+    locator_value: str | None = None
+    source_type: str | None = None
 
 
 class ToolResultV1(BaseModel):
@@ -84,7 +95,7 @@ class ToolSpec(BaseModel):
     readonly: bool = True
     risk_level: Literal["low", "medium", "high"] = "low"
     timeout_s: int = 30
-    permission: str = "novel:read"
+    permission: str = KNOWLEDGE_READ_PERMISSION
     version: str = "1.0.0"
     enabled: bool = True
 
@@ -190,21 +201,21 @@ TOOL_REGISTRY: Mapping[str, ToolSpec] = MappingProxyType(
     {
         "query_library": ToolSpec(
             name="query_library",
-            description="查询书籍、章节或片段的结构化目录与统计信息",
+            description="查询知识库文档、章节或片段的结构化目录与统计信息",
             params_json_schema=_QUERY_LIBRARY_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             timeout_s=10,
         ),
         "list_books": ToolSpec(
             name="list_books",
-            description="列出书架上全部小说及各自片段数",
+            description="列出知识库中的文档及各自片段数（兼容旧小说接口）",
             params_json_schema=_LIST_BOOKS_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             timeout_s=10,
         ),
         "search_novels": ToolSpec(
             name="search_novels",
-            description="混合检索小说原文，返回最相关的片段（含 80 字摘录与定位信息）",
+            description="检索知识库文档，返回最相关片段（小说由 legacy adapter 兼容，含 80 字摘录与定位）",
             params_json_schema=_SEARCH_NOVELS_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             # embedding 模型可能现场首次载入（数秒），超时放宽
@@ -212,21 +223,21 @@ TOOL_REGISTRY: Mapping[str, ToolSpec] = MappingProxyType(
         ),
         "read_neighbors": ToolSpec(
             name="read_neighbors",
-            description="按片段编号读取前后相邻片段，用于核对上下文",
+            description="按兼容片段定位读取前后相邻内容，用于核对知识库上下文",
             params_json_schema=_READ_NEIGHBORS_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             timeout_s=10,
         ),
         "get_chapter": ToolSpec(
             name="get_chapter",
-            description="按章节标题取某书的章节内容片段列表",
+            description="按章节标题读取文档内容片段列表（小说字段由 legacy adapter 处理）",
             params_json_schema=_GET_CHAPTER_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             timeout_s=10,
         ),
         "answer_with_citations": ToolSpec(
             name="answer_with_citations",
-            description="基于选中的证据片段生成带引用的最终回答",
+            description="基于选中的知识库证据片段生成带引用的最终回答",
             params_json_schema=_ANSWER_WITH_CITATIONS_PARAMS,
             result_schema=_ANSWER_RESULT_SCHEMA,
             # 触发一次 LLM 生成：有 token 成本且答案是模型产出而非数据库真值

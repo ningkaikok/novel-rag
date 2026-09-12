@@ -1,5 +1,5 @@
 import { Alert, Button, Collapse, List, Progress, Slider, Tag } from 'antd';
-import type { IndexTask } from '../api';
+import type { IndexTask, KnowledgeDocument } from '../api';
 import GraphReview from './GraphReview';
 
 /**
@@ -11,8 +11,8 @@ import GraphReview from './GraphReview';
  * completed / failed / cancelled），进度由 App 里 700ms 轮询刷新后传入。
  */
 interface Props {
-  /** 书架上的全部小说（以磁盘文件为准，不是索引里的）。 */
-  books: string[];
+  /** 知识库中的文档摘要（只含元数据，不含正文）。 */
+  documents: KnowledgeDocument[];
   /** 每次问答参考的原文片段数，与后端 TOP_K 同一个值。 */
   topK: number;
   /** App 侧「有事情在跑」的总开关：生成中或有索引任务时禁用增删操作，避免并发写书架。 */
@@ -28,7 +28,7 @@ interface Props {
 }
 
 export default function Sidebar({
-  books,
+  documents,
   topK,
   busy,
   indexTask,
@@ -41,14 +41,14 @@ export default function Sidebar({
 }: Props) {
   return (
     <div className="sidebar-inner">
-      <h2 className="shelf-title">📚 我的书架</h2>
+      <h2 className="shelf-title">📚 知识库</h2>
 
       <List
         size="small"
         className="book-list"
-        dataSource={books}
-        locale={{ emptyText: '书架还是空的，用输入框上方的「📎 添加小说」开始吧' }}
-        renderItem={(b) => (
+        dataSource={documents}
+        locale={{ emptyText: '知识库还是空的，用输入框上方的「📎 添加文档」开始吧' }}
+        renderItem={(document) => (
           <List.Item
             actions={[
               <Button
@@ -57,13 +57,28 @@ export default function Sidebar({
                 size="small"
                 danger
                 disabled={busy}
-                onClick={() => onDelete(b)}
+                onClick={() => {
+                  const legacyName = document.metadata?.legacy_novel;
+                  onDelete(
+                    typeof legacyName === 'string'
+                      ? legacyName.replace(/\.txt$/i, '')
+                      : document.title,
+                  );
+                }}
               >
                 ✕
               </Button>,
             ]}
           >
-            <span className="book-name">📕 {b}</span>
+            <span className="book-name">
+              📄 {document.title}
+              <span className="document-meta">
+                <Tag>{document.source_type === 'novel' ? '小说' : document.source_type}</Tag>
+                <Tag color={document.status === 'indexed' ? 'success' : 'default'}>
+                  {document.status === 'indexed' ? '已建立索引' : '仅文件'}
+                </Tag>
+              </span>
+            </span>
           </List.Item>
         )}
       />
@@ -73,7 +88,7 @@ export default function Sidebar({
         // 让用户能看到「这次同步到底改了什么」（added/modified/deleted 摘要）。
         <section className="index-task" aria-label="索引任务进度">
           <div className="index-task-title">
-            <span>书架索引</span>
+            <span>知识库索引</span>
             {/* 状态标签的颜色映射：终态用绿/红/灰一眼分清，
                 queued/running/cancelling 都算"还在跑"，统一蓝色 processing。 */}
             <Tag

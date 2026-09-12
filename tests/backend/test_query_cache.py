@@ -1,4 +1,5 @@
 from backend.query_cache import CacheKey, QueryCache
+from domain_models import RetrievalScope
 
 
 def _key(question: str) -> CacheKey:
@@ -29,3 +30,19 @@ def test_query_cache_hit_rate_and_disabled_mode():
     disabled.put(_key("one"), [{"chunk_id": 1}])
     assert disabled.get(_key("one")) is None
     assert disabled.snapshot()["hits"] == 0
+
+
+def test_query_cache_scope_is_optional_but_separates_generic_ranges():
+    cache = QueryCache()
+    base = _key("same")
+    scoped = CacheKey(
+        question=base.question,
+        index_fingerprint=base.index_fingerprint,
+        retrieval_fingerprint=base.retrieval_fingerprint,
+        scope_fingerprint=RetrievalScope(document_id="doc-1").cache_fingerprint(),
+    )
+    cache.put(base, [{"scope": "all"}])
+    cache.put(scoped, [{"scope": "doc-1"}])
+
+    assert cache.get(base) == [{"scope": "all"}]
+    assert cache.get(scoped) == [{"scope": "doc-1"}]

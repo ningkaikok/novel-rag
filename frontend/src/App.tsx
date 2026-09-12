@@ -131,7 +131,7 @@ function Main() {
   // 书架与后台索引任务：列表、上传/删除/同步入口、进度轮询与终态提示，
   // 状态逻辑见 hooks/useBookshelf.ts。
   const {
-    books,
+    documents,
     indexTask,
     indexActive,
     startShelfTask,
@@ -209,7 +209,7 @@ function Main() {
     <Layout className="layout" style={{ minHeight: '100vh' }}>
       <Layout.Sider width={300} theme="light" className="sidebar">
         <Sidebar
-          books={books}
+          documents={documents}
           topK={topK}
           busy={busy || indexActive}
           indexTask={indexTask}
@@ -264,7 +264,7 @@ function Main() {
 
           <div className="composer-toolbar">
             <Upload
-              accept=".txt"
+              accept=".txt,.md,.markdown,.pdf"
               multiple
               showUploadList={false}
               disabled={busy || indexActive}
@@ -279,7 +279,7 @@ function Main() {
               }}
             >
               <Button size="small" disabled={busy || indexActive}>
-                📎 添加小说
+                📎 添加文档
               </Button>
             </Upload>
 

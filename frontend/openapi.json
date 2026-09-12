@@ -167,6 +167,23 @@
     "title": "Body_upload_books_api_books_post",
     "type": "object"
    },
+   "Body_upload_knowledge_documents_api_knowledge_documents_post": {
+    "properties": {
+     "files": {
+      "items": {
+       "contentMediaType": "application/octet-stream",
+       "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+     }
+    },
+    "required": [
+     "files"
+    ],
+    "title": "Body_upload_knowledge_documents_api_knowledge_documents_post",
+    "type": "object"
+   },
    "BookList": {
     "properties": {
      "books": {
@@ -671,6 +688,183 @@
      "created_at"
     ],
     "title": "IndexTaskStatus",
+    "type": "object"
+   },
+   "KnowledgeCollectionList": {
+    "properties": {
+     "collections": {
+      "items": {
+       "$ref": "#/components/schemas/KnowledgeCollectionSummary"
+      },
+      "title": "Collections",
+      "type": "array"
+     }
+    },
+    "required": [
+     "collections"
+    ],
+    "title": "KnowledgeCollectionList",
+    "type": "object"
+   },
+   "KnowledgeCollectionSummary": {
+    "properties": {
+     "document_count": {
+      "title": "Document Count",
+      "type": "integer"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "document_count"
+    ],
+    "title": "KnowledgeCollectionSummary",
+    "type": "object"
+   },
+   "KnowledgeDocumentList": {
+    "properties": {
+     "documents": {
+      "items": {
+       "$ref": "#/components/schemas/KnowledgeDocumentSummary"
+      },
+      "title": "Documents",
+      "type": "array"
+     }
+    },
+    "required": [
+     "documents"
+    ],
+    "title": "KnowledgeDocumentList",
+    "type": "object"
+   },
+   "KnowledgeDocumentSummary": {
+    "description": "通用目录中的文档摘要，正文仍只存在于现有 V1 检索响应。",
+    "properties": {
+     "collection_id": {
+      "title": "Collection Id",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+     },
+     "source_type": {
+      "title": "Source Type",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "versions": {
+      "items": {
+       "$ref": "#/components/schemas/KnowledgeVersionSummary"
+      },
+      "title": "Versions",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "collection_id",
+     "title",
+     "source_type",
+     "status"
+    ],
+    "title": "KnowledgeDocumentSummary",
+    "type": "object"
+   },
+   "KnowledgeUploadResult": {
+    "properties": {
+     "collection": {
+      "title": "Collection",
+      "type": "string"
+     },
+     "saved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Saved",
+      "type": "array"
+     },
+     "task": {
+      "$ref": "#/components/schemas/IndexTaskStatus"
+     }
+    },
+    "required": [
+     "collection",
+     "saved",
+     "task"
+    ],
+    "title": "KnowledgeUploadResult",
+    "type": "object"
+   },
+   "KnowledgeVersionSummary": {
+    "description": "V1 映射出的版本元数据；不包含文档正文。",
+    "properties": {
+     "chunk_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chunk Count"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "parser_name": {
+      "title": "Parser Name",
+      "type": "string"
+     },
+     "parser_version": {
+      "title": "Parser Version",
+      "type": "string"
+     },
+     "source_hash": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Hash"
+     },
+     "version_no": {
+      "title": "Version No",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id",
+     "version_no",
+     "parser_name",
+     "parser_version"
+    ],
+    "title": "KnowledgeVersionSummary",
     "type": "object"
    },
    "ModelList": {
@@ -2033,6 +2227,93 @@
      }
     },
     "summary": "Retry Index Task"
+   }
+  },
+  "/api/knowledge/collections": {
+   "get": {
+    "operationId": "list_knowledge_collections_api_knowledge_collections_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeCollectionList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Knowledge Collections"
+   }
+  },
+  "/api/knowledge/documents": {
+   "get": {
+    "operationId": "list_knowledge_documents_api_knowledge_documents_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeDocumentList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Knowledge Documents"
+   },
+   "post": {
+    "description": "上传通用文档并异步发布到 V2 shadow；TXT 旧入口保持不变。",
+    "operationId": "upload_knowledge_documents_api_knowledge_documents_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "collection",
+      "required": false,
+      "schema": {
+       "default": "默认知识库",
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Collection",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_knowledge_documents_api_knowledge_documents_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeUploadResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Upload Knowledge Documents"
    }
   },
   "/api/metrics/query-cache": {

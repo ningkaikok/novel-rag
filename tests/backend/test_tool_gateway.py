@@ -37,6 +37,14 @@ def test_gateway_validates_schema_permissions_and_duplicate_calls():
         ToolGateway(_Toolbox(), permissions=set()).execute("search_novels", {"query": "x"})
 
 
+def test_gateway_accepts_legacy_novel_read_permission_for_generic_tools():
+    gateway = ToolGateway(_Toolbox(), permissions={"novel:read"})
+
+    gateway.execute("list_books", {})
+
+    assert gateway.snapshot()["calls"] == 1
+
+
 def test_gateway_rejects_unknown_tools_and_invalid_types():
     with pytest.raises(ToolGatewayError) as unknown:
         ToolGateway(_Toolbox()).execute("shell", {})

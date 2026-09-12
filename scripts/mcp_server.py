@@ -33,10 +33,9 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 
 from agent_lab import AgentToolbox, ToolResult  # noqa: E402
 from config import DATABASE_URL  # noqa: E402
+from tool_source_adapter import tool_source_ref_from_legacy_chunk  # noqa: E402
 from tool_spec import (  # noqa: E402
-    EXCERPT_MAX_CHARS,
     TOOL_RESULT_SCHEMA_VERSION,
-    SourceRef,
     ToolResultV1,
     get_tool_spec,
 )
@@ -45,8 +44,8 @@ server = MCPServer(
     name="novel-rag",
     version="0.1.0",
     instructions=(
-        "中文小说书架的只读查询工具。回答事实问题前先用 search_novels 检索原文，"
-        "引用时给出 novel/chapter/chunk_id 定位信息。"
+        "通用知识库的 knowledge:read 只读查询工具。回答事实问题前先用 search_novels 检索知识库，"
+        "小说通过 legacy adapter 兼容；引用保留 document/version/chunk locator 和旧定位字段。"
     ),
 )
 
@@ -78,17 +77,7 @@ def _to_payload(result: ToolResult) -> ToolResultV1:
         schema_version=TOOL_RESULT_SCHEMA_VERSION,
         summary=result.summary,
         facts=dict(result.facts),
-        sources=[
-            SourceRef(
-                novel=s.novel,
-                chapter=s.chapter_title or "",
-                chunk_id=s.chunk_id,
-                # 版权红线：这里主动截断而不是依赖校验报错——超长是常态而非异常，
-                # 完整原文请按定位信息自行查库
-                excerpt=(s.text or "")[:EXCERPT_MAX_CHARS],
-            )
-            for s in result.sources
-        ],
+        sources=[tool_source_ref_from_legacy_chunk(s) for s in result.sources],
     )
 
 

@@ -5,9 +5,11 @@ import {
   getCurrentIndexTask,
   getIndexTask,
   listBooks,
+  listKnowledgeDocuments,
   retryIndexTask,
-  uploadBooks,
+  uploadKnowledgeDocuments,
   type IndexTask,
+  type KnowledgeDocument,
 } from '../api';
 
 /**
@@ -24,6 +26,7 @@ import {
 export function useBookshelf() {
   const { message } = AntdApp.useApp();
   const [books, setBooks] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [indexTask, setIndexTask] = useState<IndexTask | null>(null);
   const notifiedIndexTerminalRef = useRef('');
 
@@ -82,9 +85,29 @@ export function useBookshelf() {
 
   async function refreshBooks() {
     try {
-      setBooks(await listBooks());
+      const nextDocuments = await listKnowledgeDocuments();
+      setDocuments(nextDocuments);
+      setBooks(nextDocuments.map((document) => document.title));
     } catch {
-      setBooks([]);
+      // 兼容尚未部署目录 API 的旧后端；目录 API 本身失败时不影响旧书架操作。
+      try {
+        const nextBooks = await listBooks();
+        setBooks(nextBooks);
+        setDocuments(
+          nextBooks.map((title) => ({
+            id: `legacy:document:${title}`,
+            collection_id: `legacy:collection:${title}`,
+            title,
+            source_type: 'novel',
+            metadata: { legacy_novel: `${title}.txt`, storage_schema: 'v1' },
+            status: 'source_only',
+            versions: [],
+          })),
+        );
+      } catch {
+        setBooks([]);
+        setDocuments([]);
+      }
     }
   }
 
@@ -115,7 +138,7 @@ export function useBookshelf() {
   }
 
   function handleUpload(files: File[]) {
-    startShelfTask(() => uploadBooks(files), '小说已保存，正在后台建立增量索引');
+    startShelfTask(() => uploadKnowledgeDocuments(files), '文档已保存，正在后台建立 V2 索引');
   }
 
   async function cancelCurrentIndex() {
@@ -139,6 +162,7 @@ export function useBookshelf() {
 
   return {
     books,
+    documents,
     indexTask,
     indexActive,
     startShelfTask,

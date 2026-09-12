@@ -67,6 +67,9 @@ export type IndexResult = Schemas['IndexResult'];
 
 export type IndexTask = Schemas['IndexTaskStatus'];
 
+export type KnowledgeDocument = Schemas['KnowledgeDocumentSummary'];
+export type KnowledgeUploadResult = Schemas['KnowledgeUploadResult'];
+
 /** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。
  * 生成物里有同名字面量联合（Schemas['AnswerMode']），直接采用。
  */
@@ -97,6 +100,12 @@ export async function listBooks(): Promise<string[]> {
   return (await res.json()).books;
 }
 
+export async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  const res = await fetch('/api/knowledge/documents');
+  if (!res.ok) throw new Error('获取知识库文档失败');
+  return (await res.json()).documents;
+}
+
 // 下面这组书架操作（上传/删除/同步）都只负责「发起」：后端把它们放进后台线程，
 // 立即返回一个 IndexTask，真正的进度靠 App 里的轮询不断拉取。
 
@@ -105,6 +114,21 @@ export async function uploadBooks(files: FileList | File[]): Promise<IndexTask> 
   for (const f of Array.from(files)) form.append('files', f);
   const res = await fetch('/api/books', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await extractErrorMessage(res, '上传失败'));
+  return (await res.json()).task;
+}
+
+export async function uploadKnowledgeDocuments(
+  files: FileList | File[],
+  collection = '默认知识库',
+): Promise<IndexTask> {
+  const form = new FormData();
+  for (const f of Array.from(files)) form.append('files', f);
+  const params = new URLSearchParams({ collection });
+  const res = await fetch(`/api/knowledge/documents?${params.toString()}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '文档上传失败'));
   return (await res.json()).task;
 }
 

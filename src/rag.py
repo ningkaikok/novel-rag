@@ -37,6 +37,7 @@ Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，
 """
 
 import time
+from collections.abc import Iterator
 
 from sentence_transformers import SentenceTransformer
 
@@ -52,7 +53,9 @@ from config import (
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     TOP_K,
+    V2_SHADOW_ENABLED,
 )
+from domain_models import RetrievalScope
 from embedder import load_embedder
 from generation_mixin import (  # noqa: F401  # PROMPT_TEMPLATE* / generate_ollama_prompt_stream 为有意重导出（backend/main.py 引用）
     PROMPT_TEMPLATE,
@@ -61,6 +64,7 @@ from generation_mixin import (  # noqa: F401  # PROMPT_TEMPLATE* / generate_olla
     generate_ollama_prompt_stream,
 )
 from hierarchy import is_global_question
+from legacy_novel import LegacyNovelAdapter
 
 # 这些名字是拆分前的 rag.py 公开/半公开表面：agent_lab 直接 import
 # `_mentions_novel`，老脚本可能引用其余辅助函数。用冗余别名标记为**有意重导出**，
@@ -107,6 +111,7 @@ from postgres import (
 from query_expander import expand_query_variants
 from reranker import rerank_with_scores
 from retrieval_mixins import RetrievalMixin
+from v2_shadow_reader import V2ShadowReader
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
@@ -114,6 +119,12 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
     # FastAPI / 云端 SDK，评测脚本和测试里这个属性是 None，扩展自动跳过。
     # backend/main.py 启动时按 QUERY_EXPAND_MODEL 的前缀路由到 zhipu/claude_cli。
     expand_generate_fn = None
+
+    @staticmethod
+    def legacy_scope(novel: str):
+        """返回旧小说在通用领域中的检索范围，供新入口逐步接入。"""
+
+        return LegacyNovelAdapter.scope(novel)
 
     def __init__(self, embedder: SentenceTransformer | None = None):
         self.embedder = embedder or load_embedder()
@@ -171,17 +182,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 "WHERE novel = %s ORDER BY chunk_id",
                 (novel,),
             ).fetchall()
-        return [
-            SourceChunk(
-                novel=r["novel"],
-                chunk_id=int(r["chunk_id"]),
-                text=r["text"],
-                distance=0.0,
-                chapter_title=r.get("chapter_title"),
-                context=r.get("context") or "",
-            )
-            for r in rows
-        ]
+        return [SourceChunk.from_legacy_row(r) for r in rows]
 
     def hierarchy_retrieve(
         self,
@@ -189,6 +190,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         *,
         named_novels: list[str] | None = None,
         top_k: int = HIERARCHY_TOP_K,
+        scope: RetrievalScope | None = None,
     ) -> tuple[list[SourceChunk], list[dict]]:
         """先搜索摘要节点，再把命中章节映射回可引用的原文代表片段。
 
@@ -198,7 +200,15 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         query_embedding = self.embedder.encode([question], normalize_embeddings=True)
         query_vector = vector_literal(query_embedding[0])
 
-        targets = list(named_novels or [])
+        scoped_novels = self._resolve_legacy_scope(scope, None)
+        if scope is not None and not scoped_novels:
+            return [], []
+        if scoped_novels is not None and named_novels:
+            targets: list[str] = [novel for novel in named_novels if novel in scoped_novels]
+        elif scoped_novels is not None:
+            targets = list(scoped_novels)
+        else:
+            targets = list(named_novels or [])
         book_hits: list[dict] = []
         if not targets:
             book_hits = search_hierarchy(
@@ -243,26 +253,38 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                         continue
                     seen.add(key)
                     sources.append(
-                        SourceChunk(
-                            novel=row["novel"],
-                            chunk_id=int(row["chunk_id"]),
-                            text=row["text"],
+                        SourceChunk.from_legacy_row(
+                            {
+                                **row,
+                                "chapter_title": row.get("chapter_title") or hit["title"],
+                            },
                             # 摘要距离只表示这个章节整体与问题的相关性；后面重排会
                             # 重新判断具体原文片段，因此这里只保留为候选排序信号。
                             distance=float(hit["distance"]),
-                            chapter_title=row.get("chapter_title") or hit["title"],
-                            context=row.get("context") or "",
                         )
                     )
         return sources, [*book_hits, *chapter_hits]
 
-    def retrieve_hybrid(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
+    def retrieve_hybrid(
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        *,
+        scope: RetrievalScope | None = None,
+    ) -> list[SourceChunk]:
         """统一的两阶段召回：候选池合并后用轻量 RRF 排序，最终取 top-k。"""
-        sources, _ = self.retrieve_hybrid_traced(question, top_k)
+        if scope is None:
+            sources, _ = self.retrieve_hybrid_traced(question, top_k)
+        else:
+            sources, _ = self.retrieve_hybrid_traced(question, top_k, scope=scope)
         return sources
 
     def retrieve_hybrid_traced(
-        self, question: str, top_k: int = TOP_K
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        *,
+        scope: RetrievalScope | None = None,
     ) -> tuple[list[SourceChunk], list[dict]]:
         """同 retrieve_hybrid，但额外返回一份「思考过程」trace。
 
@@ -271,16 +293,27 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         """
         trace: list[dict] = []
         sources: list[SourceChunk] = []
-        for kind, payload in self.retrieve_hybrid_stream(question, top_k):
+        stream = (
+            self.retrieve_hybrid_stream(question, top_k)
+            if scope is None
+            else self.retrieve_hybrid_stream(question, top_k, scope=scope)
+        )
+        for kind, payload in stream:
             if kind == "step":
-                trace.append(payload)
-            else:
+                if isinstance(payload, dict):
+                    trace.append(payload)
+            elif isinstance(payload, list):
                 sources = payload
         return sources, trace
 
     def retrieve_hybrid_stream(
-        self, question: str, top_k: int = TOP_K, _allow_expand: bool = True
-    ):
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        _allow_expand: bool = True,
+        *,
+        scope: RetrievalScope | None = None,
+    ) -> Iterator[tuple[str, dict[str, object] | list[SourceChunk]]]:
         """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
 
         **为什么要做成生成器**：整条流水线要 2 秒左右（交叉编码器重排占大头），
@@ -320,8 +353,42 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             if RERANK_ENABLED
             else max(top_k, RECALL_K)
         )
+        # scope 先收敛成 V1 真实存在且可证明的小说名单。未知 scope 必须在任何
+        # 向量/BM25/结构 SQL 之前短路，不能把“无法映射”降级成全库搜索。
+        scoped_novels = self._resolve_legacy_scope(scope, None)
+        if scope is not None and not scoped_novels:
+            yield (
+                "step",
+                {
+                    "step": "检索范围",
+                    "detail": "指定的通用检索范围无法映射到当前 V1 索引，已返回空结果",
+                    "ms": took(),
+                },
+            )
+            yield "result", []
+            return
+
         # 阶段一：理解问题——点没点书名（含错字容错）、是不是问结构（结局/开头）
         named_novels = self._named_novels(question)
+        if scoped_novels is not None:
+            # 用户点名了范围外的旧小说时直接返回空；没有点名则把整个已解析 scope
+            # 作为所有召回路径的 only_novels，避免后续某一路意外扩大范围。
+            if named_novels and not set(named_novels).intersection(scoped_novels):
+                yield (
+                    "step",
+                    {
+                        "step": "检索范围",
+                        "detail": "问题点名的小说不在指定范围内，已返回空结果",
+                        "ms": took(),
+                    },
+                )
+                yield "result", []
+                return
+            named_novels = [novel for novel in named_novels if novel in scoped_novels]
+        if scoped_novels is not None:
+            retrieval_novels: list[str] = named_novels or list(scoped_novels)
+        else:
+            retrieval_novels = named_novels
         global_question = is_global_question(question)
 
         # 「长上下文取舍」：书小到能整本塞进模型窗口时，检索本身就是多余的。
@@ -368,10 +435,17 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         hierarchy_hits: list[dict] = []
         if HIERARCHY_ENABLED and global_question:
             try:
-                hierarchy_sources, hierarchy_hits = self.hierarchy_retrieve(
-                    question,
-                    named_novels=named_novels,
-                )
+                if scope is None:
+                    hierarchy_sources, hierarchy_hits = self.hierarchy_retrieve(
+                        question,
+                        named_novels=named_novels,
+                    )
+                else:
+                    hierarchy_sources, hierarchy_hits = self.hierarchy_retrieve(
+                        question,
+                        named_novels=named_novels,
+                        scope=scope,
+                    )
                 chapter_count = sum(hit.get("level") == "chapter" for hit in hierarchy_hits)
                 novels = list(dict.fromkeys(hit["novel"] for hit in hierarchy_hits))
                 yield (
@@ -404,7 +478,11 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 )
 
         # 阶段三：多路召回
-        semantic_sources = self.retrieve(question, top_k=candidate_k, only_novels=named_novels)
+        semantic_sources = self.retrieve(
+            question,
+            top_k=candidate_k,
+            only_novels=retrieval_novels,
+        )
         yield (
             "step",
             {
@@ -424,7 +502,10 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         # 结果猜一次书（没点名书名时），再拿这个猜测去收窄关键词检索——语义
         # 检索本身不受这个范围限制，全书候选池仍然完整，只是关键词这一路
         # 收窄了范围。
-        keyword_scope = named_novels or _dominant_novels(semantic_sources)
+        keyword_scope: list[str] = named_novels or _dominant_novels(semantic_sources)
+        if scoped_novels is not None:
+            keyword_scope = [novel for novel in keyword_scope if novel in scoped_novels]
+            keyword_scope = keyword_scope or retrieval_novels
         # 书名已经用来确定检索范围了，不该再作为内容词参与 BM25 打分
         # （详见 _strip_novel_titles 的说明——这个 bug 实测能让无关片段反超正确答案）
         keyword_sources = self.keyword_retrieve(
@@ -449,9 +530,19 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         hint_novels = named_novels or _dominant_novels(
             hierarchy_sources + semantic_sources + keyword_sources
         )
-        positional_sources = self.positional_retrieve(
-            question, top_k=candidate_k, hint_novels=hint_novels
-        )
+        if scope is None:
+            positional_sources = self.positional_retrieve(
+                question,
+                top_k=candidate_k,
+                hint_novels=hint_novels,
+            )
+        else:
+            positional_sources = self.positional_retrieve(
+                question,
+                top_k=candidate_k,
+                hint_novels=hint_novels,
+                scope=scope,
+            )
         if positional_sources:
             yield (
                 "step",
@@ -622,6 +713,39 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 if stop.value is not None:
                     result = stop.value
 
+        if V2_SHADOW_ENABLED:
+            try:
+                observation = V2ShadowReader(self.embedder).observe(
+                    question,
+                    result,
+                    top_k=top_k,
+                    scope=scope,
+                )
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": (
+                            f"V2 只读候选 {observation.v2_count} 条；"
+                            f"相对当前 V1 缺失 {observation.missing_count} 条、"
+                            f"新增 {observation.extra_count} 条"
+                        ),
+                        **observation.payload(),
+                    },
+                )
+            except Exception as exc:
+                # shadow 只能提供观测，V2 不可用时绝不能阻断 V1 回答。
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": f"V2 shadow 暂不可用，V1 结果保持不变（{exc}）",
+                        "error": exc.__class__.__name__,
+                    },
+                )
+
         yield "result", result
 
     def _maybe_expand(
@@ -706,8 +830,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 variant, top_k=RECALL_K, _allow_expand=False
             ):
                 if kind == "result":
-                    for chunk in payload:
-                        merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
+                    if isinstance(payload, list):
+                        for chunk in payload:
+                            merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
                     break  # 变体的 trace 步骤不并入主 trace，避免刷屏
 
         pool = list(merged.values())

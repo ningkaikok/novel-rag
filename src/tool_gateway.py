@@ -1,7 +1,8 @@
 """不可绕过的 Agent 工具执行入口。
 
 ToolSpec/Registry 描述“工具是什么”，本模块负责“这次调用能不能执行”。当前
-Agent Lab 只有只读工具，因此权限默认是 ``novel:read``；接口已经把启停、schema、
+Agent Lab 只有只读工具，因此权限默认是 ``knowledge:read``；``novel:read`` 作为
+旧小说客户端的兼容别名保留。接口已经把启停、schema、
 调用次数、重复动作、超时观测和审计摘要集中起来，后续增加写工具时不需要把安全
 逻辑散回规划循环。
 """
@@ -132,7 +133,9 @@ class ToolGateway:
         policy: ToolGatewayPolicy | None = None,
     ):
         self.toolbox = toolbox
-        self.permissions = frozenset({"novel:read"} if permissions is None else permissions)
+        self.permissions = frozenset(
+            {"knowledge:read", "novel:read"} if permissions is None else permissions
+        )
         base_policy = policy or ToolGatewayPolicy(max_calls=max_calls)
         self.policy = ToolGatewayPolicy(
             max_calls=max(1, int(base_policy.max_calls)),
@@ -163,7 +166,13 @@ class ToolGateway:
             raise ToolGatewayError("unknown_tool", str(exc)) from None
         if not spec.enabled:
             raise ToolGatewayError("tool_disabled", f"工具已停用：{name}")
-        if spec.permission not in self.permissions:
+        # ``novel:read`` was the pre-Phase-6 permission. Accepting it only as an
+        # explicit compatibility alias keeps existing callers working without
+        # weakening the new generic capability name.
+        allowed_permissions = {spec.permission}
+        if spec.permission == "knowledge:read":
+            allowed_permissions.add("novel:read")
+        if not allowed_permissions & self.permissions:
             raise ToolGatewayError("permission_denied", f"没有权限：{spec.permission}")
         if self._calls >= self.max_calls:
             raise ToolGatewayError("rate_limited", "本次运行已达到工具调用上限")
