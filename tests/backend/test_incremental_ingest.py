@@ -118,6 +118,7 @@ def test_build_index_only_prepares_changed_book(tmp_path, monkeypatch):
     stages = []
     monkeypatch.setattr(ingest, "plan_index", lambda *args, **kwargs: plan)
     monkeypatch.setattr(ingest, "ensure_index_schema", lambda dimension: None)
+    monkeypatch.setattr(ingest, "ensure_context_cache", lambda: None)
     monkeypatch.setattr(ingest, "index_chunk_count", lambda: 9)
     monkeypatch.setattr(ingest, "hierarchy_node_count", lambda: 2)
     monkeypatch.setattr(
