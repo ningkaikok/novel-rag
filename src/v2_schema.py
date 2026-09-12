@@ -102,12 +102,12 @@ def v2_schema_statements(dimension: int) -> tuple[str, ...]:
             indexed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.documents_collection_idx ON {V2_SCHEMA_NAME}.documents (collection_id)",
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.document_versions_document_idx ON {V2_SCHEMA_NAME}.document_versions (document_id, version_no DESC)",
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.document_chunks_version_ordinal_idx ON {V2_SCHEMA_NAME}.document_chunks (document_version_id, ordinal)",
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.document_chunks_embedding_hnsw_idx ON {V2_SCHEMA_NAME}.document_chunks USING hnsw (embedding vector_cosine_ops)",
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.chunk_terms_term_idx ON {V2_SCHEMA_NAME}.chunk_terms (term)",
-        f"CREATE INDEX IF NOT EXISTS {V2_SCHEMA_NAME}.chunk_terms_term_tf_idx ON {V2_SCHEMA_NAME}.chunk_terms (term, tf DESC, chunk_id)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_documents_collection_idx ON {V2_SCHEMA_NAME}.documents (collection_id)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_document_versions_document_idx ON {V2_SCHEMA_NAME}.document_versions (document_id, version_no DESC)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_document_chunks_version_ordinal_idx ON {V2_SCHEMA_NAME}.document_chunks (document_version_id, ordinal)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_document_chunks_embedding_hnsw_idx ON {V2_SCHEMA_NAME}.document_chunks USING hnsw (embedding vector_cosine_ops)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_chunk_terms_term_idx ON {V2_SCHEMA_NAME}.chunk_terms (term)",
+        f"CREATE INDEX IF NOT EXISTS knowledge_v2_chunk_terms_term_tf_idx ON {V2_SCHEMA_NAME}.chunk_terms (term, tf DESC, chunk_id)",
     )
 
 

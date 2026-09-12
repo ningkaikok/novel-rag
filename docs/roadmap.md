@@ -1,5 +1,17 @@
 # 项目路线图
 
+## 通用知识库切换：Phase 7（shadow 数据与只读检索已完成，2026-09-12）
+
+- [x] 在本机 PostgreSQL 完成 V1 → `knowledge_v2` 的逐文档 shadow 导入；6 个文档、33,542
+  个 chunk、3,799,681 条 BM25 term 全部提交，V1 表未修改
+- [x] 增加可恢复的迁移脚本、预迁移备份和幂等发布；失败时按文档事务回滚，重复执行不会
+  产生重复 chunk/term
+- [x] 增加通用 V2 只读 repository，支持向量检索、BM25 检索和 collection/document/version
+  scope；真实 PostgreSQL smoke test 已通过
+- [x] 增加 V1/V2 shadow 稳定身份、chunk 数量和 locator 比较脚本；当前 6 个文档 mismatch=0
+- [ ] 将 V2 检索接入真实 RAG shadow read，记录候选差异、延迟和质量指标；验证完成前默认仍为 V1
+- [ ] 将 Markdown/PDF parser 接入正式上传、embedding、BM25 和索引任务
+
 ## 通用知识库切换：Phase 1（已完成，2026-09-12）
 
 本阶段只建立领域边界，不改变当前小说问答行为：

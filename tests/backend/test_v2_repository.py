@@ -95,8 +95,19 @@ def test_publication_sql_is_ordered_idempotent_and_manifest_is_last():
     assert "document_versions" in first.calls[2][0]
     assert "DELETE FROM knowledge_v2.chunk_terms" in first.calls[3][0]
     assert "DELETE FROM knowledge_v2.document_chunks" in first.calls[4][0]
-    assert "document_chunks" in first.calls[5][0]
-    assert "chunk_terms" in first.calls[6][0]
+    chunk_call_indices = [
+        index
+        for index, (query, _params) in enumerate(first.calls)
+        if "document_chunks" in query and not query.lstrip().startswith("DELETE")
+    ]
+    term_call_indices = [
+        index
+        for index, (query, _params) in enumerate(first.calls)
+        if "chunk_terms" in query and not query.lstrip().startswith("DELETE")
+    ]
+    assert chunk_call_indices
+    assert term_call_indices
+    assert max(chunk_call_indices) < min(term_call_indices)
     assert "index_manifests" in first.calls[-1][0]
     assert all(
         "ON CONFLICT" in query

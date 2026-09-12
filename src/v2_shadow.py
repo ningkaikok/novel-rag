@@ -77,6 +77,17 @@ def _legacy_locator(ordinal: int, chapter_title: str | None) -> SourceLocator:
 
 
 def _generic_locator(chunk: DocumentChunk) -> SourceLocator:
+    # LegacyNovelAdapter 会同时保留 chapter_title 和旧 chunk_id；对迁移的小说，
+    # chunk ordinal 才是与 V1 相同的机器定位主键，不能因为 section_path 存在就改成
+    # heading，否则 shadow compare 会把兼容数据误报为定位漂移。
+    legacy_chunk_id = chunk.metadata.get("legacy_chunk_id")
+    if legacy_chunk_id is not None:
+        chapter_title = chunk.metadata.get("legacy_chapter_title")
+        return SourceLocator(
+            kind="chunk",
+            value=str(legacy_chunk_id),
+            label=str(chapter_title) if chapter_title else f"片段 {legacy_chunk_id}",
+        )
     if chunk.page_number is not None:
         return SourceLocator(
             kind="page",
