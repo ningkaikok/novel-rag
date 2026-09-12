@@ -1,6 +1,6 @@
 [project]
 name = "novel-rag"
-version = "0.6.0"
+version = "0.11.0"
 description = "把 RAG 做「透明」的中文小说问答系统：向量/BM25/RRF/重排全链路可观测"
 readme = "README.md"
 license = { file = "LICENSE" }

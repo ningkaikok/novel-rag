@@ -3,12 +3,19 @@
 import backend.main as main
 
 
+def _v2_catalog_unavailable():
+    """让 V1 目录契约测试不受开发机真实 V2 数据影响。"""
+
+    raise RuntimeError("V2 catalog unavailable in V1 contract test")
+
+
 def test_knowledge_documents_are_metadata_only_and_use_v1_manifest(
     client, tmp_path, monkeypatch
 ):
     (tmp_path / "雾隐山庄.txt").write_text("不应出现在目录响应里的正文")
     (tmp_path / "说明.md").write_text("非 TXT 输入不进入旧小说目录")
     monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
+    monkeypatch.setattr(main, "build_v2_catalog", _v2_catalog_unavailable)
     monkeypatch.setattr(
         main,
         "load_index_manifest",
@@ -44,6 +51,7 @@ def test_knowledge_catalog_degrades_to_source_only_without_database(
 ):
     (tmp_path / "孤本.txt").write_text("本地文件")
     monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
+    monkeypatch.setattr(main, "build_v2_catalog", _v2_catalog_unavailable)
 
     def unavailable_database():
         raise RuntimeError("database unavailable")
@@ -65,12 +73,12 @@ def test_knowledge_collections_are_stable_one_document_summaries(
     (tmp_path / "甲.txt").write_text("甲")
     (tmp_path / "乙.txt").write_text("乙")
     monkeypatch.setattr(main, "NOVELS_DIR", tmp_path)
+    monkeypatch.setattr(main, "build_v2_catalog", _v2_catalog_unavailable)
     monkeypatch.setattr(main, "load_index_manifest", lambda: {})
 
     response = client.get("/api/knowledge/collections")
 
     assert response.status_code == 200
     assert sorted(
-        (item["name"], item["document_count"])
-        for item in response.json()["collections"]
+        (item["name"], item["document_count"]) for item in response.json()["collections"]
     ) == [("乙", 1), ("甲", 1)]
