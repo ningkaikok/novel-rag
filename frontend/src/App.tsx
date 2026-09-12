@@ -41,9 +41,10 @@ const CLAUDE_LABELS: Record<string, string> = {
   opus: 'Claude · opus（最强最慢）',
 };
 const CODEX_LABELS: Record<string, string> = {
-  'gpt-5-codex': 'Codex · gpt-5-codex（推荐）',
-  'gpt-5': 'Codex · gpt-5',
-  o3: 'Codex · o3',
+  // ChatGPT 账号登录下传具体模型名会被 CLI 直接拒绝（实测），所以默认只有一档，
+  // 不传 -m，用账号当前默认模型；用 CODEX_MODEL_ALIASES 环境变量可以覆盖成
+  // 具体模型名（API Key 登录场景），未在这里列出的名字会直接显示原始别名。
+  default: 'Codex · 默认模型（账号内置）',
 };
 const GLM_LABELS: Record<string, string> = {
   'glm-4-flash': 'GLM-4-Flash（免费最快）',

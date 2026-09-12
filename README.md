@@ -199,7 +199,7 @@ npm run dev
 
 - **💻 本地（Ollama，完全离线）**：自动列出 `ollama list` 里已安装的模型（如 `qwen2.5:3b`、`qwen2.5:7b`）。
 - **☁️ 我的 Claude 订阅（云端）**：如果本机装了 [Claude Code CLI](https://claude.com/claude-code) 并已登录，会额外出现 `haiku`/`sonnet`/`opus` 三档，**不需要单独配置 `ANTHROPIC_API_KEY`**——直接复用你本地已登录的 Claude 订阅（后端通过 `claude --print` 非交互调用）。
-- **☁️ 我的 Codex 订阅（云端）**：如果本机装了 [OpenAI Codex CLI](https://github.com/openai/codex)（`npm install -g @openai/codex`）并已登录（`codex login`），会额外出现 `gpt-5-codex`/`gpt-5`/`o3` 三档，同样**不需要单独配置 `OPENAI_API_KEY`**——直接复用你本地已登录的 ChatGPT 订阅（后端通过 `codex exec --json` 非交互调用）。可用模型名如与你账号下实际支持的不一致，用环境变量 `CODEX_MODEL_ALIASES`（逗号分隔）覆盖。
+- **☁️ 我的 Codex 订阅（云端）**：如果本机装了 [OpenAI Codex CLI](https://github.com/openai/codex)（`npm install -g @openai/codex`）并已登录（`codex login`），会额外出现一档 `codex:default`，同样**不需要单独配置 `OPENAI_API_KEY`**——直接复用你本地已登录的 ChatGPT 订阅（后端通过 `codex exec --json` 非交互调用）。实测 ChatGPT 账号登录下传具体模型名（`gpt-5`/`o3` 等）会被 CLI 直接拒绝（`not supported when using Codex with a ChatGPT account`），所以默认不传 `-m`，用账号当前的默认模型；如果你是用 API Key 登录、账号支持指定模型，用环境变量 `CODEX_MODEL_ALIASES`（逗号分隔的具体模型名）覆盖。CLI 不在 `PATH` 里（比如只在某个项目目录下装了独立版本）时，用 `CODEX_BIN` 指向可执行文件的绝对路径，不需要手动软链。
 - **☁️ 智谱 GLM（云端）**：设置了环境变量 `ZHIPU_API_KEY` 时出现 `glm-4-flash`/`glm-4.5-air`/`glm-4.5`/`glm-4.6` 四档。
 
 选择任何云端模型时请注意（界面上的胶囊标签和 Tooltip 也会显示同样的提示）：
