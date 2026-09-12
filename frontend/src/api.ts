@@ -67,6 +67,8 @@ export type IndexResult = Schemas['IndexResult'];
 
 export type IndexTask = Schemas['IndexTaskStatus'];
 
+export type KnowledgeDocument = Schemas['KnowledgeDocumentSummary'];
+
 /** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。
  * 生成物里有同名字面量联合（Schemas['AnswerMode']），直接采用。
  */
@@ -95,6 +97,12 @@ export async function listBooks(): Promise<string[]> {
   const res = await fetch('/api/books');
   if (!res.ok) throw new Error('获取书架失败');
   return (await res.json()).books;
+}
+
+export async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  const res = await fetch('/api/knowledge/documents');
+  if (!res.ok) throw new Error('获取知识库文档失败');
+  return (await res.json()).documents;
 }
 
 // 下面这组书架操作（上传/删除/同步）都只负责「发起」：后端把它们放进后台线程，

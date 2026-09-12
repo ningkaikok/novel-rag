@@ -110,6 +110,16 @@ body {
   line-height: 1.55;
   color: var(--text);
 }
+.document-meta {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+}
+.document-meta .ant-tag {
+  margin-inline-end: 0;
+  font-size: 0.7rem;
+}
 .index-task {
   margin: 0.85rem 0 0.45rem;
   padding: 0.8rem;

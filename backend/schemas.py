@@ -55,6 +55,43 @@ class BookList(BaseModel):
     books: list[str]
 
 
+class KnowledgeVersionSummary(BaseModel):
+    """V1 映射出的版本元数据；不包含文档正文。"""
+
+    id: str
+    version_no: int
+    source_hash: str | None = None
+    parser_name: str
+    parser_version: str
+    chunk_count: int | None = None
+
+
+class KnowledgeDocumentSummary(BaseModel):
+    """通用目录中的文档摘要，正文仍只存在于现有 V1 检索响应。"""
+
+    id: str
+    collection_id: str
+    title: str
+    source_type: str
+    metadata: dict[str, object] = Field(default_factory=dict)
+    status: str
+    versions: list[KnowledgeVersionSummary] = Field(default_factory=list)
+
+
+class KnowledgeDocumentList(BaseModel):
+    documents: list[KnowledgeDocumentSummary]
+
+
+class KnowledgeCollectionSummary(BaseModel):
+    id: str
+    name: str
+    document_count: int
+
+
+class KnowledgeCollectionList(BaseModel):
+    collections: list[KnowledgeCollectionSummary]
+
+
 class IndexResult(BaseModel):
     novels: list[str]
     chunk_count: int

@@ -98,6 +98,7 @@ from backend.index_tasks import (  # noqa: E402
     TaskAlreadyRunning,
     TaskNotFound,
 )
+from backend.knowledge_catalog import build_v1_catalog  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
@@ -115,6 +116,8 @@ from backend.schemas import (  # noqa: E402
     GraphReviewResult,
     HealthStatus,
     IndexTaskStatus,
+    KnowledgeCollectionList,
+    KnowledgeDocumentList,
     ModelList,
     QueryCacheMetrics,
     RunEvent,
@@ -349,6 +352,18 @@ app.add_middleware(RequestIDMiddleware)
 @app.get("/api/books", response_model=BookList)
 def list_books():
     return BookList(books=sorted(p.stem for p in NOVELS_DIR.glob("*.txt")))
+
+
+@app.get("/api/knowledge/collections", response_model=KnowledgeCollectionList)
+def list_knowledge_collections():
+    collections, _ = build_v1_catalog(NOVELS_DIR, load_index_manifest)
+    return collections
+
+
+@app.get("/api/knowledge/documents", response_model=KnowledgeDocumentList)
+def list_knowledge_documents():
+    _, documents = build_v1_catalog(NOVELS_DIR, load_index_manifest)
+    return documents
 
 
 async def _read_limited(f: UploadFile, name: str) -> bytes:

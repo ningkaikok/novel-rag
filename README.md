@@ -1,4 +1,4 @@
-# 小说 RAG 查询系统
+# 通用知识库 Agent 平台
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ningkaikok/novel-rag/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ningkaikok/novel-rag/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ningkaikok/novel-rag?label=release&color=orange)](https://github.com/ningkaikok/novel-rag/releases/latest)
@@ -8,9 +8,9 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 [![React](https://img.shields.io/badge/React-18-20232a?logo=react&logoColor=61DAFB)](frontend/package.json)
 
-> 一个把 RAG 做「透明」的中文小说问答系统：每次回答都能逐层展开向量、BM25、RRF 融合与重排的候选排名、分数变化和耗时，看清答案是怎么被找出来的 —— 以及在哪一步被弄丢的。
+> 一个把 RAG 和 Agent 做「透明」的通用知识库平台：每次回答都能逐层展开向量、BM25、RRF 融合与重排的候选排名、分数变化和耗时，看清答案是怎么被找出来的 —— 以及在哪一步被弄丢的。小说是当前的兼容适配器和演示场景。
 
-基于本地向量检索的小说问答 demo。检索和 Embedding 全部在本机运行；生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅或智谱 GLM（见下文“切换生成模型”）。
+基于本地向量检索的知识库问答与 Agent demo。当前小说流程用于展示可核验检索、引用和 Agent 轨迹；检索和 Embedding 全部在本机运行。生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅或智谱 GLM（见下文“切换生成模型”）。
 
 ## 四个和一般 RAG demo 不太一样的地方
 
@@ -29,14 +29,14 @@
 技术栈：
 - **文本切分**：按段落聚合成约 500 字的片段，片段间有重叠，避免切断语义。
 - **Embedding**：`sentence-transformers`，本地模型 `BAAI/bge-small-zh-v1.5`（中文效果较好，体积约 95MB）。
-- **数据库**：PostgreSQL + pgvector，片段、原文和 embedding 存储在 `novel_rag` 数据库的 `novel_chunks` 表中。
+- **数据库**：PostgreSQL + pgvector；当前生产索引仍使用 V1 `novel_chunks` 表，通用知识库的 V2 schema 作为后续迁移基础保留。
 - **增量索引**：按小说文件 SHA-256 和索引配置指纹识别变化，只更新新增、修改或删除的书；每本书的向量与 BM25 在同一事务中原子切换。
 - **层级检索**：为片段建立章节摘要和全书摘要；主题、成长、跨书比较先定位书与章节，再回到原文参与融合和重排。
 - **检索可观测性**：每次问答可展开查看向量、BM25、RRF、重排的候选排名、分数变化与耗时。
 - **Agent Lab**：独立的 3～5 步只读工具循环，逐步展示选择、工具结果与证据，不依赖 Agent 框架。
 - **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型、你自己的 Claude 订阅或智谱 GLM（云端模型会发送问题和召回片段，见下文）。
 - **后端**：FastAPI（`backend/main.py`），把检索/生成逻辑包成 HTTP 接口，回答用 SSE 逐字流式返回。
-- **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。用 antd 组件 + `ConfigProvider` 主题令牌保留藏青主色与暖底书卷气，支持浅色/深色主题、上传/删除书籍、示例问题、流式回答，以及可点击的原文出处引用。前后端类型契约由 OpenAPI 生成（`schemas.py` → `openapi.json` → `api-generated.ts`，CI 有 drift 检查），改 Pydantic 模型后跑 `uv run python scripts/export_openapi.py && cd frontend && npm run gen:api`。
+- **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。左侧目录已使用通用知识库/文档术语和元数据摘要；当前上传/删除仍保留小说兼容操作。前后端类型契约由 OpenAPI 生成（`schemas.py` → `openapi.json` → `api-generated.ts`，CI 有 drift 检查），改 Pydantic 模型后跑 `uv run python scripts/export_openapi.py && cd frontend && npm run gen:api`。
 - **对话体验**：生成中可以点「停止」——不只是前端不再显示新字，后端会真的停止向模型索取内容（用云端模型时不多花钱）；刷新页面或重开浏览器后，之前的问答、原文出处、思考过程会自动恢复，中途被停止的那轮也会如实标出来；往上翻看历史时，下面来了新回答会提示「有新回复」，不会悄悄错过。
 
 ## 目录结构
@@ -129,14 +129,14 @@ novel-rag/
    cd ..
    ```
 
-## 添加你自己的小说
+## 添加知识库文档（当前兼容范围）
 
-有两种方式，任选其一：
+当前前端目录展示已经通用化为“知识库 / 文档”，小说仍是默认的兼容适配器和演示场景。有两种方式，任选其一：
 
 - **网页上传（推荐）**：启动网页后选择 `.txt` 文件。文件保存后会自动在后台建立增量索引，侧栏显示切分、Embedding、BM25 和入库进度；无需再手动全库重建。
 - **手动放置**：把 `.txt` 文件放进 `data/novels/` 目录，再运行 `python src/ingest.py`。
 
-每个文件当作一部小说，文件名会作为来源标注。目录里已经有一篇原创的示例短篇小说 `雾隐山庄.txt`，用于快速验证整个流程，可以直接删掉换成你自己的小说文本。
+当前上传和生产索引仍只支持 TXT/V1 路径；Markdown/PDF 已具备文本解析基础，但尚未接入现有生产上传/indexing pipeline。V2 schema 和 repository 也未切为默认读写路径，默认仍是 V1。每个 TXT 文件会作为一个兼容文档，文件名会作为来源标注；目录里已经有一篇原创的示例短篇小说 `雾隐山庄.txt`，用于快速验证整个流程，可以直接删掉换成你自己的合法文本。
 
 ## 启动（FastAPI + React，推荐）
 
@@ -157,7 +157,7 @@ cd frontend
 npm run dev
 ```
 
-浏览器打开 `http://localhost:45173`。左侧「我的书架」可上传/删除小说、查看后台索引进度、安全停止或重试任务，并在「更多设置」里检查文件变化和调整参考原文数量。底部保持一个输入框；工作模式可选择稳定的“标准 RAG”或教学用“Agent Lab”。标准 RAG 提供三种回答模式：
+浏览器打开 `http://localhost:45173`。左侧「知识库」展示文档目录、来源类型和索引状态；当前仍可上传/删除 TXT 小说、查看后台索引进度、安全停止或重试任务，并在「更多设置」里检查文件变化和调整参考原文数量。目录展示已通用化，但生产上传/indexing 仍是 TXT/V1，Markdown/PDF parser 仅提供解析基础，V2 未切默认。底部保持一个输入框；工作模式可选择稳定的“标准 RAG”或教学用“Agent Lab”。标准 RAG 提供三种回答模式：
 
 - **自动判断**：开放问题直接问模型，小说问题先检索原文；拿不准时保守地检索。
 - **仅依据原文**：强制执行混合检索、重排和引用，资料不足就明确拒答。
