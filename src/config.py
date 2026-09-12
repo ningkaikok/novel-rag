@@ -4,6 +4,8 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 NOVELS_DIR = ROOT_DIR / "data" / "novels"
+# 通用知识库上传源文件目录；与兼容小说目录分开，便于后续按文档版本重建 V2。
+KNOWLEDGE_DIR = ROOT_DIR / "data" / "knowledge"
 
 # 通用知识库 V2 迁移开关。Phase 2 只建立 schema/迁移计划，V1 仍是唯一在线读写路径；
 # 即使未来设置为 shadow，也必须由显式迁移入口消费，当前 NovelRAG 不会自动切换。

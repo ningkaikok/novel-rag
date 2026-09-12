@@ -124,6 +124,12 @@ class UploadResult(BaseModel):
     task: IndexTaskStatus
 
 
+class KnowledgeUploadResult(BaseModel):
+    collection: str
+    saved: list[str]
+    task: IndexTaskStatus
+
+
 class DeleteResult(BaseModel):
     deleted: str
     task: IndexTaskStatus

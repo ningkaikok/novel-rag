@@ -48,6 +48,8 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `scripts/apply_v1_to_v2.py`：显式执行逐文档、逐事务的 V1 → V2 shadow 发布；默认 dry-run，
   不修改 V1。
 - `scripts/compare_v1_v2_shadow.py`：只读比较 V1/V2 的稳定身份、数量和 locator，不输出正文。
+- `src/v2_ingest.py`：把 TXT/Markdown/PDF parser 接入分批 embedding、BM25 term 和显式
+  V2 发布；`POST /api/knowledge/documents` 通过后台索引任务调用它，默认发布到 shadow。
 - `src/retrieval_scope.py`：提供 `RetrievalScope` 到 V1 小说名单的安全投影；未传 scope
   返回兼容的未限制状态，无法证明映射关系时返回空集合，不会扩大为全库。
 - `src/retrieval_mixins.py` / `src/rag.py`：V1 向量、BM25、结构性和 hybrid 检索可接收
@@ -96,8 +98,8 @@ shadow 数据导入，向量/BM25 只读 smoke test 和 V1/V2 稳定 locator 比
 
 1. 将 `V2ReadRepository` 接入真实 RAG shadow read，积累 V1/V2 检索候选、延迟和 parser
    级检索评测；当前只完成 V2 直接 smoke test，尚未改变 RAG 主链路。
-2. 把 Markdown/PDF parser 输出接入正式上传、embedding/BM25 和索引任务，补充通用文档
-   版本更新和失败恢复。
+2. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
+   切到真实 V2 读取。
 3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；
    当前 Agent/MCP 仍只读 V1/legacy adapter。
 4. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。

@@ -10,7 +10,9 @@
   scope；真实 PostgreSQL smoke test 已通过
 - [x] 增加 V1/V2 shadow 稳定身份、chunk 数量和 locator 比较脚本；当前 6 个文档 mismatch=0
 - [ ] 将 V2 检索接入真实 RAG shadow read，记录候选差异、延迟和质量指标；验证完成前默认仍为 V1
-- [ ] 将 Markdown/PDF parser 接入正式上传、embedding、BM25 和索引任务
+- [x] 新增 `/api/knowledge/documents` 通用上传入口，接入 TXT/Markdown/PDF parser、分批
+  embedding、BM25 和 V2 shadow 索引任务；旧 `/api/books` 兼容入口保持不变
+- [ ] 补齐通用文档版本重建/删除、V2 catalog 真实读取和前端上传界面
 
 ## 通用知识库切换：Phase 1（已完成，2026-09-12）
 

@@ -128,6 +128,31 @@ def test_upload_saves_file_and_returns_background_task(client, tmp_path, monkeyp
     assert (tmp_path / "新小说.txt").read_text() == "第一章 开始\n正文"
 
 
+def test_upload_knowledge_accepts_markdown_and_uses_v2_task(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "KNOWLEDGE_DIR", tmp_path)
+    calls = []
+
+    def start_task(payloads, collection, **kwargs):
+        kwargs["prepare"]()
+        calls.append((payloads, collection))
+        return _index_task()
+
+    monkeypatch.setattr(main, "_start_knowledge_index_task", start_task)
+    resp = client.post(
+        "/api/knowledge/documents",
+        params={"collection": "AI 资料"},
+        files={"files": ("设计说明.md", "# 概览\n\n正文", "text/markdown")},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["collection"] == "AI 资料"
+    assert resp.json()["saved"] == ["设计说明.md"]
+    assert calls[0][0][0][0] == "设计说明.md"
+    assert calls[0][0][0][1] == "# 概览\n\n正文".encode()
+    assert calls[0][1] == "AI 资料"
+    assert (tmp_path / "设计说明.md").read_bytes() == "# 概览\n\n正文".encode()
+
+
 def test_delete_removes_file_then_returns_cleanup_task(client, tmp_path, monkeypatch):
     target = tmp_path / "要删除.txt"
     target.write_text("正文")
