@@ -37,6 +37,7 @@ Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，
 """
 
 import time
+from collections.abc import Iterator
 
 from sentence_transformers import SentenceTransformer
 
@@ -299,8 +300,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         )
         for kind, payload in stream:
             if kind == "step":
-                trace.append(payload)
-            else:
+                if isinstance(payload, dict):
+                    trace.append(payload)
+            elif isinstance(payload, list):
                 sources = payload
         return sources, trace
 
@@ -311,7 +313,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         _allow_expand: bool = True,
         *,
         scope: RetrievalScope | None = None,
-    ):
+    ) -> Iterator[tuple[str, dict[str, object] | list[SourceChunk]]]:
         """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
 
         **为什么要做成生成器**：整条流水线要 2 秒左右（交叉编码器重排占大头），
@@ -828,8 +830,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 variant, top_k=RECALL_K, _allow_expand=False
             ):
                 if kind == "result":
-                    for chunk in payload:
-                        merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
+                    if isinstance(payload, list):
+                        for chunk in payload:
+                            merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
                     break  # 变体的 trace 步骤不并入主 trace，避免刷屏
 
         pool = list(merged.values())

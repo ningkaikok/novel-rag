@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any, cast
 
 from config import CHUNK_OVERLAP, CHUNK_SIZE
 from domain_models import Collection, Document
@@ -186,7 +187,9 @@ def index_v2_document(
                 """,
                 (item.document.id,),
             ).fetchone()
-            version_no = int(latest["version_no"]) + 1
+            if latest is None:
+                raise RuntimeError("无法读取文档最新版本号")
+            version_no = int(cast(Any, latest["version_no"])) + 1
         else:
             version_no = int(existing["version_no"])
     item = V2IndexInput(
@@ -199,7 +202,7 @@ def index_v2_document(
     if progress:
         progress("database", 98, "正在发布 V2 文档索引")
     with connect() as conn:
-        published = publish_v2_index(conn, plan, storage_schema=storage_schema)
+        published = publish_v2_index(cast(Any, conn), plan, storage_schema=storage_schema)
     if progress:
         progress("complete", 100, "V2 文档索引已发布")
     return V2IngestResult(

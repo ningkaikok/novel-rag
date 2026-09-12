@@ -133,6 +133,11 @@ class _BaseParser:
     def _document_id(self, title: str) -> str:
         return _stable_id("document", self.name, title)
 
+    def parse(self, payload: bytes, *, title: str) -> list[DocumentChunk]:
+        """把输入解析为可索引片段；具体格式 parser 必须实现。"""
+
+        raise NotImplementedError
+
     def document_version(self, payload: bytes, *, title: str) -> DocumentVersion:
         """返回与 parser 配置绑定的可复现文档版本。"""
 

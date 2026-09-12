@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -15,7 +16,7 @@ from v2_retrieval import V2ReadRepository, V2SearchHit
 class _Embedder(Protocol):
     def encode(
         self, texts: list[str], *, normalize_embeddings: bool, show_progress_bar: bool
-    ): ...
+    ) -> Sequence[Sequence[float]]: ...
 
 
 @dataclass(frozen=True)

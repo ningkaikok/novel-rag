@@ -150,7 +150,9 @@ def build_v2_catalog() -> tuple[KnowledgeCollectionList, KnowledgeDocumentList]:
                 name=collection_names[collection_id],
                 document_count=document_counts.get(collection_id, 0),
             )
-            for collection_id in sorted(collection_names, key=collection_names.get)
+            for collection_id in sorted(
+                collection_names, key=lambda item: collection_names[item]
+            )
         ]
     )
     return collections, KnowledgeDocumentList(documents=documents)

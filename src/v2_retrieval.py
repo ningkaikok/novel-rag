@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any, cast
 
 from domain_models import Collection, Document, DocumentChunk, DocumentVersion, RetrievalScope
 from postgres import connect, vector_literal
@@ -83,7 +84,7 @@ def _hit_from_row(row: Mapping[str, object]) -> V2SearchHit:
     version = DocumentVersion(
         id=str(row["version_id"]),
         document_id=document.id,
-        version_no=int(row["version_no"]),
+        version_no=int(cast(Any, row["version_no"])),
         source_hash=str(row["source_hash"]) if row.get("source_hash") else None,
         parser_name=str(row["parser_name"]),
         parser_version=str(row["parser_version"]),
@@ -91,10 +92,12 @@ def _hit_from_row(row: Mapping[str, object]) -> V2SearchHit:
     chunk = DocumentChunk(
         id=str(row["chunk_id"]),
         document_version_id=version.id,
-        ordinal=int(row["ordinal"]),
+        ordinal=int(cast(Any, row["ordinal"])),
         text=str(row["text"]),
         section_path=_as_tuple(row.get("section_path")),
-        page_number=int(row["page_number"]) if row.get("page_number") is not None else None,
+        page_number=(
+            int(cast(Any, row["page_number"])) if row.get("page_number") is not None else None
+        ),
         context=str(row.get("context") or ""),
         metadata=_as_dict(row.get("chunk_metadata")),
     )
@@ -103,7 +106,7 @@ def _hit_from_row(row: Mapping[str, object]) -> V2SearchHit:
         document=document,
         version=version,
         chunk=chunk,
-        distance=float(row.get("distance", 0.0)),
+        distance=float(cast(Any, row.get("distance", 0.0))),
     )
 
 

@@ -533,7 +533,7 @@ def _start_knowledge_index_task(
         model = state.get("embedder") or load_embedder()
         dimension = ingest._embedding_dimension(model)
         with connect() as conn:
-            apply_v2_schema(conn, dimension)
+            apply_v2_schema(cast(Any, conn), dimension)
 
         chunk_count = 0
         for index, (name, payload) in enumerate(payloads):
