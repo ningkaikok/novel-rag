@@ -15,6 +15,19 @@
 后续 Phase 2 才处理 V2 数据库与可回滚迁移；Markdown/PDF 解析、通用文档 API、前端知识库
 界面和生产化多租户能力均未完成。详细迁移策略见 `docs/knowledge-domain-migration.md`。
 
+## 通用知识库切换：Phase 2（进行中，schema + dry-run 基础已完成）
+
+- [x] 在独立 `knowledge_v2` schema 定义 collections、documents、document_versions、
+  document_chunks、chunk_terms、index_manifests 及必要索引
+- [x] 提供幂等 DDL 和显式 apply 函数；默认 `STORAGE_SCHEMA=v1`，不自动执行
+- [x] 提供 LegacyNovel snapshot → V2 migration plan、重复执行指纹和 dry-run validator
+- [x] 校验父子关系、chunk ordinal/locator、term 关系、source/pipeline hash 和 manifest 数量
+- [ ] 实现事务内数据 upsert、shadow read 和可回滚切换
+- [ ] 接入 Markdown/PDF、通用文档 API 和前端知识库界面
+
+本阶段刻意只交付 schema + dry-run validator 最小闭环，尚未将任何 V1 数据写入 V2，
+也没有删除或覆盖现有表。
+
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、
 工程加固、检索实验、答案忠实度和多轮上下文边界，再进入 M4 关系图质量和 M5/M6

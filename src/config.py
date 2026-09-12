@@ -5,6 +5,12 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 NOVELS_DIR = ROOT_DIR / "data" / "novels"
 
+# 通用知识库 V2 迁移开关。Phase 2 只建立 schema/迁移计划，V1 仍是唯一在线读写路径；
+# 即使未来设置为 shadow，也必须由显式迁移入口消费，当前 NovelRAG 不会自动切换。
+STORAGE_SCHEMA = os.environ.get("STORAGE_SCHEMA", "v1").strip().lower()
+if STORAGE_SCHEMA not in {"v1", "v2", "shadow"}:
+    raise ValueError("STORAGE_SCHEMA 必须是 v1/v2/shadow")
+
 # 单个上传文件的大小上限（默认 20MB）。上传接口按 1MB 一块流式读取，一旦超过
 # 这个值立即报错中断，避免误选超大文件把整个进程的内存吃光、或让 embedding
 # 阶段拖死后台任务。正常长篇网文 txt 在 5~15MB 之间，20MB 已留足余量。
