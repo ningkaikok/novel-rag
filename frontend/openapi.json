@@ -167,6 +167,23 @@
     "title": "Body_upload_books_api_books_post",
     "type": "object"
    },
+   "Body_upload_knowledge_documents_api_knowledge_documents_post": {
+    "properties": {
+     "files": {
+      "items": {
+       "contentMediaType": "application/octet-stream",
+       "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+     }
+    },
+    "required": [
+     "files"
+    ],
+    "title": "Body_upload_knowledge_documents_api_knowledge_documents_post",
+    "type": "object"
+   },
    "BookList": {
     "properties": {
      "books": {
@@ -772,6 +789,31 @@
      "status"
     ],
     "title": "KnowledgeDocumentSummary",
+    "type": "object"
+   },
+   "KnowledgeUploadResult": {
+    "properties": {
+     "collection": {
+      "title": "Collection",
+      "type": "string"
+     },
+     "saved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Saved",
+      "type": "array"
+     },
+     "task": {
+      "$ref": "#/components/schemas/IndexTaskStatus"
+     }
+    },
+    "required": [
+     "collection",
+     "saved",
+     "task"
+    ],
+    "title": "KnowledgeUploadResult",
     "type": "object"
    },
    "KnowledgeVersionSummary": {
@@ -2221,6 +2263,57 @@
      }
     },
     "summary": "List Knowledge Documents"
+   },
+   "post": {
+    "description": "上传通用文档并异步发布到 V2 shadow；TXT 旧入口保持不变。",
+    "operationId": "upload_knowledge_documents_api_knowledge_documents_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "collection",
+      "required": false,
+      "schema": {
+       "default": "默认知识库",
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Collection",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_knowledge_documents_api_knowledge_documents_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeUploadResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Upload Knowledge Documents"
    }
   },
   "/api/metrics/query-cache": {

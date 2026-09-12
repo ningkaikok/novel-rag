@@ -98,7 +98,7 @@ from backend.index_tasks import (  # noqa: E402
     TaskAlreadyRunning,
     TaskNotFound,
 )
-from backend.knowledge_catalog import build_v1_catalog  # noqa: E402
+from backend.knowledge_catalog import build_v1_catalog, build_v2_catalog  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
@@ -361,12 +361,24 @@ def list_books():
 
 @app.get("/api/knowledge/collections", response_model=KnowledgeCollectionList)
 def list_knowledge_collections():
+    try:
+        collections, _ = build_v2_catalog()
+        if collections.collections:
+            return collections
+    except Exception:
+        pass
     collections, _ = build_v1_catalog(NOVELS_DIR, load_index_manifest)
     return collections
 
 
 @app.get("/api/knowledge/documents", response_model=KnowledgeDocumentList)
 def list_knowledge_documents():
+    try:
+        _, documents = build_v2_catalog()
+        if documents.documents:
+            return documents
+    except Exception:
+        pass
     _, documents = build_v1_catalog(NOVELS_DIR, load_index_manifest)
     return documents
 

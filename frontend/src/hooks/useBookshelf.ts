@@ -7,7 +7,7 @@ import {
   listBooks,
   listKnowledgeDocuments,
   retryIndexTask,
-  uploadBooks,
+  uploadKnowledgeDocuments,
   type IndexTask,
   type KnowledgeDocument,
 } from '../api';
@@ -138,7 +138,7 @@ export function useBookshelf() {
   }
 
   function handleUpload(files: File[]) {
-    startShelfTask(() => uploadBooks(files), '小说已保存，正在后台建立增量索引');
+    startShelfTask(() => uploadKnowledgeDocuments(files), '文档已保存，正在后台建立 V2 索引');
   }
 
   async function cancelCurrentIndex() {

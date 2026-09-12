@@ -14,6 +14,7 @@ from backend.schemas import (
     KnowledgeVersionSummary,
 )
 from legacy_novel import LegacyNovelAdapter
+from postgres import connect
 
 
 def build_v1_documents(
@@ -74,6 +75,82 @@ def build_v1_catalog(
                 document_count=1,
             )
             for document in documents
+        ]
+    )
+    return collections, KnowledgeDocumentList(documents=documents)
+
+
+def build_v2_catalog() -> tuple[KnowledgeCollectionList, KnowledgeDocumentList]:
+    """从 V2 真实目录读取无正文的文档/版本摘要。"""
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.id AS collection_id, c.name AS collection_name,
+                   d.id AS document_id, d.title, d.source_type, d.metadata,
+                   dv.id AS version_id, dv.version_no, dv.source_hash,
+                   dv.parser_name, dv.parser_version,
+                   im.chunk_count
+            FROM knowledge_v2.documents d
+            JOIN knowledge_v2.collections c ON c.id = d.collection_id
+            LEFT JOIN knowledge_v2.document_versions dv ON dv.document_id = d.id
+            LEFT JOIN knowledge_v2.index_manifests im ON im.document_version_id = dv.id
+            ORDER BY c.name, d.title, dv.version_no
+            """
+        ).fetchall()
+
+    grouped: dict[str, dict[str, Any]] = {}
+    collection_names: dict[str, str] = {}
+    for row in rows:
+        document_id = str(row["document_id"])
+        entry = grouped.setdefault(
+            document_id,
+            {
+                "id": document_id,
+                "collection_id": str(row["collection_id"]),
+                "title": str(row["title"]),
+                "source_type": str(row["source_type"]),
+                "metadata": dict(row.get("metadata") or {}),
+                "versions": [],
+            },
+        )
+        collection_names[str(row["collection_id"])] = str(row["collection_name"])
+        if row.get("version_id") is not None:
+            entry["versions"].append(
+                KnowledgeVersionSummary(
+                    id=str(row["version_id"]),
+                    version_no=int(row["version_no"]),
+                    source_hash=(str(row["source_hash"]) if row.get("source_hash") else None),
+                    parser_name=str(row["parser_name"]),
+                    parser_version=str(row["parser_version"]),
+                    chunk_count=(
+                        int(row["chunk_count"]) if row.get("chunk_count") is not None else None
+                    ),
+                )
+            )
+
+    documents = [
+        KnowledgeDocumentSummary(
+            **entry,
+            status="indexed"
+            if any(version.chunk_count is not None for version in entry["versions"])
+            else "source_only",
+        )
+        for entry in grouped.values()
+    ]
+    document_counts: dict[str, int] = {}
+    for document in documents:
+        document_counts[document.collection_id] = (
+            document_counts.get(document.collection_id, 0) + 1
+        )
+    collections = KnowledgeCollectionList(
+        collections=[
+            KnowledgeCollectionSummary(
+                id=collection_id,
+                name=collection_names[collection_id],
+                document_count=document_counts.get(collection_id, 0),
+            )
+            for collection_id in sorted(collection_names, key=collection_names.get)
         ]
     )
     return collections, KnowledgeDocumentList(documents=documents)

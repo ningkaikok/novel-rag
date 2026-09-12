@@ -264,7 +264,7 @@ function Main() {
 
           <div className="composer-toolbar">
             <Upload
-              accept=".txt"
+              accept=".txt,.md,.markdown,.pdf"
               multiple
               showUploadList={false}
               disabled={busy || indexActive}
@@ -279,7 +279,7 @@ function Main() {
               }}
             >
               <Button size="small" disabled={busy || indexActive}>
-                📎 添加小说
+                📎 添加文档
               </Button>
             </Upload>
 
