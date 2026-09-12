@@ -61,11 +61,64 @@ def test_normal_completion_no_terminate(monkeypatch):
     proc.returncode = 0
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
-    chunks = list(codex_cli.generate_stream("你好吗", "codex:gpt-5-codex"))
+    chunks = list(codex_cli.generate_stream("你好吗", "codex:default"))
 
     assert chunks == ["你好"]
     assert proc.terminate_called is False
     assert proc.kill_called is False
+
+
+def test_stdin_is_closed_to_avoid_hang(monkeypatch):
+    """codex exec 检测到 stdin 是管道时会尝试额外读一遍——必须显式传
+    stdin=DEVNULL，否则在真实后端进程里可能因为父进程 stdin 未关闭而卡死
+    （见 backend/codex_cli.py 模块说明第 4 点，实测复现过 "Reading additional
+    input from stdin..." 的提示）。
+    """
+    captured_kwargs = {}
+
+    def fake_popen(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeProc([_agent_message_line("你好")])
+
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", fake_popen)
+
+    list(codex_cli.generate_stream("你好吗", "codex:default"))
+
+    assert captured_kwargs.get("stdin") is subprocess.DEVNULL
+
+
+def test_default_alias_omits_model_flag(monkeypatch):
+    """codex:default 不应该带 -m——ChatGPT 账号登录下传具体模型名会被 CLI 直接拒绝
+    （实测复现过 "not supported when using Codex with a ChatGPT account"）。
+    """
+    captured_cmd = []
+
+    def fake_popen(cmd, **_kwargs):
+        captured_cmd.extend(cmd)
+        return FakeProc([_agent_message_line("你好")])
+
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", fake_popen)
+
+    list(codex_cli.generate_stream("你好吗", "codex:default"))
+
+    assert "-m" not in captured_cmd
+
+
+def test_custom_alias_is_passed_through_as_model_flag(monkeypatch):
+    """用 CODEX_MODEL_ALIASES 覆盖成具体模型名时（比如 API Key 登录场景），
+    要原样透传给 -m。
+    """
+    captured_cmd = []
+
+    def fake_popen(cmd, **_kwargs):
+        captured_cmd.extend(cmd)
+        return FakeProc([_agent_message_line("你好")])
+
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", fake_popen)
+
+    list(codex_cli.generate_stream("你好吗", "codex:gpt-5"))
+
+    assert captured_cmd[captured_cmd.index("-m") + 1] == "gpt-5"
 
 
 def test_skips_non_agent_message_items(monkeypatch):
@@ -83,7 +136,7 @@ def test_skips_non_agent_message_items(monkeypatch):
     proc.returncode = 0
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
-    assert list(codex_cli.generate_stream("问题", "codex:gpt-5-codex")) == ["最终答案"]
+    assert list(codex_cli.generate_stream("问题", "codex:default")) == ["最终答案"]
 
 
 def test_interrupted_calls_terminate_and_does_not_raise(monkeypatch):
@@ -92,7 +145,7 @@ def test_interrupted_calls_terminate_and_does_not_raise(monkeypatch):
     proc = FakeProc(lines)
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
-    gen = codex_cli.generate_stream("讲讲", "codex:gpt-5-codex")
+    gen = codex_cli.generate_stream("讲讲", "codex:default")
     next(gen)
     gen.close()
 
@@ -106,7 +159,7 @@ def test_interrupted_escalates_to_kill_when_terminate_ineffective(monkeypatch):
     proc = FakeProc(lines, terminate_effective=False)
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
-    gen = codex_cli.generate_stream("讲讲", "codex:gpt-5-codex")
+    gen = codex_cli.generate_stream("讲讲", "codex:default")
     next(gen)
     gen.close()
 
@@ -122,7 +175,7 @@ def test_real_cli_failure_still_raises(monkeypatch):
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
     with pytest.raises(RuntimeError, match="codex CLI 调用失败"):
-        list(codex_cli.generate_stream("讲讲", "codex:gpt-5-codex"))
+        list(codex_cli.generate_stream("讲讲", "codex:default"))
 
 
 def test_cli_failure_with_empty_stderr_surfaces_json_error(monkeypatch):
@@ -134,4 +187,27 @@ def test_cli_failure_with_empty_stderr_surfaces_json_error(monkeypatch):
     monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
 
     with pytest.raises(RuntimeError, match="Not logged in"):
-        list(codex_cli.generate_stream("讲讲", "codex:gpt-5-codex"))
+        list(codex_cli.generate_stream("讲讲", "codex:default"))
+
+
+def test_cli_failure_surfaces_turn_failed_nested_error(monkeypatch):
+    """真实复现过的失败形状（比如给了登录方式不支持的模型名）：
+    ``turn.failed`` 事件把原因包在嵌套的 ``error.message`` 里，不是顶层 message。
+    """
+    lines = [
+        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps(
+            {
+                "type": "turn.failed",
+                "error": {"message": "The 'gpt-5' model is not supported"},
+            }
+        ),
+    ]
+    proc = FakeProc(lines)
+    proc.returncode = 1
+    proc.stderr = io.StringIO("")
+    monkeypatch.setattr(codex_cli.subprocess, "Popen", lambda *a, **k: proc)
+
+    with pytest.raises(RuntimeError, match="not supported"):
+        list(codex_cli.generate_stream("讲讲", "codex:gpt-5"))
