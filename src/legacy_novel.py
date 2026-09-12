@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import Protocol
 
@@ -96,11 +96,20 @@ class LegacyNovelAdapter:
         )
 
     @classmethod
-    def novel_for_scope(cls, scope: RetrievalScope, novels: list[str]) -> list[str]:
+    def novel_for_scope(
+        cls,
+        scope: RetrievalScope,
+        novels: Sequence[str],
+        *,
+        source_hashes: Mapping[str, str | None] | None = None,
+    ) -> list[str]:
         """把可识别的旧范围还原为小说名；无法识别时返回空列表。
 
         ``novels`` 来自当前数据库，适配器不会猜测通用 ID 与小说名的对应关系。
         这让未来 V2 范围可以安全传入旧检索器，而不会意外扩大到全库。
+
+        version scope 需要额外的 V1 manifest source_hash 才能映射到当前版本；没有
+        这份证明时，只有默认的 ``v1`` 兼容版本 ID 可识别，其他未知版本一律不匹配。
         """
 
         matched: list[str] = []
@@ -110,8 +119,12 @@ class LegacyNovelAdapter:
                 continue
             if scope.document_id and scope.document_id != candidate.document_id:
                 continue
-            if scope.version_id and scope.version_id != candidate.version_id:
-                continue
+            if scope.version_id:
+                known_versions = {candidate.version_id}
+                if source_hashes and novel in source_hashes and source_hashes[novel]:
+                    known_versions.add(cls.version_id(novel, source_hash=source_hashes[novel]))
+                if scope.version_id not in known_versions:
+                    continue
             matched.append(novel)
         return matched
 

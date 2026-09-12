@@ -12,7 +12,8 @@
 - [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
 
 当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
-Phase 2、Phase 3 和 Phase 4 已在下方补充 V2 schema、解析器和发布基础；通用文档 API、
+Phase 2、Phase 3、Phase 4 和 Phase 5A 已在下方补充 V2 schema、解析器、发布基础和
+V1 检索/引用通用化接缝；通用文档 API、
 前端知识库界面和生产化多租户能力仍未完成。详细迁移策略见
 `docs/knowledge-domain-migration.md`。
 
@@ -59,6 +60,22 @@ Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中�
 Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 发布影响。清理
 独立 `knowledge_v2` schema 需要未来单独、显式、备份确认后的运维操作；当前不提供自动
 删除，也不触碰生产数据库。
+
+## 通用知识库切换：Phase 5A（已完成后端最小切片，2026-09-12）
+
+- [x] 新增 `RetrievalScope` → LegacyNovel 的安全 selector；collection/document 可映射
+  时限定 V1 `only_novels`，version 需 V1 manifest `source_hash` 证明后才放行
+- [x] V1 向量、BM25、结构性和 hybrid 检索保留无 scope 的旧调用，并支持安全传入 scope
+- [x] 未知或无法映射的 scope 返回空结果，不拒绝为全库搜索；默认 `STORAGE_SCHEMA=v1`
+  和现有 V1 行为保持不变
+- [x] 新增 `DocumentChunk`/Legacy `SourceChunk` → `SourceRef` 的纯 response adapter，
+  保留 document/version/chunk/locator，excerpt 限制为 80 字以内
+- [x] 补充 scope 隔离、未知/版本 scope、SourceRef 序列化与旧检索/缓存/trace 回归测试
+- [ ] 尚未实现真实 V2 read、V1/V2 shadow 检索接入和线上 mismatch 观测
+- [ ] 尚未修改 API response schema、前端引用卡或通用文档管理界面
+
+Phase 5A 的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；未知 scope 永远返回
+空结果，不会扩大搜索范围。V2 数据库、表和生产读写均未被本阶段自动切换或删除。
 
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、

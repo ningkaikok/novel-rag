@@ -28,26 +28,58 @@ from config import (
     CONTEXT_NEIGHBORS,
     TOP_K,
 )
+from domain_models import RetrievalScope
 from index_quality import _token_count
 from novel_match import _find_ending_anchor, _mentions_novel
 from postgres import (
     connect,
+    indexed_novels,
+    load_index_manifest,
     vector_literal,
 )
+from retrieval_scope import select_legacy_novels
 from tokenizer import query_terms
 
 
 class RetrievalMixin:
+    @staticmethod
+    def _resolve_legacy_scope(
+        scope: RetrievalScope | None,
+        only_novels: list[str] | None,
+    ) -> list[str] | None:
+        """把通用范围收敛成 V1 可参数化的小说名单。
+
+        未传 scope 时返回原值，保证旧调用不增加数据库查询；传入 scope 但无法从
+        V1 当前索引/manifest 证明映射时返回空列表，由调用方在发 SQL 前短路。
+        """
+
+        if scope is None:
+            return only_novels
+        candidates = only_novels or sorted(indexed_novels())
+        source_hashes: dict[str, str | None] | None = None
+        if scope.version_id:
+            manifests = load_index_manifest()
+            source_hashes = {
+                novel: str(row["source_hash"]) if row.get("source_hash") else None
+                for novel, row in manifests.items()
+            }
+        return select_legacy_novels(scope, candidates, source_hashes=source_hashes)
+
     def retrieve(
         self,
         question: str,
         top_k: int = TOP_K,
         only_novels: list[str] | None = None,
+        *,
+        scope: RetrievalScope | None = None,
     ) -> list[SourceChunk]:
         """向量检索。only_novels 非空时把搜索范围限定在这些书内。"""
+        only_novels = self._resolve_legacy_scope(scope, only_novels)
+        if scope is not None and not only_novels:
+            return []
         query_embedding = self.embedder.encode([question], normalize_embeddings=True)
         query_vector = vector_literal(query_embedding[0])
-        scope = "WHERE novel = ANY(%s)" if only_novels else ""
+        scope_sql = "WHERE novel = ANY(%s)" if only_novels else ""
         params: list = [query_vector]
         if only_novels:
             params.append(only_novels)
@@ -58,7 +90,7 @@ class RetrievalMixin:
                 SELECT novel, chunk_id, chapter_title, text, context,
                        embedding <=> %s::vector AS distance
                 FROM novel_chunks
-                {scope}
+                {scope_sql}
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
@@ -73,6 +105,8 @@ class RetrievalMixin:
         question: str,
         top_k: int = TOP_K,
         only_novels: list[str] | None = None,
+        *,
+        scope: RetrievalScope | None = None,
     ) -> list[SourceChunk]:
         """BM25 关键词检索：按词精确匹配，并按相关性打分排序。
 
@@ -156,6 +190,10 @@ class RetrievalMixin:
         terms = query_terms(question)
         if not terms:
             return []
+        resolved_novels = self._resolve_legacy_scope(scope, only_novels)
+        if scope is not None and not resolved_novels:
+            return []
+        only_novels = resolved_novels
 
         # BM25_K1 / BM25_B / BM25_PER_TERM_LIMIT 都是从 config 读出来并经过
         # float()/int() 转换的数值，不是用户输入，直接内联进 SQL 没有注入风险，
@@ -165,9 +203,10 @@ class RetrievalMixin:
 
         # 三处都要按书过滤：语料统计、df 统计、每词候选粗筛。范围不一致会让
         # IDF 算错——比如按全库算 df 却只在一本书里打分，稀有词的权重会失真。
-        scope_sql = "WHERE novel = ANY(%s)" if only_novels else ""
-        scope_and = "AND novel = ANY(%s)" if only_novels else ""
-        scope_param = [only_novels] if only_novels else []
+        scope_novels = only_novels or []
+        scope_sql = "WHERE novel = ANY(%s)" if scope_novels else ""
+        scope_and = "AND novel = ANY(%s)" if scope_novels else ""
+        scope_param = [scope_novels] if scope_novels else []
 
         # q(term) 是把查询词做成一张临时表，好跟倒排索引 JOIN
         values_sql = ", ".join(["(%s)"] * len(terms))
@@ -272,6 +311,8 @@ class RetrievalMixin:
         question: str,
         top_k: int = TOP_K,
         hint_novels: list[str] | None = None,
+        *,
+        scope: RetrievalScope | None = None,
     ) -> list[SourceChunk]:
         """按"书里的位置"召回，解决语义检索根本答不了的结构性问题。
 
@@ -292,20 +333,29 @@ class RetrievalMixin:
         if not (at_tail or at_head):
             return []
 
+        scoped_novels = self._resolve_legacy_scope(scope, None)
+        if scope is not None and not scoped_novels:
+            return []
+
         with connect() as conn:
             novels = [
                 row["novel"]
                 for row in conn.execute("SELECT DISTINCT novel FROM novel_chunks").fetchall()
             ]
+            allowed_novels: list[str] = (
+                list(scoped_novels) if scoped_novels is not None else novels
+            )
             # 问题里提到了某本书就只查那本，避免把别的书的结尾混进来
-            matched = [n for n in novels if _mentions_novel(text, n)]
+            matched = [n for n in allowed_novels if _mentions_novel(text, n)]
             if matched:
                 targets = matched
             elif hint_novels:
                 # 只保留确实存在于库里的提示书名
-                targets = [n for n in novels if n in set(hint_novels)] or novels
+                targets = [
+                    n for n in allowed_novels if n in set(hint_novels)
+                ] or allowed_novels
             else:
-                targets = novels
+                targets = allowed_novels
 
             # 每本书分配的配额：只查一本时全给它，多本时平摊但至少 1 段
             per_novel = max(1, top_k // len(targets)) if targets else top_k

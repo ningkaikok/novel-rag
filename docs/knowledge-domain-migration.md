@@ -1,6 +1,6 @@
 # 通用知识库领域边界迁移说明
 
-## 当前状态：Phase 4（V2 repository/index 发布基础已完成）
+## 当前状态：Phase 5A（检索/引用通用化后端最小切片已完成）
 
 本阶段的目标是让小说 RAG 有一个可复用的通用领域语言，同时保持旧系统可运行：
 
@@ -41,9 +41,18 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `src/v2_shadow.py`：提供 V1/V2 快照比较纯函数，按文档/版本身份、source hash、chunk
   数量、chunk 稳定键、机器 locator 和检索候选稳定键分类 mismatch；不比较浮点向量，
   不宣称向量召回完全一致。
+- `src/retrieval_scope.py`：提供 `RetrievalScope` 到 V1 小说名单的安全投影；未传 scope
+  返回兼容的未限制状态，无法证明映射关系时返回空集合，不会扩大为全库。
+- `src/retrieval_mixins.py` / `src/rag.py`：V1 向量、BM25、结构性和 hybrid 检索可接收
+  可选 scope；collection/document 映射到 `only_novels`，version 仅在 V1 manifest
+  提供匹配 `source_hash` 时生效，仍复用参数化 SQL。
+- `src/response_adapters.py`：提供通用 `DocumentChunk`、旧 `SourceChunk` 到
+  `SourceRef`/JSON-safe payload 的纯适配，保留 document/version/chunk/locator 身份链，
+  `excerpt` 限制为 80 字以内。
 
 V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当前代码不会因为该配置
-自动把 NovelRAG/API 切到 V2；切换仍需后续阶段实现并经过 shadow 对比。
+自动把 NovelRAG/API 切到 V2；Phase 5A 的 scope 只投影到现有 V1 检索，V2 read/shadow
+仍需后续阶段实现并经过真实数据验证。
 
 ## Phase 4 的安全边界
 
@@ -65,13 +74,17 @@ V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当�
   表和数据不会被删除或覆盖。
 - 清理 V2 独立 schema、表或数据尚未提供自动化操作，未来必须作为单独、显式、经备份
   确认的运维动作执行；本阶段不会隐式 DROP 或迁移。
+- Phase 5A 的 scope 失败安全规则是：未知 collection/document/version 返回空结果；不
+  将未知范围降级为全库。回滚仍保持 `STORAGE_SCHEMA=v1`，不需要改变 V1 表或数据。
 
 ## 后续接入顺序
 
 1. 在备份副本或临时数据库显式执行 V2 DDL，并把 parser 输出、现有 embedding/BM25
    结果接入 `V2IndexInput`；当前仅完成发布契约，尚未执行真实数据库写入。
-2. 在 shadow read 中接入真实 V1/V2 检索候选，积累 mismatch 观测和 parser 级检索评测。
-3. 让检索器实际消费 `RetrievalScope`，并把 `SourceRef` 接入 API 和前端引用卡。
+2. 在 V2 read/shadow 中接入真实 V1/V2 检索候选，积累 mismatch 观测和 parser 级检索评测；
+   当前只有纯函数和 V1 投影，尚未连接真实 V2 数据库。
+3. 将 `SourceRef` adapter 接入 API/trace response，并让 V2 retriever 实际消费
+   `RetrievalScope`；Phase 5A 尚未修改 API schema。
 4. 最后切换通用文档管理界面；稳定后再考虑停用旧 `/api/books` 兼容入口。
 
 首次切换不删除旧表，不引入独立向量数据库、消息队列或多租户权限系统。
