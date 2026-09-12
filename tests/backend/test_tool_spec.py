@@ -1,9 +1,10 @@
 """tool_spec 注册表测试：不连数据库，只验证静态元数据与类型约束。
 
 覆盖三块（对应 M6.1 前置项的验收）：
-1. TOOL_REGISTRY 完整性——五个 Agent Lab 工具都在，元数据形状合法；
+1. TOOL_REGISTRY 完整性——全部 Agent Lab 只读查询工具都在，元数据形状合法；
 2. 版权红线——SourceRef 的 80 字摘录约束真的生效；
-3. 一致性——MCP 服务器的实际注册与 Registry 逐项对得上。
+3. 一致性——MCP 服务器的实际注册与 Registry 逐项对得上（search_documents 暂不
+   经 MCP 暴露，只服务 Agent Lab，见 EXPECTED_TOOLS 下方注释）。
 """
 
 import asyncio
@@ -30,16 +31,22 @@ EXPECTED_TOOLS = {
     "query_library",
     "list_books",
     "search_novels",
+    "search_documents",
     "read_neighbors",
     "get_chapter",
     "answer_with_citations",
 }
 
+# search_documents 检索的是 V2 知识库文档（Markdown/PDF 等），只服务 Agent Lab，
+# 暂不经 MCP 暴露——MCP 是给外部客户端用的公开接口，V2 检索还在验证阶段，
+# 不像 search_novels 那样已经过 MCP PoC 验证。
+MCP_ONLY_TOOLS = EXPECTED_TOOLS - {"answer_with_citations", "search_documents"}
+
 
 # ---- 1. 注册表完整性 --------------------------------------------------------
 
 
-def test_registry_covers_five_agent_lab_tools():
+def test_registry_covers_agent_lab_tools():
     assert set(TOOL_REGISTRY) == EXPECTED_TOOLS
 
 
@@ -48,7 +55,7 @@ def test_every_spec_is_well_formed():
         assert isinstance(spec, ToolSpec)
         assert spec.name == name, "注册键应与 spec.name 一致"
         assert spec.description, name
-        # Agent Lab 五个工具全部只读；风险只允许 low/medium，没有写操作
+        # Agent Lab 的工具全部只读；风险只允许 low/medium，没有写操作
         assert spec.readonly is True, name
         assert spec.risk_level in {"low", "medium"}, name
         assert spec.timeout_s > 0, name
@@ -61,7 +68,13 @@ def test_every_spec_is_well_formed():
 
 def test_answer_tool_has_its_own_result_schema():
     query_result = ToolResultV1.model_json_schema()
-    for name in ("list_books", "search_novels", "read_neighbors", "get_chapter"):
+    for name in (
+        "list_books",
+        "search_novels",
+        "search_documents",
+        "read_neighbors",
+        "get_chapter",
+    ):
         assert TOOL_REGISTRY[name].result_schema == query_result, name
     answer_spec = TOOL_REGISTRY["answer_with_citations"]
     assert answer_spec.result_schema == AnswerWithCitationsV1.model_json_schema()
@@ -103,6 +116,7 @@ def _signature_params(method) -> tuple[set[str], dict[str, object]]:
     [
         ("list_books", "list_books"),
         ("search_novels", "search_novels"),
+        ("search_documents", "search_documents"),
         ("read_neighbors", "read_neighbors"),
         ("get_chapter", "get_chapter"),
     ],
@@ -127,6 +141,9 @@ def test_param_bounds_match_implementation_clamps():
 
     limit = props_of("search_novels")["limit"]
     assert (limit["minimum"], limit["maximum"], limit["default"]) == (1, 8, 5)
+
+    doc_limit = props_of("search_documents")["limit"]
+    assert (doc_limit["minimum"], doc_limit["maximum"], doc_limit["default"]) == (1, 8, 5)
 
     radius = props_of("read_neighbors")["radius"]
     assert (radius["minimum"], radius["maximum"], radius["default"]) == (0, 3, 1)
@@ -192,8 +209,9 @@ def _mcp_server():
 def test_mcp_registration_matches_registry():
     mcp_server = _mcp_server()
     tools = {t.name: t for t in asyncio.run(mcp_server.server.list_tools())}
-    # MCP 只暴露数据查询工具；answer_with_citations 需要 LLM，属 Agent 循环
-    assert set(tools) == EXPECTED_TOOLS - {"answer_with_citations"}
+    # MCP 只暴露数据查询工具；answer_with_citations 需要 LLM，属 Agent 循环；
+    # search_documents 暂不经 MCP 暴露（见 MCP_ONLY_TOOLS 上方注释）
+    assert set(tools) == MCP_ONLY_TOOLS
 
     for name, tool in tools.items():
         spec = TOOL_REGISTRY[name]

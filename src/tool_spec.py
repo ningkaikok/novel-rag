@@ -148,6 +148,25 @@ _SEARCH_NOVELS_PARAMS = _params(
     ["query"],
 )
 
+# AgentToolbox.search_documents(query, document=None, limit=5)，实现内夹取 limit 到 1~8
+_SEARCH_DOCUMENTS_PARAMS = _params(
+    {
+        "query": {"type": "string", "description": "检索问题或关键词"},
+        "document": {
+            "type": ["string", "null"],
+            "description": "可选文档标题，限定在该文档内检索",
+        },
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 5,
+            "description": "返回片段数上限",
+        },
+    },
+    ["query"],
+)
+
 # AgentToolbox.read_neighbors(novel, chunk_id, radius=1)，radius 夹取到 0~3
 _READ_NEIGHBORS_PARAMS = _params(
     {
@@ -219,6 +238,14 @@ TOOL_REGISTRY: Mapping[str, ToolSpec] = MappingProxyType(
             params_json_schema=_SEARCH_NOVELS_PARAMS,
             result_schema=_QUERY_RESULT_SCHEMA,
             # embedding 模型可能现场首次载入（数秒），超时放宽
+            timeout_s=30,
+        ),
+        "search_documents": ToolSpec(
+            name="search_documents",
+            description="检索知识库里上传的通用文档（Markdown/PDF 等，非小说），向量+BM25 混合",
+            params_json_schema=_SEARCH_DOCUMENTS_PARAMS,
+            result_schema=_QUERY_RESULT_SCHEMA,
+            # 和 search_novels 一样：embedding 模型可能现场首次载入，超时放宽
             timeout_s=30,
         ),
         "read_neighbors": ToolSpec(
