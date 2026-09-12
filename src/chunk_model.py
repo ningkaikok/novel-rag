@@ -15,6 +15,8 @@
 
 from dataclasses import dataclass
 
+from domain_models import DocumentChunk, SourceRef
+
 
 @dataclass
 class SourceChunk:
@@ -29,6 +31,31 @@ class SourceChunk:
     # 但 build_prompt 只用 text——不把 AI 生成的说明当原文依据给模型。
     context: str = ""
 
+    @classmethod
+    def from_legacy_row(cls, row: dict, *, distance: float = 0.0) -> "SourceChunk":
+        """从旧 ``novel_chunks`` 行经适配器恢复旧结果对象。
+
+        查询层仍可继续使用 ``novel/chunk_id``，但小说专有字段的映射集中在
+        ``LegacyNovelAdapter``，为后续 V2 repository 留出唯一接缝。
+        """
+
+        from legacy_novel import LegacyNovelAdapter
+
+        domain_chunk = LegacyNovelAdapter.chunk_from_row(row)
+        metadata = domain_chunk.metadata
+        return cls(
+            novel=str(metadata["legacy_novel"]),
+            chunk_id=int(str(metadata["legacy_chunk_id"])),
+            text=domain_chunk.text,
+            distance=distance,
+            chapter_title=(
+                str(metadata["legacy_chapter_title"])
+                if "legacy_chapter_title" in metadata
+                else None
+            ),
+            context=domain_chunk.context,
+        )
+
     @property
     def indexed_text(self) -> str:
         """建索引时用的文本，也是重排该看到的文本。
@@ -37,6 +64,20 @@ class SourceChunk:
         就会把上下文增强的效果整个抵消掉。
         """
         return f"{self.context}\n{self.text}" if self.context else self.text
+
+    def to_document_chunk(self) -> DocumentChunk:
+        """通过小说适配器暴露通用片段视图，不改变旧检索结果字段。"""
+
+        from legacy_novel import LegacyNovelAdapter
+
+        return LegacyNovelAdapter.chunk(self)
+
+    def to_source_ref(self) -> SourceRef:
+        """返回不含完整正文的通用引用，供后续 API/评测逐步迁移。"""
+
+        from legacy_novel import LegacyNovelAdapter
+
+        return LegacyNovelAdapter.source_ref(self)
 
 
 _TRACE_CANDIDATE_LIMIT = 10

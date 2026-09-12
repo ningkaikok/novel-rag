@@ -61,6 +61,7 @@ from generation_mixin import (  # noqa: F401  # PROMPT_TEMPLATE* / generate_olla
     generate_ollama_prompt_stream,
 )
 from hierarchy import is_global_question
+from legacy_novel import LegacyNovelAdapter
 
 # 这些名字是拆分前的 rag.py 公开/半公开表面：agent_lab 直接 import
 # `_mentions_novel`，老脚本可能引用其余辅助函数。用冗余别名标记为**有意重导出**，
@@ -114,6 +115,12 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
     # FastAPI / 云端 SDK，评测脚本和测试里这个属性是 None，扩展自动跳过。
     # backend/main.py 启动时按 QUERY_EXPAND_MODEL 的前缀路由到 zhipu/claude_cli。
     expand_generate_fn = None
+
+    @staticmethod
+    def legacy_scope(novel: str):
+        """返回旧小说在通用领域中的检索范围，供新入口逐步接入。"""
+
+        return LegacyNovelAdapter.scope(novel)
 
     def __init__(self, embedder: SentenceTransformer | None = None):
         self.embedder = embedder or load_embedder()
@@ -171,17 +178,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 "WHERE novel = %s ORDER BY chunk_id",
                 (novel,),
             ).fetchall()
-        return [
-            SourceChunk(
-                novel=r["novel"],
-                chunk_id=int(r["chunk_id"]),
-                text=r["text"],
-                distance=0.0,
-                chapter_title=r.get("chapter_title"),
-                context=r.get("context") or "",
-            )
-            for r in rows
-        ]
+        return [SourceChunk.from_legacy_row(r) for r in rows]
 
     def hierarchy_retrieve(
         self,
@@ -243,15 +240,14 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                         continue
                     seen.add(key)
                     sources.append(
-                        SourceChunk(
-                            novel=row["novel"],
-                            chunk_id=int(row["chunk_id"]),
-                            text=row["text"],
+                        SourceChunk.from_legacy_row(
+                            {
+                                **row,
+                                "chapter_title": row.get("chapter_title") or hit["title"],
+                            },
                             # 摘要距离只表示这个章节整体与问题的相关性；后面重排会
                             # 重新判断具体原文片段，因此这里只保留为候选排序信号。
                             distance=float(hit["distance"]),
-                            chapter_title=row.get("chapter_title") or hit["title"],
-                            context=row.get("context") or "",
                         )
                     )
         return sources, [*book_hits, *chapter_hits]

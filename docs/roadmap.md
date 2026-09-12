@@ -1,5 +1,20 @@
 # 项目路线图
 
+## 通用知识库切换：Phase 1（已完成，2026-09-12）
+
+本阶段只建立领域边界，不改变当前小说问答行为：
+
+- [x] 新增版本化的 `Collection`、`Document`、`DocumentVersion`、`DocumentChunk`、
+  `SourceRef`、`SourceLocator` 和 `RetrievalScope` 模型与协议
+- [x] 新增 `LegacyNovelAdapter`，集中处理 `novel`、`chapter_title` 和旧片段编号，
+  为 `SourceChunk` 提供通用片段/引用视图
+- [x] 查询缓存键预留 collection/document/version scope，旧的三字段构造方式继续兼容
+- [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
+
+当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
+后续 Phase 2 才处理 V2 数据库与可回滚迁移；Markdown/PDF 解析、通用文档 API、前端知识库
+界面和生产化多租户能力均未完成。详细迁移策略见 `docs/knowledge-domain-migration.md`。
+
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、
 工程加固、检索实验、答案忠实度和多轮上下文边界，再进入 M4 关系图质量和 M5/M6

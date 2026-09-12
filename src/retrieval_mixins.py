@@ -65,15 +65,7 @@ class RetrievalMixin:
                 params,
             ).fetchall()
         return [
-            SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                distance=float(row["distance"]),
-                chapter_title=row.get("chapter_title"),
-                context=row.get("context") or "",
-            )
-            for row in rows
+            SourceChunk.from_legacy_row(row, distance=float(row["distance"])) for row in rows
         ]
 
     def keyword_retrieve(
@@ -265,12 +257,8 @@ class RetrievalMixin:
             if row is None:  # 候选到取回之间数据被删的极端兜底
                 continue
             results.append(
-                SourceChunk(
-                    novel=row["novel"],
-                    chunk_id=int(row["chunk_id"]),
-                    text=row["text"],
-                    context=row.get("context") or "",
-                    chapter_title=row.get("chapter_title"),
+                SourceChunk.from_legacy_row(
+                    row,
                     # distance 字段在向量检索里是"越小越近"，这里存的是 BM25 分数
                     # （越大越相关），语义相反。取负号统一成"越小越好"，避免调用方
                     # 按同一个字段排序时把最相关的排到最后。
@@ -352,16 +340,7 @@ class RetrievalMixin:
                 # 保持 SQL 的 ORDER BY 顺序（问结局时最末片段排最前），
                 # 这个顺序会成为 RRF 的排名依据——排序错了最关键的片段就挤不进 top-k。
                 for row in rows:
-                    results.append(
-                        SourceChunk(
-                            novel=row["novel"],
-                            chunk_id=int(row["chunk_id"]),
-                            text=row["text"],
-                            distance=0.0,
-                            chapter_title=row.get("chapter_title"),
-                            context=row.get("context") or "",
-                        )
-                    )
+                    results.append(SourceChunk.from_legacy_row(row))
         return results
 
     def _named_novels(self, question: str) -> list[str]:
@@ -407,14 +386,7 @@ class RetrievalMixin:
         by_key: dict[tuple[str, int], SourceChunk] = {}
         for row in rows:
             key = (row["novel"], int(row["chunk_id"]))
-            by_key[key] = SourceChunk(
-                novel=row["novel"],
-                chunk_id=int(row["chunk_id"]),
-                text=row["text"],
-                distance=0.0,
-                chapter_title=row.get("chapter_title"),
-                context=row.get("context") or "",
-            )
+            by_key[key] = SourceChunk.from_legacy_row(row)
 
         expanded: list[SourceChunk] = []
         seen: set[tuple[str, int]] = set()
@@ -519,17 +491,7 @@ class RetrievalMixin:
                     "ORDER BY chunk_id",
                     (novel, title),
                 ).fetchall()
-                members = [
-                    SourceChunk(
-                        novel=row["novel"],
-                        chunk_id=int(row["chunk_id"]),
-                        text=row["text"],
-                        distance=0.0,
-                        chapter_title=row.get("chapter_title"),
-                        context=row.get("context") or "",
-                    )
-                    for row in rows
-                ] or [
+                members = [SourceChunk.from_legacy_row(row) for row in rows] or [
                     # 章节查不到内容（数据不一致的兜底）：退化为命中片段本身
                     s
                     for s in sources

@@ -426,14 +426,7 @@ class AgentToolbox:
 
 
 def _row_to_source(row: dict) -> SourceChunk:
-    return SourceChunk(
-        novel=row["novel"],
-        chunk_id=int(row["chunk_id"]),
-        text=row["text"],
-        distance=0.0,
-        chapter_title=row.get("chapter_title"),
-        context=row.get("context") or "",
-    )
+    return SourceChunk.from_legacy_row(row)
 
 
 _PLANNER_PROMPT = """你是小说 RAG 的工具规划器。一次只选择一个工具，不要直接回答。

@@ -20,6 +20,8 @@ class CacheKey:
     question: str
     index_fingerprint: str
     retrieval_fingerprint: str
+    # Phase 1 预留通用 collection/document/version 范围；空字符串保持旧调用兼容。
+    scope_fingerprint: str = ""
 
 
 class QueryCache:

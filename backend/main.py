@@ -163,6 +163,7 @@ from config import (  # noqa: E402
     RERANK_ENABLED,
     RERANKER_MODEL,
 )
+from domain_models import RetrievalScope  # noqa: E402
 from embedder import load_embedder  # noqa: E402
 from generation_mixin import build_history_block  # noqa: E402
 from postgres import (  # noqa: E402
@@ -230,7 +231,11 @@ def _index_fingerprint() -> str | None:
     return hashlib.sha256(encoded).hexdigest()[:16]
 
 
-def _retrieval_cache_key(question: str, top_k: int) -> CacheKey | None:
+def _retrieval_cache_key(
+    question: str,
+    top_k: int,
+    scope: RetrievalScope | None = None,
+) -> CacheKey | None:
     """构造检索缓存键；没有可信索引指纹时宁可绕过缓存。"""
     index_fingerprint = state.get("index_fingerprint")
     if not index_fingerprint:
@@ -248,6 +253,7 @@ def _retrieval_cache_key(question: str, top_k: int) -> CacheKey | None:
         question=question.strip(),
         index_fingerprint=index_fingerprint,
         retrieval_fingerprint=config_text,
+        scope_fingerprint=scope.cache_fingerprint() if scope else "",
     )
 
 
