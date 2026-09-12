@@ -10,7 +10,7 @@
 
 > 一个把 RAG 和 Agent 做「透明」的通用知识库平台：每次回答都能逐层展开向量、BM25、RRF 融合与重排的候选排名、分数变化和耗时，看清答案是怎么被找出来的 —— 以及在哪一步被弄丢的。小说是当前的兼容适配器和演示场景。
 
-基于本地向量检索的知识库问答与 Agent demo。当前小说流程用于展示可核验检索、引用和 Agent 轨迹；检索和 Embedding 全部在本机运行。生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅或智谱 GLM（见下文“切换生成模型”）。
+基于本地向量检索的知识库问答与 Agent demo。当前小说流程用于展示可核验检索、引用和 Agent 轨迹；检索和 Embedding 全部在本机运行。生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅、Codex 订阅或智谱 GLM（见下文“切换生成模型”）。
 
 ## 四个和一般 RAG demo 不太一样的地方
 
@@ -34,7 +34,7 @@
 - **层级检索**：为片段建立章节摘要和全书摘要；主题、成长、跨书比较先定位书与章节，再回到原文参与融合和重排。
 - **检索可观测性**：每次问答可展开查看向量、BM25、RRF、重排的候选排名、分数变化与耗时。
 - **Agent Lab**：独立的 3～5 步只读工具循环，逐步展示选择、工具结果与证据，不依赖 Agent 框架。
-- **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型、你自己的 Claude 订阅或智谱 GLM（云端模型会发送问题和召回片段，见下文）。
+- **生成模型**：默认本地 [Ollama](https://ollama.com)（`qwen2.5:7b`），界面里可随时切换到其他本地模型、你自己的 Claude 订阅、Codex 订阅或智谱 GLM（云端模型会发送问题和召回片段，见下文）。
 - **后端**：FastAPI（`backend/main.py`），把检索/生成逻辑包成 HTTP 接口，回答用 SSE 逐字流式返回。
 - **前端**：React + Vite + TypeScript + Ant Design（`frontend/`），书卷气界面「书虫」。左侧目录已使用通用知识库/文档术语和元数据摘要；当前上传/删除仍保留小说兼容操作。前后端类型契约由 OpenAPI 生成（`schemas.py` → `openapi.json` → `api-generated.ts`，CI 有 drift 检查），改 Pydantic 模型后跑 `uv run python scripts/export_openapi.py && cd frontend && npm run gen:api`。
 - **对话体验**：生成中可以点「停止」——不只是前端不再显示新字，后端会真的停止向模型索取内容（用云端模型时不多花钱）；刷新页面或重开浏览器后，之前的问答、原文出处、思考过程会自动恢复，中途被停止的那轮也会如实标出来；往上翻看历史时，下面来了新回答会提示「有新回复」，不会悄悄错过。
@@ -193,19 +193,20 @@ npm run dev
 > 不用 Docker 的手动路径：`cd frontend && npm run build` 生成静态文件后，
 > FastAPI 会自动检测 `frontend/dist` 并托管（存在即挂载，开发模式不受影响）。
 
-## 切换生成模型（本地 Ollama / Claude 订阅 / 智谱 GLM）
+## 切换生成模型（本地 Ollama / Claude 订阅 / Codex 订阅 / 智谱 GLM）
 
-输入框上方的模型下拉框支持三类来源，选完立即生效，不需要重启服务：
+输入框上方的模型下拉框支持四类来源，选完立即生效，不需要重启服务：
 
 - **💻 本地（Ollama，完全离线）**：自动列出 `ollama list` 里已安装的模型（如 `qwen2.5:3b`、`qwen2.5:7b`）。
 - **☁️ 我的 Claude 订阅（云端）**：如果本机装了 [Claude Code CLI](https://claude.com/claude-code) 并已登录，会额外出现 `haiku`/`sonnet`/`opus` 三档，**不需要单独配置 `ANTHROPIC_API_KEY`**——直接复用你本地已登录的 Claude 订阅（后端通过 `claude --print` 非交互调用）。
+- **☁️ 我的 Codex 订阅（云端）**：如果本机装了 [OpenAI Codex CLI](https://github.com/openai/codex)（`npm install -g @openai/codex`）并已登录（`codex login`），会额外出现 `gpt-5-codex`/`gpt-5`/`o3` 三档，同样**不需要单独配置 `OPENAI_API_KEY`**——直接复用你本地已登录的 ChatGPT 订阅（后端通过 `codex exec --json` 非交互调用）。可用模型名如与你账号下实际支持的不一致，用环境变量 `CODEX_MODEL_ALIASES`（逗号分隔）覆盖。
 - **☁️ 智谱 GLM（云端）**：设置了环境变量 `ZHIPU_API_KEY` 时出现 `glm-4-flash`/`glm-4.5-air`/`glm-4.5`/`glm-4.6` 四档。
 
 选择任何云端模型时请注意（界面上的胶囊标签和 Tooltip 也会显示同样的提示）：
 
-- **不再是"完全本地"**：检索到的原文片段和你的问题会发送到对应厂商（Anthropic / 智谱）的服务器。
+- **不再是"完全本地"**：检索到的原文片段和你的问题会发送到对应厂商（Anthropic / OpenAI / 智谱）的服务器。
 - **计入你自己的账号用量**，不是免费的（`glm-4-flash` 除外）。
-- Claude 这条路径由于 CLI 没有"跳过 CLAUDE.md/记忆加载但仍用 OAuth 登录"的组合选项，回答风格可能会受你本机全局 `~/.claude/CLAUDE.md` 配置的轻微影响（例如强制用中文回复）。
+- Claude/Codex 这两条路径都是复用本机已登录的 CLI 会话，回答风格可能会受你本机全局配置（`~/.claude/CLAUDE.md`、`~/.codex/config.toml` 等）的轻微影响（例如强制用中文回复）。
 
 ### 配置智谱 GLM 的 API Key
 
@@ -226,7 +227,7 @@ ZHIPU_API_KEY=另一个key uvicorn backend.main:app --port 8000
 
 没配置这个 key 时，下拉框里不会出现 GLM 分组，其他功能不受影响。Key 在[智谱开放平台](https://open.bigmodel.cn/usercenter/apikeys)申请和吊销——**不要把 key 贴到聊天、issue 或截图里**，一旦泄露立即到该页面吊销重建。
 
-实现细节见 [backend/claude_cli.py](backend/claude_cli.py) 和 [backend/zhipu.py](backend/zhipu.py)。
+实现细节见 [backend/claude_cli.py](backend/claude_cli.py)、[backend/codex_cli.py](backend/codex_cli.py) 和 [backend/zhipu.py](backend/zhipu.py)。
 
 ## 单独同步索引（命令行）
 

@@ -1,7 +1,7 @@
 """统一的模型路由、显式降级与生成观测。
 
-这层只负责把任务交给 Ollama、Claude CLI 或智谱，不把 prompt、回答或原文
-写入日志。回答模型仍由用户在界面选择；查询改写、摘要、查询扩展和 Judge
+这层只负责把任务交给 Ollama、Claude CLI、Codex CLI 或智谱，不把 prompt、回答
+或原文写入日志。回答模型仍由用户在界面选择；查询改写、摘要、查询扩展和 Judge
 可以通过 ``MODEL_*`` 环境变量独立选用便宜模型。
 """
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from math import ceil
 from typing import Literal
 
-from backend import claude_cli, zhipu
+from backend import claude_cli, codex_cli, zhipu
 from config import (
     HISTORY_SUMMARY_MODEL,
     QUERY_EXPAND_MODEL,
@@ -94,6 +94,8 @@ def resolve_model(task: ModelTask, requested_model: str) -> str:
 def provider_name(model: str) -> str:
     if model.startswith(claude_cli.MODEL_PREFIX):
         return "claude"
+    if model.startswith(codex_cli.MODEL_PREFIX):
+        return "codex"
     if model.startswith(zhipu.MODEL_PREFIX):
         return "zhipu"
     return "ollama"
@@ -118,6 +120,8 @@ def routing_snapshot(requested_model: str) -> dict:
 def _default_factory(model: str, prompt: str) -> Iterator[str]:
     if model.startswith(claude_cli.MODEL_PREFIX):
         return claude_cli.generate_stream(prompt, model)
+    if model.startswith(codex_cli.MODEL_PREFIX):
+        return codex_cli.generate_stream(prompt, model)
     if model.startswith(zhipu.MODEL_PREFIX):
         return zhipu.generate_stream(prompt, model)
     return generate_ollama_prompt_stream(prompt, model=model)
@@ -131,6 +135,7 @@ def generate_stream(
     stats: list[GenerationStats] | None = None,
     ollama_factory: Callable[[str, str], Iterator[str]] | None = None,
     claude_factory: Callable[[str, str], Iterator[str]] | None = None,
+    codex_factory: Callable[[str, str], Iterator[str]] | None = None,
     zhipu_factory: Callable[[str, str], Iterator[str]] | None = None,
 ) -> Iterator[str]:
     """生成流；仅在首个 token 之前失败时才使用显式备用模型。
@@ -156,6 +161,7 @@ def generate_stream(
     factories: dict[str, Callable[[str, str], Iterator[str]]] = {
         "ollama": ollama_factory or _default_factory,
         "claude": claude_factory or _default_factory,
+        "codex": codex_factory or _default_factory,
         "zhipu": zhipu_factory or _default_factory,
     }
     started = time.monotonic()
@@ -164,7 +170,10 @@ def generate_stream(
         for attempt, model in enumerate(candidates):
             produced = False
             try:
-                if provider_name(model) in {"claude", "zhipu"} and not MODEL_CLOUD_ALLOWED:
+                if (
+                    provider_name(model) in {"claude", "codex", "zhipu"}
+                    and not MODEL_CLOUD_ALLOWED
+                ):
                     raise RuntimeError("云端模型调用已被 MODEL_CLOUD_ALLOWED=0 禁止")
                 iterator = factories[provider_name(model)](model, prompt)
                 for chunk in iterator:

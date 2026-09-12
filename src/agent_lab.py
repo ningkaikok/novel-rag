@@ -755,8 +755,15 @@ def run_agent(
                     prompt = rag.build_prompt(question, selected) + _facts_prompt(
                         fact_registry
                     )
-                    for token in answerer(prompt):
-                        yield "token", token
+                    try:
+                        for token in answerer(prompt):
+                            yield "token", token
+                    except Exception as exc:
+                        # 最终生成失败（比如本地 claude CLI 认证过期）不能让异常从
+                        # 生成器里逃逸：那样 SSE 连接会被异常直接中断，前端收不到
+                        # done 事件，"正在思考"会永远转下去（实测复现过这个卡死）。
+                        # 降级为一条如实说明失败原因的文本，正常结束这次运行。
+                        yield "token", f"\n\n⚠️ 生成回答时出错，已中止：{exc}"
                 yield "done", {}
                 return
 

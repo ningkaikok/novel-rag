@@ -91,6 +91,42 @@ def test_agent_searches_then_answers_with_selected_citations(monkeypatch):
     assert events[-1] == ("done", {})
 
 
+def test_generation_failure_does_not_crash_the_generator(monkeypatch):
+    """最终生成模型调用失败（比如 claude CLI 认证过期）必须被捕获，而不是让异常从
+    run_agent 里逃逸——否则 SSE 连接会被异常直接中断，前端收不到 done 事件，
+    界面会卡在"正在思考"上不再更新（这是本次要修的真实卡死场景）。
+    """
+    actions = iter(
+        [
+            {"reason": "先找原文", "tool": "search_novels", "args": {"query": "庄主是谁"}},
+            {
+                "reason": "证据足够",
+                "tool": "answer_with_citations",
+                "args": {"source_ids": ["S1"]},
+            },
+        ]
+    )
+    monkeypatch.setattr(agent_lab, "AgentToolbox", _FakeToolbox)
+
+    def _failing_answerer(_prompt):
+        raise RuntimeError("claude CLI 调用失败（exit 1）：OAuth session expired")
+
+    events = list(
+        agent_lab.run_agent(
+            "庄主是谁",
+            rag=_FakeRag(),
+            planner=lambda _prompt: json.dumps(next(actions), ensure_ascii=False),
+            answerer=_failing_answerer,
+            max_steps=5,
+        )
+    )
+
+    # 没有异常向上抛——list() 能跑完就是最重要的断言。
+    assert events[-1] == ("done", {})
+    answer = "".join(value for kind, value in events if kind == "token")
+    assert "OAuth session expired" in answer
+
+
 def test_catalog_questions_use_complete_facts_not_retrieval_count(monkeypatch):
     """全集问题不能把 top-k 命中的书误当成书架总数。"""
     toolbox_holder = {}
