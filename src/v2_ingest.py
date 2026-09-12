@@ -165,6 +165,36 @@ def index_v2_document(
         progress=progress,
         cancel_check=cancel_check,
     )
+    # DocumentVersion 的唯一约束是 (document_id, version_no)。parser 只负责根据
+    # 内容产生稳定 version id，这里在发布前读取当前最大版本号：同内容重传复用已有
+    # version_no，不同内容顺延到下一个版本，避免同名文档永远撞在 version 1。
+    with connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT version_no
+            FROM knowledge_v2.document_versions
+            WHERE document_id = %s AND source_hash = %s
+            """,
+            (item.document.id, item.version.source_hash),
+        ).fetchone()
+        if existing is None:
+            latest = conn.execute(
+                """
+                SELECT COALESCE(MAX(version_no), 0) AS version_no
+                FROM knowledge_v2.document_versions
+                WHERE document_id = %s
+                """,
+                (item.document.id,),
+            ).fetchone()
+            version_no = int(latest["version_no"]) + 1
+        else:
+            version_no = int(existing["version_no"])
+    item = V2IndexInput(
+        **{
+            **item.__dict__,
+            "version": item.version.model_copy(update={"version_no": version_no}),
+        }
+    )
     plan = build_v2_publication_plan([item], embedding_dimension=embedding_dimension)
     if progress:
         progress("database", 98, "正在发布 V2 文档索引")
