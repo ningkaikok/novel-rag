@@ -99,7 +99,7 @@ from backend.index_tasks import (  # noqa: E402
     TaskAlreadyRunning,
     TaskNotFound,
 )
-from backend.knowledge_catalog import build_v1_catalog  # noqa: E402
+from backend.knowledge_catalog import build_v1_catalog, build_v2_catalog  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
 from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
@@ -119,6 +119,7 @@ from backend.schemas import (  # noqa: E402
     IndexTaskStatus,
     KnowledgeCollectionList,
     KnowledgeDocumentList,
+    KnowledgeUploadResult,
     ModelList,
     QueryCacheMetrics,
     RunEvent,
@@ -152,6 +153,7 @@ from config import (  # noqa: E402
     HISTORY_SUMMARY_ENABLED,
     HISTORY_SUMMARY_EVERY,
     HISTORY_SUMMARY_MODEL,
+    KNOWLEDGE_DIR,
     MAX_UPLOAD_BYTES,
     NOVELS_DIR,
     OLLAMA_HOST,
@@ -170,6 +172,7 @@ from config import (  # noqa: E402
 from domain_models import RetrievalScope  # noqa: E402
 from embedder import load_embedder  # noqa: E402
 from generation_mixin import build_history_block  # noqa: E402
+from parsers import ParserLimits  # noqa: E402
 from postgres import (  # noqa: E402
     VALID_REVIEW_STATUSES,
     clear_session,
@@ -208,6 +211,8 @@ from session_summary import (  # noqa: E402
     should_update,
     turns_to_summarize,
 )
+from v2_ingest import index_v2_document  # noqa: E402
+from v2_schema import apply_v2_schema  # noqa: E402
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
 state: dict = {}
@@ -360,12 +365,24 @@ def list_books():
 
 @app.get("/api/knowledge/collections", response_model=KnowledgeCollectionList)
 def list_knowledge_collections():
+    try:
+        collections, _ = build_v2_catalog()
+        if collections.collections:
+            return collections
+    except Exception:
+        pass
     collections, _ = build_v1_catalog(NOVELS_DIR, load_index_manifest)
     return collections
 
 
 @app.get("/api/knowledge/documents", response_model=KnowledgeDocumentList)
 def list_knowledge_documents():
+    try:
+        _, documents = build_v2_catalog()
+        if documents.documents:
+            return documents
+    except Exception:
+        pass
     _, documents = build_v1_catalog(NOVELS_DIR, load_index_manifest)
     return documents
 
@@ -421,6 +438,44 @@ async def upload_books(files: list[UploadFile]):
     return {"saved": [Path(name).stem for name, _ in payloads], "task": task}
 
 
+@app.post("/api/knowledge/documents", response_model=KnowledgeUploadResult)
+async def upload_knowledge_documents(
+    files: list[UploadFile],
+    collection: str = Query(default="默认知识库", min_length=1, max_length=200),
+):
+    """上传通用文档并异步发布到 V2 shadow；TXT 旧入口保持不变。"""
+
+    payloads: list[tuple[str, bytes]] = []
+    for f in files:
+        name = Path(f.filename or "").name
+        suffix = Path(name).suffix.lower()
+        if suffix not in {".txt", ".md", ".markdown", ".pdf"}:
+            continue
+        payloads.append((name, await _read_limited(f, name)))
+    if not payloads:
+        raise APIError(
+            400, ErrorCode.no_valid_files, "没有有效的 .txt、.md、.markdown 或 .pdf 文件"
+        )
+
+    def save_files() -> None:
+        KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for name, content in payloads:
+                target = KNOWLEDGE_DIR / name
+                temporary = KNOWLEDGE_DIR / f".{name}.{uuid.uuid4().hex}.upload"
+                temporary.write_bytes(content)
+                staged.append((temporary, target))
+            for temporary, target in staged:
+                temporary.replace(target)
+        finally:
+            for temporary, _ in staged:
+                temporary.unlink(missing_ok=True)
+
+    task = _start_knowledge_index_task(payloads, collection, prepare=save_files)
+    return {"collection": collection, "saved": [name for name, _ in payloads], "task": task}
+
+
 @app.delete("/api/books/{name}", response_model=DeleteResult)
 def delete_book(name: str):
     # 只允许删除 novels 目录下的 txt，拒绝路径穿越
@@ -462,6 +517,60 @@ def _start_index_task(
 
     try:
         return index_tasks.start(build, force=force, retry_of=retry_of, prepare=prepare)
+    except TaskAlreadyRunning as exc:
+        raise APIError(
+            409,
+            ErrorCode.index_task_running,
+            f"已有索引任务正在运行（{exc.task['progress']}%：{exc.task['message']}）",
+        ) from exc
+
+
+def _start_knowledge_index_task(
+    payloads: list[tuple[str, bytes]],
+    collection: str,
+    *,
+    prepare=None,
+) -> dict:
+    """把通用文档上传接到统一后台任务；每个文档在 V2 内独立事务发布。"""
+
+    def build(progress, cancel_check):
+        model = state.get("embedder") or load_embedder()
+        dimension = ingest._embedding_dimension(model)
+        with connect() as conn:
+            apply_v2_schema(cast(Any, conn), dimension)
+
+        chunk_count = 0
+        for index, (name, payload) in enumerate(payloads):
+            base = index / len(payloads) * 100
+
+            def document_progress(
+                stage: str, local: int, message: str, *, base=base, name=name
+            ) -> None:
+                progress(stage, int(base + local / len(payloads)), f"{name}：{message}")
+
+            result = index_v2_document(
+                payload,
+                title=name,
+                collection_name=collection,
+                embedder=model,
+                embedding_dimension=dimension,
+                storage_schema="shadow",
+                limits=ParserLimits(max_bytes=MAX_UPLOAD_BYTES),
+                progress=document_progress,
+                cancel_check=cancel_check,
+            )
+            chunk_count += result.chunks
+        return {
+            "novels": [name for name, _ in payloads],
+            "chunk_count": chunk_count,
+            "added": [name for name, _ in payloads],
+            "modified": [],
+            "deleted": [],
+            "unchanged": [],
+        }
+
+    try:
+        return index_tasks.start(build, prepare=prepare)
     except TaskAlreadyRunning as exc:
         raise APIError(
             409,

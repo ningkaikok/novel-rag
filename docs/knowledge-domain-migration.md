@@ -1,9 +1,9 @@
 # 通用知识库领域边界迁移说明
 
-## 当前状态：Phase 6 最小 AI-first 收口（已完成）
+## 当前状态：Phase 7 shadow 数据与只读检索（已完成，生产读路径未切换）
 
 Phase 1～5B 已建立通用领域模型、V2 发布基础、解析器、V1 scope、SourceRef adapter、
-只读目录 API 和知识库 Sidebar。Phase 6 本次只收口 Agent/MCP 的语义边界，不改变现有
+只读目录 API 和知识库 Sidebar。Phase 6 收口 Agent/MCP 的语义边界，不改变现有
 小说 Agent Lab 的工具名称、参数或 `ToolResult` 旧字段：
 
 ```text
@@ -43,6 +43,16 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `src/v2_shadow.py`：提供 V1/V2 快照比较纯函数，按文档/版本身份、source hash、chunk
   数量、chunk 稳定键、机器 locator 和检索候选稳定键分类 mismatch；不比较浮点向量，
   不宣称向量召回完全一致。
+- `src/v2_retrieval.py`：提供 knowledge_v2 的通用只读向量/BM25 检索和 scope 过滤，返回
+  `V2SearchHit` 及完整的 collection/document/version/chunk 身份链；不改变现有 V1 RAG。
+- `scripts/apply_v1_to_v2.py`：显式执行逐文档、逐事务的 V1 → V2 shadow 发布；默认 dry-run，
+  不修改 V1。
+- `scripts/compare_v1_v2_shadow.py`：只读比较 V1/V2 的稳定身份、数量和 locator，不输出正文。
+- `src/v2_ingest.py`：把 TXT/Markdown/PDF parser 接入分批 embedding、BM25 term 和显式
+  V2 发布；`POST /api/knowledge/documents` 通过后台索引任务调用它，默认发布到 shadow。
+  同内容重传复用版本号，新内容按文档已有最大 `version_no` 递增。
+- `src/v2_shadow_reader.py`：在显式 `V2_SHADOW_ENABLED=1` 时，将 V2 向量/BM25 候选接入现有
+  RAG trace；V1 仍负责最终回答，shadow 失败只记录错误，不会阻断主链路。
 - `src/retrieval_scope.py`：提供 `RetrievalScope` 到 V1 小说名单的安全投影；未传 scope
   返回兼容的未限制状态，无法证明映射关系时返回空集合，不会扩大为全库。
 - `src/retrieval_mixins.py` / `src/rag.py`：V1 向量、BM25、结构性和 hybrid 检索可接收
@@ -59,9 +69,10 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `scripts/mcp_server.py`：MCP instructions 已改为通用知识库只读语义，仍只暴露查询工具，
   不包含完整正文。
 
-V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当前代码不会因为该配置
-自动把 NovelRAG/API/Agent 切到 V2；scope 仍只投影到现有 V1 检索，V2 read/shadow
-仍需后续阶段实现并经过真实数据验证。Agent/MCP 目前只是本地单用户只读兼容层。
+V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。V2 schema 已完成真实
+shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比较和可选 RAG shadow read
+均已接通；候选差异和延迟评测仍需积累，当前代码不会因为该配置自动把 NovelRAG/API/Agent
+切到 V2。Agent/MCP 目前只是本地单用户只读兼容层。
 
 ## Phase 4 的安全边界
 
@@ -88,11 +99,11 @@ V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当�
 
 ## 后续接入顺序
 
-1. 在备份副本或临时数据库显式执行 V2 DDL，并把 parser 输出、现有 embedding/BM25
-   结果接入 `V2IndexInput`；当前仅完成发布契约，尚未执行真实数据库写入。
-2. 在 V2 read/shadow 中接入真实 V1/V2 检索候选，积累 mismatch 观测和 parser 级检索评测；
-   当前只有纯函数和 V1 投影，尚未连接真实 V2 数据库。
-3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，积累线上 mismatch 观测；
+1. 将 `V2ReadRepository` 接入真实 RAG shadow read，积累 V1/V2 检索候选、延迟和 parser
+   级检索评测；当前只完成 V2 直接 smoke test，尚未改变 RAG 主链路。
+2. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
+   切到真实 V2 读取。
+3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；
    当前 Agent/MCP 仍只读 V1/legacy adapter。
 4. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。
 5. 稳定后再考虑停用旧 `/api/books` 兼容入口。

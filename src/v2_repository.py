@@ -449,8 +449,25 @@ def publish_v2_index(
                         _json_value(chunk.metadata),
                     ),
                 )
-                for term in indexed.terms:
-                    executor.execute(_UPSERT_TERM, (term.chunk_id, term.term, term.tf))
+
+            # psycopg 的 executemany 位于 cursor，而不是 connection。按文档
+            # 一次提交全部 term，并以 generator 提供参数，避免再复制一份百万级
+            # term 列表；mock/最小 executor 没有该方法时保留逐条 fallback。
+            term_params = (
+                (term.chunk_id, term.term, term.tf)
+                for indexed in document.chunks
+                for term in indexed.terms
+            )
+            executemany = getattr(executor, "executemany", None)
+            cursor_factory = getattr(executor, "cursor", None)
+            if executemany is not None:
+                executemany(_UPSERT_TERM, term_params)
+            elif cursor_factory is not None:
+                with cursor_factory() as cursor:
+                    cursor.executemany(_UPSERT_TERM, term_params)
+            else:
+                for params in term_params:
+                    executor.execute(_UPSERT_TERM, params)
 
             # manifest 必须最后发布：上游任一写入失败时，事务上下文不应提交检查点。
             executor.execute(

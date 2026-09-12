@@ -1,18 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { MOCK_INDEX_TASK, mockApi } from './mock-api';
+import { mockApi } from './mock-api';
 
-test.describe('上传小说', () => {
-  test('选择 .txt 文件后触发上传，书架刷新，出现成功提示', async ({ page }) => {
+test.describe('上传文档', () => {
+  test('选择 .txt 文件后触发通用上传，书架刷新，出现成功提示', async ({ page }) => {
     let uploadedFilenames: string[] = [];
     await mockApi(page);
-    // 单独覆盖 /api/books 的 POST：记录收到的文件名，模拟"已保存"
-    await page.route('**/api/books', async (route) => {
-      if (route.request().method() === 'POST') {
-        const body = route.request().postDataBuffer()?.toString('utf-8') ?? '';
+    // mockApi 已提供通用 POST 响应；这里只监听请求并记录文件名，不再覆盖同一路由。
+    page.on('request', (request) => {
+      if (request.url().includes('/api/knowledge/documents') && request.method() === 'POST') {
+        const body = request.postDataBuffer()?.toString('utf-8') ?? '';
         uploadedFilenames = [...body.matchAll(/filename="([^"]+)"/g)].map((m) => m[1]);
-        await route.fulfill({ json: { saved: ['新小说'], task: MOCK_INDEX_TASK } });
-      } else {
-        await route.fulfill({ json: { books: ['雾隐山庄'] } });
       }
     });
     await page.goto('/');
@@ -32,14 +29,15 @@ test.describe('上传小说', () => {
 
   test('上传失败时显示错误提示，而不是静默失败', async ({ page }) => {
     await mockApi(page);
-    await page.route('**/api/books', async (route) => {
+    await page.unroute('**/api/knowledge/documents**');
+    await page.route('**/api/knowledge/documents**', async (route) => {
       if (route.request().method() === 'POST') {
         await route.fulfill({
           status: 400,
-          json: { error: { code: 'no_valid_files', message: '没有有效的 .txt 文件' } },
+          json: { error: { code: 'no_valid_files', message: '没有有效的文档文件' } },
         });
       } else {
-        await route.fulfill({ json: { books: [] } });
+        await route.fulfill({ json: { documents: [] } });
       }
     });
     await page.goto('/');
@@ -50,6 +48,6 @@ test.describe('上传小说', () => {
       buffer: Buffer.from('x', 'utf-8'),
     });
 
-    await expect(page.getByText('没有有效的 .txt 文件')).toBeVisible();
+    await expect(page.getByText('没有有效的文档文件')).toBeVisible();
   });
 });

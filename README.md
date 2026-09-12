@@ -10,7 +10,7 @@
 
 > 一个把 RAG 和 Agent 做「透明」的通用知识库平台：每次回答都能逐层展开向量、BM25、RRF 融合与重排的候选排名、分数变化和耗时，看清答案是怎么被找出来的 —— 以及在哪一步被弄丢的。小说是当前的兼容适配器和演示场景。
 
-基于本地向量检索的知识库问答与 Agent demo。当前小说流程用于展示可核验检索、引用和 Agent 轨迹；检索和 Embedding 全部在本机运行。生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅、Codex 订阅或智谱 GLM（见下文"切换生成模型"）。
+基于本地向量检索的知识库问答与 Agent demo。当前小说流程用于展示可核验检索、引用和 Agent 轨迹；检索和 Embedding 全部在本机运行。生成模型默认用本地 Ollama（不需要任何外部 API Key），也可以按需切换到你自己的 Claude 订阅、Codex 订阅或智谱 GLM（见下文“切换生成模型”）。
 
 ## 四个和一般 RAG demo 不太一样的地方
 
@@ -199,7 +199,7 @@ npm run dev
 
 - **💻 本地（Ollama，完全离线）**：自动列出 `ollama list` 里已安装的模型（如 `qwen2.5:3b`、`qwen2.5:7b`）。
 - **☁️ 我的 Claude 订阅（云端）**：如果本机装了 [Claude Code CLI](https://claude.com/claude-code) 并已登录，会额外出现 `haiku`/`sonnet`/`opus` 三档，**不需要单独配置 `ANTHROPIC_API_KEY`**——直接复用你本地已登录的 Claude 订阅（后端通过 `claude --print` 非交互调用）。
-- **☁️ 我的 Codex 订阅（云端）**：如果本机装了 [OpenAI Codex CLI](https://github.com/openai/codex)（`npm install -g @openai/codex`）并已登录（`codex login`），会额外出现 `gpt-5-codex`/`gpt-5`/`o3` 三档，同样**不需要单独配置 `OPENAI_API_KEY`**——直接复用你本地已登录的 ChatGPT 订阅（后端通过 `codex exec --json` 非交互调用）。可用模型名如与你账号下实际支持的不一致，用环境变量 `CODEX_MODEL_ALIASES`（逗号分隔）覆盖，不需要改代码。
+- **☁️ 我的 Codex 订阅（云端）**：如果本机装了 [OpenAI Codex CLI](https://github.com/openai/codex)（`npm install -g @openai/codex`）并已登录（`codex login`），会额外出现 `gpt-5-codex`/`gpt-5`/`o3` 三档，同样**不需要单独配置 `OPENAI_API_KEY`**——直接复用你本地已登录的 ChatGPT 订阅（后端通过 `codex exec --json` 非交互调用）。可用模型名如与你账号下实际支持的不一致，用环境变量 `CODEX_MODEL_ALIASES`（逗号分隔）覆盖。
 - **☁️ 智谱 GLM（云端）**：设置了环境变量 `ZHIPU_API_KEY` 时出现 `glm-4-flash`/`glm-4.5-air`/`glm-4.5`/`glm-4.6` 四档。
 
 选择任何云端模型时请注意（界面上的胶囊标签和 Tooltip 也会显示同样的提示）：
@@ -303,6 +303,7 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `MODEL_CHARS_PER_TOKEN` | `1.5` | 无供应商 tokenizer 时用于成本观测的字符/token 估算比例 |
 | `MODEL_INPUT_USD_PER_MILLION_TOKENS` | `0` | 输入 token 估算单价；需按实际供应商价格配置 |
 | `MODEL_OUTPUT_USD_PER_MILLION_TOKENS` | `0` | 输出 token 估算单价；需按实际供应商价格配置 |
+| `V2_SHADOW_ENABLED` | `0` | 设为 `1` 时额外读取 V2 候选并写入 trace；V1 仍负责最终回答 |
 | `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
 | `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |

@@ -68,6 +68,7 @@ export type IndexResult = Schemas['IndexResult'];
 export type IndexTask = Schemas['IndexTaskStatus'];
 
 export type KnowledgeDocument = Schemas['KnowledgeDocumentSummary'];
+export type KnowledgeUploadResult = Schemas['KnowledgeUploadResult'];
 
 /** 问答路径：自动判断、强制依据书架原文、或跳过检索直接自由回答。
  * 生成物里有同名字面量联合（Schemas['AnswerMode']），直接采用。
@@ -113,6 +114,21 @@ export async function uploadBooks(files: FileList | File[]): Promise<IndexTask> 
   for (const f of Array.from(files)) form.append('files', f);
   const res = await fetch('/api/books', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await extractErrorMessage(res, '上传失败'));
+  return (await res.json()).task;
+}
+
+export async function uploadKnowledgeDocuments(
+  files: FileList | File[],
+  collection = '默认知识库',
+): Promise<IndexTask> {
+  const form = new FormData();
+  for (const f of Array.from(files)) form.append('files', f);
+  const params = new URLSearchParams({ collection });
+  const res = await fetch(`/api/knowledge/documents?${params.toString()}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(await extractErrorMessage(res, '文档上传失败'));
   return (await res.json()).task;
 }
 

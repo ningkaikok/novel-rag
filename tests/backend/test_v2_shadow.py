@@ -58,3 +58,21 @@ def test_shadow_classifies_document_hash_and_chunk_count_mismatches():
     categories = set(comparison.categories)
 
     assert {"document_identity", "version_identity", "source_hash"} <= categories
+
+
+def test_legacy_v2_snapshot_keeps_chunk_locator_with_chapter_metadata():
+    document = LegacyNovelAdapter.document("演示.txt")
+    version = LegacyNovelAdapter.version("演示.txt", source_hash="source-1")
+    chunk = DocumentChunk(
+        id="chunk-7",
+        document_version_id=version.id,
+        ordinal=7,
+        text="短文本",
+        section_path=("第一章",),
+        metadata={"legacy_chunk_id": 7, "legacy_chapter_title": "第一章"},
+    )
+
+    snapshot = snapshot_from_v2_document(document, version, (chunk,))
+
+    assert snapshot.chunks[0].locator.kind == "chunk"
+    assert snapshot.chunks[0].locator.value == "7"

@@ -257,8 +257,14 @@ export async function mockApi(
     }
   });
 
-  await page.route('**/api/knowledge/documents', async (route) => {
-    await route.fulfill({ json: { documents } });
+  await page.route('**/api/knowledge/documents**', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        json: { collection: '默认知识库', saved: ['新文档.md'], task: MOCK_INDEX_TASK },
+      });
+    } else {
+      await route.fulfill({ json: { documents } });
+    }
   });
 
   await page.route('**/api/index-tasks/**', async (route) => {

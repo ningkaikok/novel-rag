@@ -1,6 +1,6 @@
 [project]
 name = "novel-rag"
-version = "0.6.0"
+version = "0.11.0"
 description = "把 RAG 做「透明」的中文小说问答系统：向量/BM25/RRF/重排全链路可观测"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -58,7 +58,7 @@ known-first-party = [
     "query_router", "query_rewriter", "rag", "agent_lab", "citation_eval",
     "chunk_model", "novel_match", "retrieval_mixins", "generation_mixin",
     "confidence", "query_expander", "tool_spec", "domain_models", "legacy_novel",
-    "v2_schema", "v2_migration", "v2_repository", "v2_shadow", "retrieval_scope",
+    "v2_schema", "v2_migration", "v2_repository", "v2_retrieval", "v2_ingest", "v2_shadow", "v2_shadow_reader", "retrieval_scope",
     "response_adapters", "parsers", "backend",
 ]
 

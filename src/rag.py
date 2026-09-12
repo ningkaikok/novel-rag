@@ -37,6 +37,7 @@ Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，
 """
 
 import time
+from collections.abc import Iterator
 
 from sentence_transformers import SentenceTransformer
 
@@ -52,6 +53,7 @@ from config import (
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     TOP_K,
+    V2_SHADOW_ENABLED,
 )
 from domain_models import RetrievalScope
 from embedder import load_embedder
@@ -109,6 +111,7 @@ from postgres import (
 from query_expander import expand_query_variants
 from reranker import rerank_with_scores
 from retrieval_mixins import RetrievalMixin
+from v2_shadow_reader import V2ShadowReader
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
@@ -297,8 +300,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         )
         for kind, payload in stream:
             if kind == "step":
-                trace.append(payload)
-            else:
+                if isinstance(payload, dict):
+                    trace.append(payload)
+            elif isinstance(payload, list):
                 sources = payload
         return sources, trace
 
@@ -309,7 +313,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         _allow_expand: bool = True,
         *,
         scope: RetrievalScope | None = None,
-    ):
+    ) -> Iterator[tuple[str, dict[str, object] | list[SourceChunk]]]:
         """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
 
         **为什么要做成生成器**：整条流水线要 2 秒左右（交叉编码器重排占大头），
@@ -709,6 +713,39 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 if stop.value is not None:
                     result = stop.value
 
+        if V2_SHADOW_ENABLED:
+            try:
+                observation = V2ShadowReader(self.embedder).observe(
+                    question,
+                    result,
+                    top_k=top_k,
+                    scope=scope,
+                )
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": (
+                            f"V2 只读候选 {observation.v2_count} 条；"
+                            f"相对当前 V1 缺失 {observation.missing_count} 条、"
+                            f"新增 {observation.extra_count} 条"
+                        ),
+                        **observation.payload(),
+                    },
+                )
+            except Exception as exc:
+                # shadow 只能提供观测，V2 不可用时绝不能阻断 V1 回答。
+                yield (
+                    "step",
+                    {
+                        "step": "V2 shadow",
+                        "stage_key": "v2_shadow",
+                        "detail": f"V2 shadow 暂不可用，V1 结果保持不变（{exc}）",
+                        "error": exc.__class__.__name__,
+                    },
+                )
+
         yield "result", result
 
     def _maybe_expand(
@@ -793,8 +830,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 variant, top_k=RECALL_K, _allow_expand=False
             ):
                 if kind == "result":
-                    for chunk in payload:
-                        merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
+                    if isinstance(payload, list):
+                        for chunk in payload:
+                            merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
                     break  # 变体的 trace 步骤不并入主 trace，避免刷屏
 
         pool = list(merged.values())

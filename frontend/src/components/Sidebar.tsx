@@ -47,7 +47,7 @@ export default function Sidebar({
         size="small"
         className="book-list"
         dataSource={documents}
-        locale={{ emptyText: '知识库还是空的，用输入框上方的「📎 添加小说」开始吧' }}
+        locale={{ emptyText: '知识库还是空的，用输入框上方的「📎 添加文档」开始吧' }}
         renderItem={(document) => (
           <List.Item
             actions={[

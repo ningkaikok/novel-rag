@@ -1,5 +1,7 @@
 """检索可观测性回归：每一层排名都必须能在 trace 中被复盘。"""
 
+from types import SimpleNamespace
+
 import rag
 
 
@@ -64,3 +66,41 @@ def test_trace_keeps_vector_bm25_rrf_and_rerank_rank_changes(monkeypatch):
     assert reranked[0]["selected"] is True
     assert reranked[2]["selected"] is False
     assert all(step["ms"] >= 0 for step in steps.values())
+
+
+def test_trace_records_v2_shadow_without_changing_v1_result(monkeypatch):
+    service = object.__new__(rag.NovelRAG)
+    semantic = [_source(1, 0.1)]
+    monkeypatch.setattr(service, "_named_novels", lambda _question: [])
+    monkeypatch.setattr(service, "_full_text_chunks", lambda _novels: None)
+    monkeypatch.setattr(service, "retrieve", lambda _question, top_k, only_novels: semantic)
+    monkeypatch.setattr(service, "keyword_retrieve", lambda _question, top_k, only_novels: [])
+    monkeypatch.setattr(service, "positional_retrieve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(rag, "HIERARCHY_ENABLED", False)
+    monkeypatch.setattr(rag, "RERANK_ENABLED", False)
+    monkeypatch.setattr(rag, "V2_SHADOW_ENABLED", True)
+    monkeypatch.setattr(
+        rag,
+        "V2ShadowReader",
+        lambda _embedder: SimpleNamespace(
+            observe=lambda *_args, **_kwargs: SimpleNamespace(
+                v2_count=1,
+                missing_count=0,
+                extra_count=0,
+                payload=lambda: {
+                    "v1_count": 1,
+                    "v2_count": 1,
+                    "missing_count": 0,
+                    "extra_count": 0,
+                    "elapsed_ms": 4,
+                },
+            )
+        ),
+    )
+    service.embedder = object()
+
+    events = list(service.retrieve_hybrid_stream("庄主是谁", top_k=1))
+
+    assert events[-2][0] == "step"
+    assert events[-2][1]["stage_key"] == "v2_shadow"
+    assert events[-1] == ("result", semantic)
