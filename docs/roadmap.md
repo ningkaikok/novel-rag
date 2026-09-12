@@ -14,6 +14,8 @@
 - [ ] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1
 - [x] 新增 `/api/knowledge/documents` 通用上传入口，接入 TXT/Markdown/PDF parser、分批
   embedding、BM25 和 V2 shadow 索引任务；旧 `/api/books` 兼容入口保持不变
+- [x] 同名文档重复上传按 source hash 幂等复用版本号，新内容自动递增 `version_no`，避免
+  版本唯一约束冲突
 - [ ] 补齐通用文档版本重建/删除、V2 catalog 真实读取和前端上传界面
 
 ## 通用知识库切换：Phase 1（已完成，2026-09-12）

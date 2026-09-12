@@ -50,6 +50,7 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `scripts/compare_v1_v2_shadow.py`：只读比较 V1/V2 的稳定身份、数量和 locator，不输出正文。
 - `src/v2_ingest.py`：把 TXT/Markdown/PDF parser 接入分批 embedding、BM25 term 和显式
   V2 发布；`POST /api/knowledge/documents` 通过后台索引任务调用它，默认发布到 shadow。
+  同内容重传复用版本号，新内容按文档已有最大 `version_no` 递增。
 - `src/v2_shadow_reader.py`：在显式 `V2_SHADOW_ENABLED=1` 时，将 V2 向量/BM25 候选接入现有
   RAG trace；V1 仍负责最终回答，shadow 失败只记录错误，不会阻断主链路。
 - `src/retrieval_scope.py`：提供 `RetrievalScope` 到 V1 小说名单的安全投影；未传 scope
