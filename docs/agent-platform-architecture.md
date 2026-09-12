@@ -1,6 +1,6 @@
 # Agent 平台化架构：从 Agent Lab 走向生产边界
 
-> 状态：**规划中，不代表当前版本已经实现**
+> 状态：**规划中；Phase 6 已完成最小只读兼容收口，不代表生产平台已经实现**
 >
 > 适用范围：把当前五步只读 Agent Lab 演进为可治理、可观测、可恢复的 Agent 后端
 
@@ -63,12 +63,12 @@ LLM 决策
 | --- | --- | --- |
 | API Gateway | TLS、认证入口、限流、请求边界 | 本地开发由 FastAPI 直接承担，未拆独立网关 |
 | Agent Runtime | 循环、取消、最大步数、输出事件 | `src/agent_lab.py` 已有单请求有限循环 |
-| Domain Router | 选择小说搜索、数据分析等领域 Agent | 目前只有问答模式路由，没有多领域 Agent |
+| Domain Router | 选择知识库、数据分析等领域 Agent | 目前只有问答模式路由；小说由 legacy adapter 提供兼容路径，没有多领域 Agent |
 | Planner | 决定工具调用顺序和完成条件 | Agent Lab 由模型生成一次一个 JSON action |
-| Tool Registry | 工具描述、schema、版本、权限和状态 | 当前工具集合写在代码白名单中 |
+| Tool Registry | 工具描述、schema、版本、权限和状态 | `src/tool_spec.py` 已提供不可变注册表；只读工具使用 `knowledge:read`，保留 `novel:read` 兼容别名 |
 | Tool Discovery | 从大量工具中筛选候选工具 | 当前工具只有五个，暂不需要语义工具检索 |
 | Tool Router | 校验并确定最终工具调用 | 当前由 `readonly_toolbox` 做显式白名单校验 |
-| Tool Gateway | 统一鉴权、风险控制、超时、重试和审计 | 当前只有只读限制、参数限制和重复动作保护 |
+| Tool Gateway | 统一鉴权、风险控制、超时、重试和审计 | 当前是本地只读兼容层，已有参数/权限/超时/摘要审计；无生产认证和多租户 |
 | Model Gateway | 模型能力、适配、预算、超时、降级和成本 | 三类生成适配器已经存在，但尚未统一治理 |
 | State/Event Store | 跨进程恢复、暂停、重放 | 当前轨迹只保存在一次请求内 |
 | Trace/Metric/Log | 定位路由、工具、模型和检索的耗时与失败 | 已有检索 trace，尚未统一 Agent 事件 |
@@ -98,8 +98,8 @@ LLM 决策
 backend/main.py                 Agent API / Runtime 入口
 src/query_router.py             Domain/Answer Router 雏形
 src/agent_lab.py                Planner + 有限循环雏形
-五个只读函数                   Local Tool 集合
-src/rag.py                      Novel Search Service
+五个只读函数                   Local Tool 集合（knowledge:read）
+src/rag.py                      V1 Novel Search Service（legacy adapter）
 backend/{zhipu,claude_cli}.py   Model Provider Adapter
 PostgreSQL + pgvector + BM25    Metadata / Vector / Search Store
 SSE agent_step                  Agent 事件流雏形
@@ -112,7 +112,7 @@ DB”再引入第二个数据库。Redis、对象存储和消息队列也不是�
 
 ## 四、推荐的演进阶段
 
-### M6.1：轻量 Control Plane 与 Tool Registry
+### M6.1：轻量 Control Plane 与 Tool Registry（Phase 6 最小收口已完成）
 
 把五个工具从“函数白名单”提升为统一描述对象：
 
@@ -122,12 +122,17 @@ ToolSpec(
     description="搜索小说原文",
     input_schema=SearchInput,
     read_only=True,
-    permission="novel:read",
+    permission="knowledge:read",
     risk_level="low",
     timeout_ms=3000,
     version="1.0.0",
 )
 ```
+
+Phase 6 已补充：旧工具名称/参数和 `ToolResult` 保持兼容；工具描述和 MCP instructions
+使用通用知识库语义，小说只是 legacy adapter；`src/tool_source_adapter.py` 显式连接领域
+`SourceRef` 与旧 `tool_spec.SourceRef`，不让两个类型隐式混用。未知外部文本指令不会修改
+Tool Registry 权限。
 
 验收重点：工具名称、描述、输入 schema、只读属性、权限、风险、超时和版本可以被测试
 和枚举；工具实现仍然可以是普通 Python 函数。每次运行固定一份不可变配置快照，避免
@@ -234,7 +239,7 @@ Agent Lab 仍应明确标注为本地单用户学习功能。还要定义数据�
 | Event Log | 结构化日志或 PostgreSQL 表 | OTel Collector + 可查询的 Trace/日志平台 |
 | 长任务 | PostgreSQL Job 表 + 单 worker | 队列、多 worker、租约、死信和弹性伸缩 |
 | 状态恢复 | 先验证状态模型和幂等 | checkpoint/Event Store，必要时 LangGraph |
-| MCP | 暂不接，保留适配接口 | 工具需跨客户端复用时提供 Server/Client |
+| MCP | 只读 stdio 兼容层，沿用 ToolResult 与 80 字摘录红线 | 真实跨客户端复用时接入 Gateway、权限和审计 |
 | 多 Agent | 不做 | 单 Agent 评测证明无法满足时再引入 |
 
 判断是否升级的依据应该是指标和约束：工具数量、并发、任务时长、恢复目标、租户数量、
@@ -261,6 +266,7 @@ Agent Lab 仍应明确标注为本地单用户学习功能。还要定义数据�
 - 不为了架构图引入 Redis、消息队列、独立 Vector DB 或对象存储。
 - 不让模型直接执行 SQL、shell 或未经注册的 HTTP 请求。
 - 不把 MCP 当成认证、RBAC、ABAC 或风险审批系统。
+- 不把当前 Agent/MCP 只读兼容层描述成真实 V2 API、数据库 read 或生产权限系统。
 - 不在没有恢复需求时把 Agent Lab 重写成 LangGraph。
 
 这份文档和[项目路线图](roadmap.md)一起阅读：路线图记录“做不做和验收什么”，本文记录

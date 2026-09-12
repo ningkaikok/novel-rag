@@ -77,6 +77,32 @@ Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 
 Phase 5A 的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；未知 scope 永远返回
 空结果，不会扩大搜索范围。V2 数据库、表和生产读写均未被本阶段自动切换或删除。
 
+## 通用知识库切换：Phase 5B（已完成目录 API + 前端最小切换，2026-09-12）
+
+- [x] 新增只读 `/api/knowledge/collections` 与 `/api/knowledge/documents`，从 V1 TXT
+  文件和 `index_manifest` 安全映射文档/版本摘要；无数据库时退化为 `source_only`
+- [x] 目录响应只返回身份、来源类型、状态、哈希、版本和计数，不返回正文；旧 `/api/books`
+  保持不变
+- [x] Sidebar 使用“知识库 / 文档”术语，展示来源类型和索引状态，小说上传/删除仍走
+  TXT/V1 兼容路径
+- [ ] 真实 V2 read/shadow、Markdown/PDF 生产上传和多租户权限仍未完成
+
+Phase 5B 的回滚方式是保持 V1 和旧 `/api/books`；目录 API 是只读投影，不会写 V2 或改变
+生产检索路径。
+
+## 通用知识库切换：Phase 6（已完成最小 AI-first 收口，2026-09-12）
+
+- [x] 保留 Agent Lab/MCP 现有工具名称、参数和 `ToolResult` 旧字段，ToolSpec 增加明确的
+  `knowledge:read` 只读权限语义；`novel:read` 作为旧调用方兼容别名
+- [x] 工具描述和 MCP instructions 使用通用知识库语义，小说明确定位为 legacy adapter
+- [x] 新增显式通用 `SourceRef` → `tool_spec.SourceRef` adapter，保留 document/version/
+  locator 扩展和旧定位字段；MCP/Agent 摘录继续限制为 80 字且不含完整正文
+- [x] 增加工具 schema、只读权限、摘要/引用字段和外部文本指令隔离的离线契约测试
+- [ ] V2 API/真实数据库 read、认证、权限策略、多租户、生产审计和多 Agent/LangGraph 仍未完成
+
+Phase 6 仍是本地单用户只读兼容层；外部文本中的指令不会改变 Tool Registry 权限。回滚只需
+保持 `STORAGE_SCHEMA=v1`、继续使用现有 Agent Lab/MCP 入口，不涉及表删除或生产切换。
+
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、
 工程加固、检索实验、答案忠实度和多轮上下文边界，再进入 M4 关系图质量和 M5/M6

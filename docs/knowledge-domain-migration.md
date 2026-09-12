@@ -1,8 +1,10 @@
 # 通用知识库领域边界迁移说明
 
-## 当前状态：Phase 5A（检索/引用通用化后端最小切片已完成）
+## 当前状态：Phase 6 最小 AI-first 收口（已完成）
 
-本阶段的目标是让小说 RAG 有一个可复用的通用领域语言，同时保持旧系统可运行：
+Phase 1～5B 已建立通用领域模型、V2 发布基础、解析器、V1 scope、SourceRef adapter、
+只读目录 API 和知识库 Sidebar。Phase 6 本次只收口 Agent/MCP 的语义边界，不改变现有
+小说 Agent Lab 的工具名称、参数或 `ToolResult` 旧字段：
 
 ```text
 Collection → Document → DocumentVersion → DocumentChunk → SourceRef
@@ -49,10 +51,17 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `src/response_adapters.py`：提供通用 `DocumentChunk`、旧 `SourceChunk` 到
   `SourceRef`/JSON-safe payload 的纯适配，保留 document/version/chunk/locator 身份链，
   `excerpt` 限制为 80 字以内。
+- `src/tool_spec.py`：现有工具继续使用原名称和参数，权限统一表达为只读
+  `knowledge:read`；小说相关描述明确说明由 legacy adapter 兼容。
+- `src/tool_source_adapter.py`：显式把通用领域 `SourceRef` 投影为旧
+  `tool_spec.SourceRef`，保留旧 `novel/chapter/chunk_id` 字段并追加可选的
+  document/version/locator 元数据；两个类型不隐式互换，excerpt 仍最多 80 字。
+- `scripts/mcp_server.py`：MCP instructions 已改为通用知识库只读语义，仍只暴露查询工具，
+  不包含完整正文。
 
 V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当前代码不会因为该配置
-自动把 NovelRAG/API 切到 V2；Phase 5A 的 scope 只投影到现有 V1 检索，V2 read/shadow
-仍需后续阶段实现并经过真实数据验证。
+自动把 NovelRAG/API/Agent 切到 V2；scope 仍只投影到现有 V1 检索，V2 read/shadow
+仍需后续阶段实现并经过真实数据验证。Agent/MCP 目前只是本地单用户只读兼容层。
 
 ## Phase 4 的安全边界
 
@@ -62,7 +71,7 @@ V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当�
   选择 `STORAGE_SCHEMA=v2` 或 `shadow`，默认 `v1` 会拒绝发布
 - apply 不创建 schema、不删除数据、不切生产读写；调用者需先显式执行已有的
   `apply_v2_schema`，并自行控制数据库连接权限与事务生命周期
-- 不切换前端“书架”界面，不改变小说问答、引用和 Agent 行为
+- 不切换前端默认读写到 V2，不改变小说问答、引用和 Agent Lab 的旧工具调用行为
 
 ## 回滚边界
 
@@ -83,8 +92,9 @@ V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当�
    结果接入 `V2IndexInput`；当前仅完成发布契约，尚未执行真实数据库写入。
 2. 在 V2 read/shadow 中接入真实 V1/V2 检索候选，积累 mismatch 观测和 parser 级检索评测；
    当前只有纯函数和 V1 投影，尚未连接真实 V2 数据库。
-3. 将 `SourceRef` adapter 接入 API/trace response，并让 V2 retriever 实际消费
-   `RetrievalScope`；Phase 5A 尚未修改 API schema。
-4. 最后切换通用文档管理界面；稳定后再考虑停用旧 `/api/books` 兼容入口。
+3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，积累线上 mismatch 观测；
+   当前 Agent/MCP 仍只读 V1/legacy adapter。
+4. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。
+5. 稳定后再考虑停用旧 `/api/books` 兼容入口。
 
 首次切换不删除旧表，不引入独立向量数据库、消息队列或多租户权限系统。
