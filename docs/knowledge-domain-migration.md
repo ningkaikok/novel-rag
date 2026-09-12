@@ -1,6 +1,6 @@
 # 通用知识库领域边界迁移说明
 
-## 当前状态：Phase 3（解析器与索引入口基础已完成）
+## 当前状态：Phase 4（V2 repository/index 发布基础已完成）
 
 本阶段的目标是让小说 RAG 有一个可复用的通用领域语言，同时保持旧系统可运行：
 
@@ -32,24 +32,46 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
   回退 pypdf，只接受文本型 PDF 并保留 `page_number`/页 locator。
 - `ParserLimits` 在进入 parser 前限制字节数、PDF 页数和输出片段数；parser name/version、
   source hash 与切分配置写入 `DocumentVersion`/chunk metadata，供后续索引指纹使用。
+- `src/v2_repository.py`：接收已由现有 embedding/BM25 路径计算好的产物，先校验 embedding
+  维度、source/pipeline hash、连续 chunk ordinal 和 term 关系，再生成确定性的事务 upsert
+  顺序。同一 version 重发布时先按版本删除旧 `chunk_terms`/`document_chunks`，再写入
+  当前完整集合，避免缩减 chunk 后残留；collection、document、version、chunk、term
+  写入完成后才写 `index_manifests`。
+  repository 不加载模型、不重复分词、不自动创建 schema。
+- `src/v2_shadow.py`：提供 V1/V2 快照比较纯函数，按文档/版本身份、source hash、chunk
+  数量、chunk 稳定键、机器 locator 和检索候选稳定键分类 mismatch；不比较浮点向量，
+  不宣称向量召回完全一致。
 
 V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。当前代码不会因为该配置
 自动把 NovelRAG/API 切到 V2；切换仍需后续阶段实现并经过 shadow 对比。
 
-## 明确不在本阶段
+## Phase 4 的安全边界
 
 - 不改 `novel_chunks` 或其他 V1 数据库表；V2 DDL 仅定义在独立 schema 中，默认不执行
-- 不迁移或删除现有数据，不启用双写，不切换生产读写
-- 本阶段虽已实现 Markdown/PDF parser，但尚未把 parser 接入 V2 repository/数据库索引入口；
-  仍不执行 V1→V2 数据写入
+- 不连接真实 PostgreSQL；本阶段只提供 mock executor 可验证的 repository contract
+- 不自动执行 apply：`dry_run_v2_index` 只返回摘要；`publish_v2_index` 必须由调用者显式
+  选择 `STORAGE_SCHEMA=v2` 或 `shadow`，默认 `v1` 会拒绝发布
+- apply 不创建 schema、不删除数据、不切生产读写；调用者需先显式执行已有的
+  `apply_v2_schema`，并自行控制数据库连接权限与事务生命周期
 - 不切换前端“书架”界面，不改变小说问答、引用和 Agent 行为
+
+## 回滚边界
+
+- V1 是默认且唯一的在线读写路径；V2 发布失败时事务 executor 必须 rollback，manifest
+  是最后写入对象，未发布的版本不会被视为可检索索引。
+- V2 重发布采用版本内原子 replace，而不是只依赖 `ON CONFLICT`：旧 chunk/term 的清理和
+  新索引写入在同一事务内完成；如果中途失败，rollback 会恢复清理前的 V2 状态。
+- 即使 V2 已在独立 schema 中发布，回滚只需保持 `STORAGE_SCHEMA=v1`，不读取 V2；V1
+  表和数据不会被删除或覆盖。
+- 清理 V2 独立 schema、表或数据尚未提供自动化操作，未来必须作为单独、显式、经备份
+  确认的运维动作执行；本阶段不会隐式 DROP 或迁移。
 
 ## 后续接入顺序
 
-1. 在备份副本或临时数据库显式执行 V2 DDL，并实现 plan 的事务内 upsert。
-2. 在 shadow read 中校验片段/引用/检索结果一致性，保留 V1 回滚开关。
-3. 将 parser 接入 V2 repository/索引发布入口，再增加 parser 级质量评测。
-4. 让检索器实际消费 `RetrievalScope`，并把 `SourceRef` 接入 API 和前端引用卡。
-5. 最后切换通用文档管理界面；稳定后再考虑停用旧 `/api/books` 兼容入口。
+1. 在备份副本或临时数据库显式执行 V2 DDL，并把 parser 输出、现有 embedding/BM25
+   结果接入 `V2IndexInput`；当前仅完成发布契约，尚未执行真实数据库写入。
+2. 在 shadow read 中接入真实 V1/V2 检索候选，积累 mismatch 观测和 parser 级检索评测。
+3. 让检索器实际消费 `RetrievalScope`，并把 `SourceRef` 接入 API 和前端引用卡。
+4. 最后切换通用文档管理界面；稳定后再考虑停用旧 `/api/books` 兼容入口。
 
 首次切换不删除旧表，不引入独立向量数据库、消息队列或多租户权限系统。

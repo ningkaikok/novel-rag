@@ -12,8 +12,9 @@
 - [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
 
 当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
-Phase 2 已在下方补充 V2 schema 与 dry-run 基础；Markdown/PDF 解析、通用文档 API、前端
-知识库界面和生产化多租户能力仍未完成。详细迁移策略见 `docs/knowledge-domain-migration.md`。
+Phase 2、Phase 3 和 Phase 4 已在下方补充 V2 schema、解析器和发布基础；通用文档 API、
+前端知识库界面和生产化多租户能力仍未完成。详细迁移策略见
+`docs/knowledge-domain-migration.md`。
 
 ## 通用知识库切换：Phase 2（已完成 schema + dry-run 基础，2026-09-12）
 
@@ -22,25 +23,42 @@ Phase 2 已在下方补充 V2 schema 与 dry-run 基础；Markdown/PDF 解析、
 - [x] 提供幂等 DDL 和显式 apply 函数；默认 `STORAGE_SCHEMA=v1`，不自动执行
 - [x] 提供 LegacyNovel snapshot → V2 migration plan、重复执行指纹和 dry-run validator
 - [x] 校验父子关系、chunk ordinal/locator、term 关系、source/pipeline hash 和 manifest 数量
-- [ ] 实现事务内数据 upsert、shadow read 和可回滚切换
+- [ ] 实现事务内数据 upsert、shadow read 和可回滚切换（Phase 4 基础已完成，真实接入仍待后续）
 - [ ] 接入 Markdown/PDF、通用文档 API 和前端知识库界面
 
 本阶段刻意只交付 schema + dry-run validator 最小闭环，尚未将任何 V1 数据写入 V2，
 也没有删除或覆盖现有表。
 
-## 通用知识库切换：Phase 3（进行中，解析器基础已完成）
+## 通用知识库切换：Phase 3（已完成，解析器基础，2026-09-12）
 
 - [x] 新增 TXT parser，复用现有小说清洗、章节识别和固定尺寸切分逻辑
 - [x] 新增 Markdown parser，保留嵌套 heading 的 `section_path`
 - [x] 新增文本型 PDF parser，优先 pdfplumber、回退 pypdf，保留页码引用；不做 OCR
 - [x] 增加字节数、PDF 页数、片段数限制，并把 parser name/version 纳入版本 metadata
 - [x] 新增 parser、section/page locator、限制和 TXT 兼容性单元测试
-- [ ] 将 parser 接入 V2 repository、embedding/BM25 原子索引发布
+- [x] parser 已提供给 V2 repository/index publication contract；仍由调用者传入预计算的
+  embedding 与 BM25 term，不重复模型调用
 - [ ] 实现 V1 snapshot 的真实事务 upsert、shadow read、回滚切换和 parser 级检索评测
 - [ ] 接入通用文档 API、前端知识库界面和多租户能力
 
 Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中的通用
 `DocumentChunk`，不会修改 `novel_chunks` 或自动切换生产读写。
+
+## 通用知识库切换：Phase 4（已完成发布基础，2026-09-12）
+
+- [x] 新增 `V2IndexInput`、确定性 upsert 计划和最小 mockable DB executor
+- [x] 按 collection → document → version → 版本内旧派生行清理 → chunk → chunk_terms →
+  manifest 顺序发布；同一 version 重发布采用原子 replace，manifest 只在事务最后写入
+- [x] 校验 embedding 维度、有限值、source_hash、pipeline_hash、chunk ordinal、term
+  关系；事务异常由 executor rollback，失败不会发布 manifest
+- [x] 新增 `STORAGE_SCHEMA=v2|shadow` 的显式发布门禁，默认 `v1` 保持拒绝和不执行
+- [x] 新增 V1/V2 shadow 快照比较及 document/chunk/locator/candidate mismatch 分类
+- [ ] 尚未连接真实 PostgreSQL、执行真实 V1→V2 upsert、启用双写或切换 API/RAG
+- [ ] 尚未完成真实 shadow read 观测、embedding/BM25 线上接入、前端和通用文档 API
+
+Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 发布影响。清理
+独立 `knowledge_v2` schema 需要未来单独、显式、备份确认后的运维操作；当前不提供自动
+删除，也不触碰生产数据库。
 
 路线图按“先建立可评测闭环，再增加能力”的顺序排列。每个里程碑只有满足验收标准
 才算完成；未进入当前里程碑的功能不提前引入依赖。M3.3～M3.6 依次补齐索引质量、

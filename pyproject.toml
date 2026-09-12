@@ -58,7 +58,7 @@ known-first-party = [
     "query_router", "query_rewriter", "rag", "agent_lab", "citation_eval",
     "chunk_model", "novel_match", "retrieval_mixins", "generation_mixin",
     "confidence", "query_expander", "tool_spec", "domain_models", "legacy_novel",
-    "v2_schema", "v2_migration", "parsers", "backend",
+    "v2_schema", "v2_migration", "v2_repository", "v2_shadow", "parsers", "backend",
 ]
 
 # --- Pyright：类型检查 basic 起步（P1 工程化） ---------------------------
