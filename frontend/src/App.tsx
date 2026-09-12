@@ -18,9 +18,10 @@ import { useBookshelf } from './hooks/useBookshelf';
 import { useChatStream } from './hooks/useChatStream';
 
 const CLAUDE_PREFIX = 'claude:';
+const CODEX_PREFIX = 'codex:';
 const GLM_PREFIX = 'glm:';
 // 所有走云端（数据会离开本机）的模型前缀，用于隐私提示
-const CLOUD_PREFIXES = [CLAUDE_PREFIX, GLM_PREFIX];
+const CLOUD_PREFIXES = [CLAUDE_PREFIX, CODEX_PREFIX, GLM_PREFIX];
 
 const ANSWER_MODE_OPTIONS = [
   { value: 'auto', label: '✨ 自动判断' },
@@ -38,6 +39,11 @@ const CLAUDE_LABELS: Record<string, string> = {
   haiku: 'Claude · haiku（最快最省）',
   sonnet: 'Claude · sonnet（推荐）',
   opus: 'Claude · opus（最强最慢）',
+};
+const CODEX_LABELS: Record<string, string> = {
+  'gpt-5-codex': 'Codex · gpt-5-codex（推荐）',
+  'gpt-5': 'Codex · gpt-5',
+  o3: 'Codex · o3',
 };
 const GLM_LABELS: Record<string, string> = {
   'glm-4-flash': 'GLM-4-Flash（免费最快）',
@@ -66,6 +72,15 @@ function buildModelOptions(models: string[]) {
         }),
     },
     {
+      label: '☁️ 我的 Codex 订阅（云端）',
+      options: models
+        .filter((m) => m.startsWith(CODEX_PREFIX))
+        .map((m) => {
+          const alias = m.slice(CODEX_PREFIX.length);
+          return { value: m, label: CODEX_LABELS[alias] ?? m };
+        }),
+    },
+    {
       label: '☁️ 智谱 GLM（云端）',
       options: models
         .filter((m) => m.startsWith(GLM_PREFIX))
@@ -75,7 +90,7 @@ function buildModelOptions(models: string[]) {
         }),
     },
   ];
-  // 没配 claude CLI / ZHIPU_API_KEY 时对应分组为空，不展示空标题
+  // 没装 claude/codex CLI、没配 ZHIPU_API_KEY 时对应分组为空，不展示空标题
   return groups.filter((g) => g.options.length > 0);
 }
 

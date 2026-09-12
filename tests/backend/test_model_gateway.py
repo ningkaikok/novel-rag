@@ -1,6 +1,21 @@
 from backend import model_gateway
 
 
+def test_codex_prefix_routes_to_codex_provider():
+    assert model_gateway.provider_name("codex:gpt-5-codex") == "codex"
+
+
+def test_codex_factory_is_used_for_codex_prefixed_model():
+    result = list(
+        model_gateway.generate_stream(
+            "问题",
+            "codex:gpt-5-codex",
+            codex_factory=lambda model, prompt: iter([f"{model}:{prompt}"]),
+        )
+    )
+    assert result == ["codex:gpt-5-codex:问题"]
+
+
 def test_answer_task_respects_requested_model(monkeypatch):
     monkeypatch.setattr(model_gateway, "MODEL_ROUTING_ENABLED", True)
     assert model_gateway.resolve_model("answer", "qwen2.5:7b") == "qwen2.5:7b"

@@ -57,6 +57,11 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
     )
     # 显式声明 PIPE 后两者不可能为 None（类型收窄，否则 pyright 在三处报 Optional）
     assert proc.stdout is not None and proc.stderr is not None
+    # CLI 自己汇报的失败（比如 OAuth 会话过期/刷新失败）不会写进 stderr——
+    # 它和正常回答一样走 stdout 的 JSON 事件流，只是带 is_error + 一句人类可读的
+    # result 文本。不记下来的话，stderr 读到空字符串，异常消息就只剩
+    # "调用失败（exit 1）：" 这种没有任何诊断价值的提示（实测踩过这个坑）。
+    cli_error_text: str | None = None
     try:
         # 逐行读子进程 stdout：stream-json 模式下每行是一个独立 JSON 事件，
         # 行即消息边界，不需要自己攒缓冲区。非 stream_event / 非 text_delta 的
@@ -69,6 +74,8 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if event.get("is_error") and isinstance(event.get("result"), str):
+                cli_error_text = event["result"]
             if event.get("type") != "stream_event":
                 continue
             inner = event.get("event", {})
@@ -100,5 +107,5 @@ def generate_stream(prompt: str, model_name: str) -> Iterator[str]:
         # 抛异常：中断是预期行为，不是失败，抛出去只会掩盖调用方的 GeneratorExit，
         # 让 token_iter.close() 意外抛错。
         if returncode is not None and returncode > 0:
-            err = proc.stderr.read()
-            raise RuntimeError(f"claude CLI 调用失败（exit {returncode}）：{err.strip()}")
+            err = proc.stderr.read().strip() or cli_error_text or "未知错误（stderr 为空）"
+            raise RuntimeError(f"claude CLI 调用失败（exit {returncode}）：{err}")

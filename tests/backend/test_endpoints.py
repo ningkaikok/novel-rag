@@ -178,6 +178,7 @@ def test_index_task_status_cancel_and_retry_endpoints(client, monkeypatch):
 def test_models_shape(client, monkeypatch):
     monkeypatch.setattr(main, "_list_ollama_models", lambda: ["qwen2.5:7b"])
     monkeypatch.setattr(main.claude_cli, "claude_model_options", lambda: ["claude:sonnet"])
+    monkeypatch.setattr(main.codex_cli, "codex_model_options", lambda: ["codex:gpt-5-codex"])
     monkeypatch.setattr(main.zhipu, "model_options", lambda: ["glm:glm-4-flash"])
     main.state["model"] = "qwen2.5:7b"
 
@@ -185,7 +186,7 @@ def test_models_shape(client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {
-        "models": ["qwen2.5:7b", "claude:sonnet", "glm:glm-4-flash"],
+        "models": ["qwen2.5:7b", "claude:sonnet", "codex:gpt-5-codex", "glm:glm-4-flash"],
         "current": "qwen2.5:7b",
     }
 
@@ -193,6 +194,7 @@ def test_models_shape(client, monkeypatch):
 def test_set_model_rejects_unavailable_model(client, monkeypatch):
     monkeypatch.setattr(main, "_list_ollama_models", lambda: ["qwen2.5:7b"])
     monkeypatch.setattr(main.claude_cli, "claude_model_options", lambda: [])
+    monkeypatch.setattr(main.codex_cli, "codex_model_options", lambda: [])
     monkeypatch.setattr(main.zhipu, "model_options", lambda: [])
     main.state["model"] = "qwen2.5:7b"
 
@@ -207,6 +209,7 @@ def test_set_model_rejects_unavailable_model(client, monkeypatch):
 def test_set_model_accepts_available_model(client, monkeypatch):
     monkeypatch.setattr(main, "_list_ollama_models", lambda: ["qwen2.5:3b", "qwen2.5:7b"])
     monkeypatch.setattr(main.claude_cli, "claude_model_options", lambda: [])
+    monkeypatch.setattr(main.codex_cli, "codex_model_options", lambda: [])
     monkeypatch.setattr(main.zhipu, "model_options", lambda: [])
     main.state["model"] = "qwen2.5:7b"
 

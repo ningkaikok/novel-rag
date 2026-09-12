@@ -116,3 +116,25 @@ def test_real_cli_failure_still_raises(monkeypatch):
 
     with pytest.raises(RuntimeError, match="claude CLI 调用失败"):
         list(claude_cli.generate_stream("讲讲", "claude:sonnet"))
+
+
+def test_cli_failure_with_empty_stderr_surfaces_stdout_error(monkeypatch):
+    """OAuth 会话过期这类失败：stderr 是空的，真正的原因在 stdout 的 is_error 事件里。
+
+    这是实测复现过的真实场景：不补这一条，异常消息只剩下
+    "调用失败（exit 1）：" 这种毫无诊断价值的提示。
+    """
+    result_event = json.dumps(
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "Failed to authenticate: OAuth session expired and could not be refreshed",
+        }
+    )
+    proc = FakeProc([result_event])
+    proc.returncode = 1
+    proc.stderr = io.StringIO("")  # 真实场景里 stderr 常常是空的
+    monkeypatch.setattr(claude_cli.subprocess, "Popen", lambda *a, **k: proc)
+
+    with pytest.raises(RuntimeError, match="OAuth session expired"):
+        list(claude_cli.generate_stream("讲讲", "claude:sonnet"))

@@ -71,6 +71,5 @@ def test_knowledge_collections_are_stable_one_document_summaries(
 
     assert response.status_code == 200
     assert sorted(
-        (item["name"], item["document_count"])
-        for item in response.json()["collections"]
+        (item["name"], item["document_count"]) for item in response.json()["collections"]
     ) == [("乙", 1), ("甲", 1)]

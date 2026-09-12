@@ -88,6 +88,7 @@ import ingest  # noqa: E402
 from agent_lab import run_agent  # noqa: E402
 from backend import (  # noqa: E402
     claude_cli,
+    codex_cli,
     model_gateway,
     zhipu,
 )
@@ -265,7 +266,10 @@ async def lifespan(app: FastAPI):
     # 只打变量名不打值：既能确认密钥已加载，又不会把密钥写进日志
     if _ENV_KEYS:
         logger.info(f"已从 .env 加载：{', '.join(_ENV_KEYS)}")
-    logger.info(f"云端可选模型：{claude_cli.claude_model_options() + zhipu.model_options()}")
+    logger.info(
+        "云端可选模型："
+        f"{claude_cli.claude_model_options() + codex_cli.codex_model_options() + zhipu.model_options()}"
+    )
     # 连接池要在其他任何用到 connect() 的操作之前建好，这样 ensure_chat_schema、
     # 后面每次请求的检索/会话持久化都能直接复用池子里的连接，不用逐次握手。
     try:
@@ -669,6 +673,7 @@ def _generate_for_model(
             text, model=selected
         ),
         claude_factory=lambda selected, text: claude_cli.generate_stream(text, selected),
+        codex_factory=lambda selected, text: codex_cli.generate_stream(text, selected),
         zhipu_factory=lambda selected, text: zhipu.generate_stream(text, selected),
     )
 
@@ -1455,8 +1460,13 @@ def _list_ollama_models() -> list[str]:
 
 
 def _available_models() -> list[str]:
-    """本地 Ollama 已安装的 + 装了 claude CLI 时的 Claude 订阅 + 配了 ZHIPU_API_KEY 时的 GLM。"""
-    return _list_ollama_models() + claude_cli.claude_model_options() + zhipu.model_options()
+    """本地 Ollama 已安装的 + 装了 claude/codex CLI 时对应的订阅 + 配了 ZHIPU_API_KEY 时的 GLM。"""
+    return (
+        _list_ollama_models()
+        + claude_cli.claude_model_options()
+        + codex_cli.codex_model_options()
+        + zhipu.model_options()
+    )
 
 
 @app.get("/api/models", response_model=ModelList)
