@@ -204,7 +204,8 @@ const RetrievalEvaluation = memo(function RetrievalEvaluation({ trace }: { trace
                           >
                             <td>#{candidate.rank}</td>
                             <td title={candidate.chapter_title || candidate.novel}>
-                              {formatSourceTitle(candidate.novel, candidate.origin)}#{candidate.chunk_id}
+                              {formatSourceTitle(candidate.novel, candidate.origin)}#
+                              {candidate.chunk_id}
                             </td>
                             <td>{formatScore(candidate)}</td>
                             <td>

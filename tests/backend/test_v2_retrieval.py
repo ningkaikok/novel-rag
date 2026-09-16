@@ -173,7 +173,9 @@ def test_v2_native_retrieve_merges_dedups_and_sorts_by_distance(monkeypatch):
     connection = _Connection(
         [_row(distance=0.5), {**_row(distance=-3.0), "chunk_id": "ch-2", "ordinal": 1}]
     )
-    keyword_connection = _Connection([{**_row(distance=-3.0), "chunk_id": "ch-2", "ordinal": 1}])
+    keyword_connection = _Connection(
+        [{**_row(distance=-3.0), "chunk_id": "ch-2", "ordinal": 1}]
+    )
 
     class _FakeRepository:
         def vector_search(self, *_args, **_kwargs):

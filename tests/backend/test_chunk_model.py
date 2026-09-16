@@ -12,7 +12,11 @@ def _hit(*, section_path=(), page_number=None, context="") -> V2SearchHit:
             id="d-1", collection_id="c-1", title="产品需求文档.md", source_type="markdown"
         ),
         version=DocumentVersion(
-            id="v-1", document_id="d-1", version_no=1, parser_name="markdown", parser_version="1"
+            id="v-1",
+            document_id="d-1",
+            version_no=1,
+            parser_name="markdown",
+            parser_version="1",
         ),
         chunk=DocumentChunk(
             id="ch-1",
@@ -38,7 +42,9 @@ def test_from_v2_hit_maps_document_and_chunk_identity():
 
 
 def test_from_v2_hit_chapter_title_prefers_section_path():
-    source = SourceChunk.from_v2_hit(_hit(section_path=("需求背景", "目标用户"), page_number=3))
+    source = SourceChunk.from_v2_hit(
+        _hit(section_path=("需求背景", "目标用户"), page_number=3)
+    )
 
     assert source.chapter_title == "需求背景 › 目标用户"
 
