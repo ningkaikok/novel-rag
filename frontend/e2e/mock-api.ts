@@ -56,8 +56,8 @@ export interface MockAskOptions {
   tokens?: string[];
 }
 
-// satisfies TraceStep[]：契约里 RetrievalCandidate.selected 是必填
-// （后端默认 false，序列化时始终存在），所以前两个阶段的候选要显式补上。
+// satisfies TraceStep[]：契约里 RetrievalCandidate.selected/origin 是必填
+// （后端默认值序列化时始终存在），所以前两个阶段的候选要显式补上。
 const DEFAULT_TRACE = [
   { step: '理解问题', detail: '识别到你在问《雾隐山庄》' },
   { step: '检索范围', detail: '只在《雾隐山庄》内检索' },
@@ -74,6 +74,7 @@ const DEFAULT_TRACE = [
         score: 0.82,
         score_label: '余弦相似度',
         selected: false,
+        origin: 'legacy_novel',
       },
       {
         novel: '雾隐山庄',
@@ -82,6 +83,7 @@ const DEFAULT_TRACE = [
         score: 0.76,
         score_label: '余弦相似度',
         selected: false,
+        origin: 'legacy_novel',
       },
     ],
   },
@@ -91,8 +93,24 @@ const DEFAULT_TRACE = [
     ms: 7,
     stage_key: 'bm25',
     candidates: [
-      { novel: '雾隐山庄', chunk_id: 0, rank: 1, score: 8.3, score_label: 'BM25', selected: false },
-      { novel: '雾隐山庄', chunk_id: 1, rank: 2, score: 4.1, score_label: 'BM25', selected: false },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 0,
+        rank: 1,
+        score: 8.3,
+        score_label: 'BM25',
+        selected: false,
+        origin: 'legacy_novel',
+      },
+      {
+        novel: '雾隐山庄',
+        chunk_id: 1,
+        rank: 2,
+        score: 4.1,
+        score_label: 'BM25',
+        selected: false,
+        origin: 'legacy_novel',
+      },
     ],
   },
   {
@@ -108,6 +126,7 @@ const DEFAULT_TRACE = [
         score: 0.0325,
         score_label: 'RRF',
         selected: true,
+        origin: 'legacy_novel',
       },
       {
         novel: '雾隐山庄',
@@ -116,6 +135,7 @@ const DEFAULT_TRACE = [
         score: 0.0325,
         score_label: 'RRF',
         selected: true,
+        origin: 'legacy_novel',
       },
     ],
   },
@@ -133,6 +153,7 @@ const DEFAULT_TRACE = [
         score: 0.99,
         score_label: 'CrossEncoder',
         selected: true,
+        origin: 'legacy_novel',
       },
       {
         novel: '雾隐山庄',
@@ -142,6 +163,7 @@ const DEFAULT_TRACE = [
         score: 0.91,
         score_label: 'CrossEncoder',
         selected: true,
+        origin: 'legacy_novel',
       },
     ],
   },
@@ -155,14 +177,25 @@ const DEFAULT_SOURCES = [
     chunk_id: 0,
     chapter_title: '第一章 风雪来客',
     text: '三个月前旧疾复发，卧床不起，庄里的药材已经快要用尽，正愁没有人能翻山进来采买，眼下唯一的指望，就是能有名医恰好路过此地。',
+    origin: 'legacy_novel',
   },
   {
     novel: '雾隐山庄',
     chunk_id: 1,
     chapter_title: '第二章 蚀骨奇毒',
     text: '沈砚之带着师父的信前往雾隐山庄寻访名医顾长风，恰逢顾长风旧疾复发且庄中药材匮乏，正是雪中送炭的好时机。',
+    origin: 'legacy_novel',
   },
 ] satisfies Source[];
+
+// V2 通用文档来源：用于验证非小说文档的出处卡片不会被套上书名号。
+export const V2_DOCUMENT_SOURCE = {
+  novel: '产品需求文档.md',
+  chunk_id: 0,
+  chapter_title: '需求背景 › 目标用户',
+  text: '这段来自上传的 Markdown 文档，不是小说，出处卡片不应该显示书名号《》这种小说专用格式。',
+  origin: 'v2_document',
+} satisfies Source;
 
 const DEFAULT_TOKENS = ['雾隐', '山庄', '的庄主是', '顾长风', '[1]', '。'];
 

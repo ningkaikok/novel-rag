@@ -14,6 +14,9 @@ if STORAGE_SCHEMA not in {"v1", "v2", "shadow"}:
     raise ValueError("STORAGE_SCHEMA 必须是 v1/v2/shadow")
 # 只读 shadow 观测开关：开启后 RAG 仍以 V1 结果回答，只额外记录 V2 候选差异。
 V2_SHADOW_ENABLED = os.environ.get("V2_SHADOW_ENABLED", "0") == "1"
+# V2 原生文档检索开关：开启后，非小说的 V2 文档（exclude_legacy_novels）会作为
+# 额外一路召回参与 RRF 融合，真正进入回答上下文；不影响 V1 小说检索本身。
+V2_NATIVE_RETRIEVAL_ENABLED = os.environ.get("V2_NATIVE_RETRIEVAL_ENABLED", "0") == "1"
 
 # 通用知识库 V2 迁移开关。Phase 2 只建立 schema/迁移计划，V1 仍是唯一在线读写路径；
 # 即使未来设置为 shadow，也必须由显式迁移入口消费，当前 NovelRAG 不会自动切换。

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mockApi } from './mock-api';
+import { mockApi, V2_DOCUMENT_SOURCE } from './mock-api';
 
 test.describe('首页与欢迎引导', () => {
   test('展示标题、书架和示例问题', async ({ page }) => {
@@ -93,6 +93,21 @@ test.describe('提问与流式回答', () => {
     await expect(firstSourceText.getByText('展开')).toBeVisible();
     await firstSourceText.getByText('展开').click();
     await expect(firstSourceText).toContainText('眼下唯一的指望');
+  });
+
+  test('V2 通用文档出处不套书名号，小说出处仍套书名号', async ({ page }) => {
+    await mockApi(page, { ask: { sources: [V2_DOCUMENT_SOURCE] } });
+    await page.goto('/');
+
+    await page.locator('.examples .ant-btn').first().click();
+    await expect(page.locator('.row-bot .content')).toHaveText('雾隐山庄的庄主是顾长风[1]。', {
+      timeout: 10_000,
+    });
+
+    // 非小说来源（origin: v2_document）应直接显示文件名，不套《》书名号
+    const source = page.locator('.source-card').nth(0);
+    await expect(source.locator('.source-book')).toHaveText('产品需求文档.md');
+    await expect(source.locator('.source-chapter')).toHaveText('需求背景 › 目标用户');
   });
 
   test('请求出错时：显示错误信息而不是卡在加载中', async ({ page }) => {

@@ -104,3 +104,66 @@ def test_trace_records_v2_shadow_without_changing_v1_result(monkeypatch):
     assert events[-2][0] == "step"
     assert events[-2][1]["stage_key"] == "v2_shadow"
     assert events[-1] == ("result", semantic)
+
+
+def test_trace_merges_v2_native_sources_into_rrf_when_enabled(monkeypatch):
+    """开关打开时，V2 原生文档候选应该真正参与 RRF 融合、进入最终结果——
+    跟只做观测的 V2 shadow（上面那条测试）是两回事。"""
+    service = object.__new__(rag.NovelRAG)
+    semantic = [_source(1, 0.1)]
+    v2_source = rag.SourceChunk(
+        novel="产品需求文档.md",
+        chunk_id=0,
+        text="V2 文档原文",
+        distance=0.05,
+        origin="v2_document",
+    )
+    monkeypatch.setattr(service, "_named_novels", lambda _question: [])
+    monkeypatch.setattr(service, "_full_text_chunks", lambda _novels: None)
+    monkeypatch.setattr(service, "retrieve", lambda _question, top_k, only_novels: semantic)
+    monkeypatch.setattr(service, "keyword_retrieve", lambda _question, top_k, only_novels: [])
+    monkeypatch.setattr(service, "positional_retrieve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(service, "v2_native_retrieve", lambda _question, top_k: [v2_source])
+    monkeypatch.setattr(rag, "HIERARCHY_ENABLED", False)
+    monkeypatch.setattr(rag, "RERANK_ENABLED", False)
+    monkeypatch.setattr(rag, "V2_NATIVE_RETRIEVAL_ENABLED", True)
+    service.embedder = object()
+
+    events = list(service.retrieve_hybrid_stream("庄主是谁", top_k=2))
+    steps = {
+        payload["stage_key"]: payload
+        for kind, payload in events
+        if kind == "step" and payload.get("stage_key")
+    }
+    result = events[-1][1]
+
+    assert steps["v2_native"]["candidates"][0]["origin"] == "v2_document"
+    assert v2_source in result
+    assert {source.origin for source in result} == {"legacy_novel", "v2_document"}
+
+
+def test_v2_native_retrieve_skipped_when_disabled(monkeypatch):
+    """默认关闭时不应该调用 v2_native_retrieve，也不应该产生对应 trace 步骤——
+    这是保证现有 V1 小说问答行为/评测基线不受影响的护栏。"""
+    service = object.__new__(rag.NovelRAG)
+    semantic = [_source(1, 0.1)]
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("V2_NATIVE_RETRIEVAL_ENABLED=False 时不应调用 v2_native_retrieve")
+
+    monkeypatch.setattr(service, "_named_novels", lambda _question: [])
+    monkeypatch.setattr(service, "_full_text_chunks", lambda _novels: None)
+    monkeypatch.setattr(service, "retrieve", lambda _question, top_k, only_novels: semantic)
+    monkeypatch.setattr(service, "keyword_retrieve", lambda _question, top_k, only_novels: [])
+    monkeypatch.setattr(service, "positional_retrieve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(service, "v2_native_retrieve", _boom)
+    monkeypatch.setattr(rag, "HIERARCHY_ENABLED", False)
+    monkeypatch.setattr(rag, "RERANK_ENABLED", False)
+    monkeypatch.setattr(rag, "V2_NATIVE_RETRIEVAL_ENABLED", False)
+    service.embedder = object()
+
+    events = list(service.retrieve_hybrid_stream("庄主是谁", top_k=2))
+    stage_keys = {payload.get("stage_key") for kind, payload in events if kind == "step"}
+
+    assert "v2_native" not in stage_keys
+    assert events[-1] == ("result", semantic)
