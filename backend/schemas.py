@@ -163,6 +163,8 @@ class RetrievalCandidate(BaseModel):
     score_label: str | None = None
     previous_rank: int | None = None
     selected: bool = False
+    # "legacy_novel"（V1 小说，默认）或 "v2_document"（V2 通用文档）。
+    origin: str = "legacy_novel"
 
 
 class VerifyCitationResult(BaseModel):
@@ -293,6 +295,9 @@ class SourceItem(BaseModel):
     # 兼容旧会话和旧索引：升级后未重建时章节名为 null。
     chapter_title: str | None = None
     text: str
+    # "legacy_novel"（V1 小说，默认）或 "v2_document"（V2 通用文档）；
+    # 前端据此决定是否套书名号展示。
+    origin: str = "legacy_novel"
 
 
 # ----------------------------------------------------------------- 会话历史

@@ -27,6 +27,7 @@ from config import (
     CHAPTER_EXPANSION_MODE,
     CONTEXT_NEIGHBORS,
     TOP_K,
+    V2_NATIVE_RETRIEVAL_ENABLED,
 )
 from domain_models import RetrievalScope
 from index_quality import _token_count
@@ -39,6 +40,7 @@ from postgres import (
 )
 from retrieval_scope import select_legacy_novels
 from tokenizer import query_terms
+from v2_retrieval import V2ReadRepository
 
 
 class RetrievalMixin:
@@ -99,6 +101,36 @@ class RetrievalMixin:
         return [
             SourceChunk.from_legacy_row(row, distance=float(row["distance"])) for row in rows
         ]
+
+    def v2_native_retrieve(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
+        """V2 通用文档（非小说）的向量+关键词召回，投影成 SourceChunk 供 RRF 融合。
+
+        开关关闭时零开销直接返回空列表。任何异常都退化为空列表——V2 只是
+        锦上添花的一路召回，绝不能让它的故障拖垮 V1 小说问答主链路。
+        """
+        if not V2_NATIVE_RETRIEVAL_ENABLED or top_k <= 0:
+            return []
+        try:
+            repository = V2ReadRepository()
+            query_embedding = self.embedder.encode([question], normalize_embeddings=True)
+            hits = repository.vector_search(
+                query_embedding[0], top_k=top_k, exclude_legacy_novels=True
+            )
+            hits.extend(
+                repository.keyword_search(
+                    query_terms(question), top_k=top_k, exclude_legacy_novels=True
+                )
+            )
+        except Exception:
+            return []
+        seen: set[str] = set()
+        sources: list[SourceChunk] = []
+        for hit in sorted(hits, key=lambda h: h.distance):
+            if hit.chunk.id in seen:
+                continue
+            seen.add(hit.chunk.id)
+            sources.append(SourceChunk.from_v2_hit(hit, distance=hit.distance))
+        return sources[:top_k]
 
     def keyword_retrieve(
         self,

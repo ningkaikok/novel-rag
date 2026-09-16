@@ -1137,6 +1137,7 @@ async def ask(req: AskRequest, request: Request):
                 chunk_id=s.chunk_id,
                 chapter_title=getattr(s, "chapter_title", None),
                 text=s.text,
+                origin=getattr(s, "origin", "legacy_novel"),
             ).model_dump()
             for s in context_sources
         ]
@@ -1333,6 +1334,7 @@ async def agent_ask(req: AgentAskRequest, request: Request):
                             chunk_id=source.chunk_id,
                             chapter_title=source.chapter_title,
                             text=source.text,
+                            origin=getattr(source, "origin", "legacy_novel"),
                         ).model_dump()
                         for source in cast(list[Any], value)
                     ]
