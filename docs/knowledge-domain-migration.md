@@ -99,8 +99,12 @@ shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比�
 
 ## 后续接入顺序
 
-1. 将 `V2ReadRepository` 接入真实 RAG shadow read，积累 V1/V2 检索候选、延迟和 parser
-   级检索评测；当前只完成 V2 直接 smoke test，尚未改变 RAG 主链路。
+1. **已完成（2026-09-16）**：将 `V2ReadRepository` 接入真实问答链路，由
+   `V2_NATIVE_RETRIEVAL_ENABLED` 开关控制（默认关闭）。开启后，非小说的 V2
+   原生文档（`exclude_legacy_novels=True`）作为第五路召回接入
+   `retrieve_hybrid_stream` 的 RRF 融合，真正参与回答上下文和引用——此前
+   `V2ShadowReader` 只产出 `missing_count/extra_count` 这类聚合观测数字，从不
+   影响实际回答。V1 小说检索、`V2_SHADOW_ENABLED` 观测路径本身不受影响。
 2. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
    切到真实 V2 读取。
 3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；

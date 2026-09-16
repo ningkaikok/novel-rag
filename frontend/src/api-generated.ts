@@ -820,6 +820,11 @@ export interface components {
             chunk_id: number;
             /** Novel */
             novel: string;
+            /**
+             * Origin
+             * @default legacy_novel
+             */
+            origin: string;
             /** Previous Rank */
             previous_rank?: number | null;
             /** Rank */
@@ -953,6 +958,11 @@ export interface components {
             chunk_id: number;
             /** Novel */
             novel: string;
+            /**
+             * Origin
+             * @default legacy_novel
+             */
+            origin: string;
             /** Text */
             text: string;
         };

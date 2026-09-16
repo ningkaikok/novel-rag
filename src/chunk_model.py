@@ -14,8 +14,12 @@
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from domain_models import DocumentChunk, SourceRef
+
+if TYPE_CHECKING:
+    from v2_retrieval import V2SearchHit
 
 
 @dataclass
@@ -30,6 +34,35 @@ class SourceChunk:
     # 重排要用它（见 reranker.rerank 里 indexed_text 的说明），
     # 但 build_prompt 只用 text——不把 AI 生成的说明当原文依据给模型。
     context: str = ""
+    # 候选来自 V1 小说索引还是 V2 通用文档；前端/序列化据此调整展示，
+    # 默认值保证所有既有构造点（from_legacy_row 等）行为不变。
+    origin: str = "legacy_novel"
+
+    @classmethod
+    def from_v2_hit(cls, hit: "V2SearchHit", *, distance: float = 0.0) -> "SourceChunk":
+        """从 V2 原生文档候选（非小说）投影成 SourceChunk，复用融合/重排/引用链路。
+
+        已知取舍：novel/chunk_id 沿用现有 RRF 去重键，分别落到文档标题和片段
+        序号——两个 V2 文档标题完全相同时会在候选池里被当成同一本"书"合并。
+        当前没有多文档同名场景，这个边界情况留到真正的生产切换阶段再处理。
+        """
+
+        chunk = hit.chunk
+        if chunk.section_path:
+            chapter_title: str | None = " › ".join(chunk.section_path)
+        elif chunk.page_number is not None:
+            chapter_title = f"第{chunk.page_number}页"
+        else:
+            chapter_title = None
+        return cls(
+            novel=hit.document.title,
+            chunk_id=chunk.ordinal,
+            text=chunk.text,
+            distance=distance,
+            chapter_title=chapter_title,
+            context=chunk.context or "",
+            origin="v2_document",
+        )
 
     @classmethod
     def from_legacy_row(cls, row: dict, *, distance: float = 0.0) -> "SourceChunk":
@@ -106,6 +139,7 @@ def _trace_candidates(
                 "score_label": score_label,
                 "previous_rank": (previous_ranks or {}).get(key),
                 "selected": bool(selected_count and rank <= selected_count),
+                "origin": source.origin,
             }
         )
     return payload
