@@ -133,10 +133,16 @@ novel-rag/
 
 当前前端目录展示已经通用化为“知识库 / 文档”，小说仍是默认的兼容适配器和演示场景。有两种方式，任选其一：
 
-- **网页上传（推荐）**：启动网页后选择 `.txt` 文件。文件保存后会自动在后台建立增量索引，侧栏显示切分、Embedding、BM25 和入库进度；无需再手动全库重建。
+- **网页上传（推荐）**：启动网页后选择 `.txt`/`.md`/`.markdown`/`.pdf` 文件。文件保存后会自动在后台建立增量索引，侧栏显示切分、Embedding、BM25 和入库进度；无需再手动全库重建。
 - **手动放置**：把 `.txt` 文件放进 `data/novels/` 目录，再运行 `python src/ingest.py`。
 
-当前上传和生产索引仍只支持 TXT/V1 路径；Markdown/PDF 已具备文本解析基础，但尚未接入现有生产上传/indexing pipeline。V2 schema 和 repository 也未切为默认读写路径，默认仍是 V1。每个 TXT 文件会作为一个兼容文档，文件名会作为来源标注；目录里已经有一篇原创的示例短篇小说 `雾隐山庄.txt`，用于快速验证整个流程，可以直接删掉换成你自己的合法文本。
+网页上传走通用的 `/api/knowledge/documents` 入口：TXT/Markdown/PDF 都会被解析、
+Embedding、BM25 索引并写入 `knowledge_v2` schema；`STORAGE_SCHEMA` 默认仍是
+`v1`，小说问答的生产读写路径不受影响。Markdown/PDF 等非小说文档默认只会被索引、
+不参与实际回答，需要设置 `V2_NATIVE_RETRIEVAL_ENABLED=1` 才会作为一路召回真正
+参与检索和引用（见 [知识库领域迁移](docs/knowledge-domain-migration.md)）。每个
+TXT 文件同时作为一个兼容文档、文件名会作为来源标注；目录里已经有一篇原创的示例
+短篇小说 `雾隐山庄.txt`，用于快速验证整个流程，可以直接删掉换成你自己的合法文本。
 
 ## 启动（FastAPI + React，推荐）
 
@@ -157,7 +163,7 @@ cd frontend
 npm run dev
 ```
 
-浏览器打开 `http://localhost:45173`。左侧「知识库」展示文档目录、来源类型和索引状态；当前仍可上传/删除 TXT 小说、查看后台索引进度、安全停止或重试任务，并在「更多设置」里检查文件变化和调整参考原文数量。目录展示已通用化，但生产上传/indexing 仍是 TXT/V1，Markdown/PDF parser 仅提供解析基础，V2 未切默认。底部保持一个输入框；工作模式可选择稳定的“标准 RAG”或教学用“Agent Lab”。标准 RAG 提供三种回答模式：
+浏览器打开 `http://localhost:45173`。左侧「知识库」展示文档目录、来源类型和索引状态；可以上传/删除 TXT/Markdown/PDF 文档、查看后台索引进度、安全停止或重试任务，并在「更多设置」里检查文件变化和调整参考原文数量。上传走通用 V2 索引流水线，但默认只有小说（V1）参与实际问答；非小说文档要参与检索需要开启 `V2_NATIVE_RETRIEVAL_ENABLED`。底部保持一个输入框；工作模式可选择稳定的“标准 RAG”或教学用“Agent Lab”。标准 RAG 提供三种回答模式：
 
 - **自动判断**：开放问题直接问模型，小说问题先检索原文；拿不准时保守地检索。
 - **仅依据原文**：强制执行混合检索、重排和引用，资料不足就明确拒答。
@@ -304,6 +310,7 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `MODEL_INPUT_USD_PER_MILLION_TOKENS` | `0` | 输入 token 估算单价；需按实际供应商价格配置 |
 | `MODEL_OUTPUT_USD_PER_MILLION_TOKENS` | `0` | 输出 token 估算单价；需按实际供应商价格配置 |
 | `V2_SHADOW_ENABLED` | `0` | 设为 `1` 时额外读取 V2 候选并写入 trace；V1 仍负责最终回答 |
+| `V2_NATIVE_RETRIEVAL_ENABLED` | `0` | 设为 `1` 时，上传的非小说 V2 文档（Markdown/PDF 等）作为额外一路召回真正参与回答和引用；小说仍走 V1 |
 | `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
 | `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |
