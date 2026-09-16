@@ -127,3 +127,70 @@ def test_knowledge_retriever_uses_embedder_and_returns_chunks():
     chunks = retriever.retrieve("问题", top_k=1)
 
     assert [chunk.id for chunk in chunks] == ["ch-1"]
+
+
+class _StubEmbedder:
+    def encode(self, questions, *, normalize_embeddings, show_progress_bar=False):
+        assert normalize_embeddings is True
+        return [[0.1, 0.2]]
+
+
+def test_v2_native_retrieve_returns_empty_when_disabled(monkeypatch):
+    """开关默认关闭：零开销直接返回空列表，不该碰任何 repository/DB。"""
+    import retrieval_mixins
+
+    def _boom():
+        raise AssertionError("关闭时不应该构造 V2ReadRepository")
+
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_ENABLED", False)
+    monkeypatch.setattr(retrieval_mixins, "V2ReadRepository", _boom)
+    mixin = retrieval_mixins.RetrievalMixin()
+    mixin.embedder = _StubEmbedder()
+
+    assert mixin.v2_native_retrieve("问题", top_k=5) == []
+
+
+def test_v2_native_retrieve_degrades_to_empty_on_repository_error(monkeypatch):
+    """V2 只是锦上添花的一路召回：DB/embedding 异常绝不能拖垮 V1 主链路。"""
+    import retrieval_mixins
+
+    class _BrokenRepository:
+        def vector_search(self, *_args, **_kwargs):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_ENABLED", True)
+    monkeypatch.setattr(retrieval_mixins, "V2ReadRepository", _BrokenRepository)
+    mixin = retrieval_mixins.RetrievalMixin()
+    mixin.embedder = _StubEmbedder()
+
+    assert mixin.v2_native_retrieve("问题", top_k=5) == []
+
+
+def test_v2_native_retrieve_merges_dedups_and_sorts_by_distance(monkeypatch):
+    """向量召回和关键词召回可能命中同一个片段：按 distance 排序、按 chunk id 去重、截到 top_k。"""
+    import retrieval_mixins
+
+    connection = _Connection(
+        [_row(distance=0.5), {**_row(distance=-3.0), "chunk_id": "ch-2", "ordinal": 1}]
+    )
+    keyword_connection = _Connection([{**_row(distance=-3.0), "chunk_id": "ch-2", "ordinal": 1}])
+
+    class _FakeRepository:
+        def vector_search(self, *_args, **_kwargs):
+            return V2ReadRepository(lambda: connection).vector_search([0.1, 0.2], top_k=5)
+
+        def keyword_search(self, *_args, **_kwargs):
+            return V2ReadRepository(lambda: keyword_connection).keyword_search(
+                ["检索"], top_k=5
+            )
+
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_ENABLED", True)
+    monkeypatch.setattr(retrieval_mixins, "V2ReadRepository", _FakeRepository)
+    mixin = retrieval_mixins.RetrievalMixin()
+    mixin.embedder = _StubEmbedder()
+
+    sources = mixin.v2_native_retrieve("检索", top_k=5)
+
+    # ch-2（distance -3.0）在向量和关键词两路都命中，去重后只保留一份，且排在最前面。
+    assert [s.chunk_id for s in sources] == [1, 0]
+    assert all(s.origin == "v2_document" for s in sources)

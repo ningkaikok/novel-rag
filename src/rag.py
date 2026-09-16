@@ -53,6 +53,7 @@ from config import (
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     TOP_K,
+    V2_NATIVE_RETRIEVAL_ENABLED,
     V2_SHADOW_ENABLED,
 )
 from domain_models import RetrievalScope
@@ -558,6 +559,27 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                     ),
                 },
             )
+        # V2 原生文档召回：只服务不带 scope 的通用问题——scope 目前只在内部为
+        # V1 小说范围收敛使用，混入非小说文档候选没有意义。开关关闭或异常时
+        # 该方法本身已退化为空列表，这里不需要额外的 try/except。
+        v2_native_sources: list[SourceChunk] = []
+        if V2_NATIVE_RETRIEVAL_ENABLED and scope is None:
+            v2_native_sources = self.v2_native_retrieve(question, top_k=candidate_k)
+            yield (
+                "step",
+                {
+                    "step": "V2 文档召回",
+                    "stage_key": "v2_native",
+                    "detail": f"按语义+关键词从通用文档库召回 {len(v2_native_sources)} 个片段",
+                    "ms": took(),
+                    "candidates": _trace_candidates(
+                        v2_native_sources,
+                        score_label="V2 距离",
+                        score_of=lambda source, _key: -source.distance,
+                    ),
+                },
+            )
+
         recall_detail = (
             f"语义召回 {len(semantic_sources)} 条 · 关键词召回 {len(keyword_sources)} 条"
         )
@@ -572,6 +594,8 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             )
         if hierarchy_sources:
             recall_detail += f" · 层级召回映射原文 {len(hierarchy_sources)} 条"
+        if v2_native_sources:
+            recall_detail += f" · V2 文档召回 {len(v2_native_sources)} 条"
         if not named_novels and hint_novels:
             recall_detail += (
                 f"；据此判断问题属于{'、'.join(_display_title(n) for n in hint_novels)}"
@@ -598,6 +622,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             keyword_sources,
             positional_sources,
             hierarchy_sources,
+            v2_native_sources,
         ):
             for rank, source in enumerate(ranked_sources, start=1):
                 key = (source.novel, source.chunk_id)

@@ -12,6 +12,9 @@
 - [x] 增加 `V2_SHADOW_ENABLED=1` 的真实 RAG shadow read；V1 继续负责回答，trace 记录 V2
   候选数量、缺失/新增数量和耗时，V2 异常不会阻断回答
 - [ ] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1
+- [x] 新增 `V2_NATIVE_RETRIEVAL_ENABLED` 开关（默认关闭）：开启后非小说的 V2 原生
+  文档作为第五路召回接入 `retrieve_hybrid_stream` 的 RRF 融合，真正参与回答上下文
+  和引用；此前上传的 Markdown/PDF 只会被索引进 shadow schema，从不参与实际问答
 - [x] 新增 `/api/knowledge/documents` 通用上传入口，接入 TXT/Markdown/PDF parser、分批
   embedding、BM25 和 V2 shadow 索引任务；旧 `/api/books` 兼容入口保持不变
 - [x] 同名文档重复上传按 source hash 幂等复用版本号，新内容自动递增 `version_no`，避免

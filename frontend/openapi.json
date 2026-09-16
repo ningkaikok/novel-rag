@@ -969,6 +969,11 @@
       "title": "Novel",
       "type": "string"
      },
+     "origin": {
+      "default": "legacy_novel",
+      "title": "Origin",
+      "type": "string"
+     },
      "previous_rank": {
       "anyOf": [
        {
@@ -1362,6 +1367,11 @@
      },
      "novel": {
       "title": "Novel",
+      "type": "string"
+     },
+     "origin": {
+      "default": "legacy_novel",
+      "title": "Origin",
       "type": "string"
      },
      "text": {

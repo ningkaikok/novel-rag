@@ -154,6 +154,12 @@ function shortName(novel: string): string {
   return novel.length > 12 ? novel.slice(0, 12) + '…' : novel;
 }
 
+// V2 通用文档（Markdown/PDF 等）不是"小说"，套书名号会显得很奇怪
+// （比如《产品需求文档.md》），只有 legacy_novel 来源才套书名号。
+function formatSourceTitle(novel: string, origin?: string): string {
+  return origin === 'v2_document' ? shortName(novel) : `《${shortName(novel)}》`;
+}
+
 /** 分数展示：BM25 等大分数量级用 1 位小数，向量相似度（-1~1）保留 4 位才有区分度。 */
 export function formatScore(candidate: RetrievalCandidate): string {
   if (candidate.score == null) return '—';
@@ -198,7 +204,7 @@ const RetrievalEvaluation = memo(function RetrievalEvaluation({ trace }: { trace
                           >
                             <td>#{candidate.rank}</td>
                             <td title={candidate.chapter_title || candidate.novel}>
-                              《{shortName(candidate.novel)}》#{candidate.chunk_id}
+                              {formatSourceTitle(candidate.novel, candidate.origin)}#{candidate.chunk_id}
                             </td>
                             <td>{formatScore(candidate)}</td>
                             <td>
@@ -250,7 +256,7 @@ const Sources = memo(function Sources({
           key={i}
         >
           <span className="source-index">{i + 1}</span>
-          <span className="source-book">《{shortName(s.novel)}》</span>
+          <span className="source-book">{formatSourceTitle(s.novel, s.origin)}</span>
           {s.chapter_title && <span className="source-chapter">{s.chapter_title}</span>}
           <Typography.Paragraph
             className="source-text"
