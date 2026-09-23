@@ -82,6 +82,10 @@ class KnowledgeDocumentList(BaseModel):
     documents: list[KnowledgeDocumentSummary]
 
 
+class KnowledgeVersionList(BaseModel):
+    versions: list[KnowledgeVersionSummary]
+
+
 class KnowledgeCollectionSummary(BaseModel):
     id: str
     name: str
@@ -117,6 +121,11 @@ class IndexTaskStatus(BaseModel):
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
+
+
+class KnowledgeDocumentTaskResult(BaseModel):
+    document_id: str
+    task: IndexTaskStatus
 
 
 class UploadResult(BaseModel):

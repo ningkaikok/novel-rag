@@ -119,7 +119,9 @@ from backend.schemas import (  # noqa: E402
     IndexTaskStatus,
     KnowledgeCollectionList,
     KnowledgeDocumentList,
+    KnowledgeDocumentTaskResult,
     KnowledgeUploadResult,
+    KnowledgeVersionList,
     ModelList,
     QueryCacheMetrics,
     RunEvent,
@@ -168,6 +170,8 @@ from config import (  # noqa: E402
     RERANK_CANDIDATE_MULTIPLIER,
     RERANK_ENABLED,
     RERANKER_MODEL,
+    V2_NATIVE_RETRIEVAL_GRAY_PERCENT,
+    V2_NATIVE_RETRIEVAL_MODE,
 )
 from domain_models import RetrievalScope  # noqa: E402
 from embedder import load_embedder  # noqa: E402
@@ -212,6 +216,7 @@ from session_summary import (  # noqa: E402
     turns_to_summarize,
 )
 from v2_ingest import index_v2_document  # noqa: E402
+from v2_repository import delete_v2_document  # noqa: E402
 from v2_schema import apply_v2_schema  # noqa: E402
 
 # 进程级共享资源（对应 Streamlit 的 cache_resource）
@@ -249,6 +254,10 @@ def _retrieval_cache_key(
     index_fingerprint = state.get("index_fingerprint")
     if not index_fingerprint:
         return None
+    # 灰度键是请求/会话维度的；复用一个不含灰度身份的缓存结果会把 on/off
+    # 两组流量混在一起。先安全绕过缓存，后续再按 bucket 做更细粒度的缓存。
+    if V2_NATIVE_RETRIEVAL_MODE == "gray":
+        return None
     retrieval_config = {
         "rerank_enabled": RERANK_ENABLED,
         "reranker_model": RERANKER_MODEL if RERANK_ENABLED else None,
@@ -256,6 +265,8 @@ def _retrieval_cache_key(
         "recall_k": RECALL_K,
         "hierarchy_enabled": HIERARCHY_ENABLED,
         "chapter_expansion_mode": CHAPTER_EXPANSION_MODE,
+        "v2_native_retrieval_mode": V2_NATIVE_RETRIEVAL_MODE,
+        "v2_native_retrieval_gray_percent": V2_NATIVE_RETRIEVAL_GRAY_PERCENT,
     }
     config_text = json.dumps(retrieval_config, sort_keys=True, separators=(",", ":"))
     return CacheKey(
@@ -474,6 +485,144 @@ async def upload_knowledge_documents(
 
     task = _start_knowledge_index_task(payloads, collection, prepare=save_files)
     return {"collection": collection, "saved": [name for name, _ in payloads], "task": task}
+
+
+def _v2_document_source(document_id: str) -> tuple[str, str] | None:
+    """读取 V2 文档标题和集合名；不读取正文。"""
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT d.title, c.name AS collection_name
+            FROM knowledge_v2.documents d
+            JOIN knowledge_v2.collections c ON c.id = d.collection_id
+            WHERE d.id = %s
+            """,
+            (document_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["title"]), str(row["collection_name"])
+
+
+def _knowledge_source_path(title: str) -> Path:
+    """把 V2 标题收敛到上传目录，拒绝目录穿越。"""
+    target = (KNOWLEDGE_DIR / Path(title).name).resolve()
+    if target.parent != KNOWLEDGE_DIR.resolve():
+        raise APIError(400, ErrorCode.validation_error, "文档来源路径不合法")
+    return target
+
+
+def _start_knowledge_rebuild_task(
+    document_id: str,
+    title: str,
+    collection: str,
+    payload: bytes,
+) -> dict:
+    def build(progress, cancel_check):
+        model = state.get("embedder") or load_embedder()
+        dimension = ingest._embedding_dimension(model)
+        with connect() as conn:
+            apply_v2_schema(cast(Any, conn), dimension)
+        result = index_v2_document(
+            payload,
+            title=title,
+            collection_name=collection,
+            embedder=model,
+            embedding_dimension=dimension,
+            storage_schema="shadow",
+            limits=ParserLimits(max_bytes=MAX_UPLOAD_BYTES),
+            progress=progress,
+            cancel_check=cancel_check,
+        )
+        return {
+            "novels": [title],
+            "chunk_count": result.chunks,
+            "added": [],
+            "modified": [title],
+            "deleted": [],
+            "unchanged": [],
+            "document_id": document_id,
+            "version_id": result.version_id,
+        }
+
+    try:
+        return index_tasks.start(build)
+    except TaskAlreadyRunning as exc:
+        raise APIError(
+            409,
+            ErrorCode.index_task_running,
+            f"已有索引任务正在运行（{exc.task['progress']}%：{exc.task['message']}）",
+        ) from exc
+
+
+@app.get(
+    "/api/knowledge/documents/{document_id}/versions", response_model=KnowledgeVersionList
+)
+def list_knowledge_document_versions(document_id: str):
+    try:
+        _, catalog = build_v2_catalog()
+    except Exception as exc:
+        raise APIError(503, ErrorCode.index_not_ready, "V2 文档目录暂不可用") from exc
+    for document in catalog.documents:
+        if document.id == document_id:
+            return KnowledgeVersionList(versions=document.versions)
+    raise APIError(404, ErrorCode.book_not_found, "知识库文档不存在")
+
+
+@app.post(
+    "/api/knowledge/documents/{document_id}/rebuild",
+    response_model=KnowledgeDocumentTaskResult,
+)
+def rebuild_knowledge_document(document_id: str):
+    try:
+        source = _v2_document_source(document_id)
+    except Exception as exc:
+        raise APIError(503, ErrorCode.index_not_ready, "V2 文档目录暂不可用") from exc
+    if source is None:
+        raise APIError(404, ErrorCode.book_not_found, "知识库文档不存在")
+    title, collection = source
+    target = _knowledge_source_path(title)
+    if not target.exists():
+        raise APIError(404, ErrorCode.book_not_found, "文档来源文件不存在，无法重建")
+    task = _start_knowledge_rebuild_task(document_id, title, collection, target.read_bytes())
+    return {"document_id": document_id, "task": task}
+
+
+@app.delete("/api/knowledge/documents/{document_id}", response_model=DeleteResult)
+def delete_knowledge_document(document_id: str):
+    try:
+        source = _v2_document_source(document_id)
+    except Exception as exc:
+        raise APIError(503, ErrorCode.index_not_ready, "V2 文档目录暂不可用") from exc
+    if source is None:
+        raise APIError(404, ErrorCode.book_not_found, "知识库文档不存在")
+    target = _knowledge_source_path(source[0])
+
+    def build(progress, _cancel_check):
+        progress("database", 30, "正在删除 V2 文档索引")
+        with connect() as conn:
+            result = delete_v2_document(cast(Any, conn), document_id)
+        target.unlink(missing_ok=True)
+        progress("complete", 100, "文档及其版本已删除")
+        return {
+            "novels": [source[0]],
+            "chunk_count": 0,
+            "added": [],
+            "modified": [],
+            "deleted": [source[0]],
+            "unchanged": [],
+            **result,
+        }
+
+    try:
+        task = index_tasks.start(build)
+    except TaskAlreadyRunning as exc:
+        raise APIError(
+            409,
+            ErrorCode.index_task_running,
+            f"已有索引任务正在运行（{exc.task['progress']}%：{exc.task['message']}）",
+        ) from exc
+    return {"deleted": document_id, "task": task}
 
 
 @app.delete("/api/books/{name}", response_model=DeleteResult)
@@ -811,6 +960,8 @@ def _build_run_config(*, route_mode: str, route_reason: str, model: str) -> dict
         # 查询改写/扩展是否可能参与本轮检索
         "query_rewrite_enabled": QUERY_REWRITE_ENABLED,
         "query_expand_enabled": QUERY_EXPAND_ENABLED,
+        "v2_native_retrieval_mode": V2_NATIVE_RETRIEVAL_MODE,
+        "v2_native_retrieval_gray_percent": V2_NATIVE_RETRIEVAL_GRAY_PERCENT,
         "faithfulness_shadow_enabled": FAITHFULNESS_SHADOW_ENABLED,
         "faithfulness_judge_mode": FAITHFULNESS_JUDGE_MODE,
         "model_gateway": model_gateway.routing_snapshot(model),
@@ -1091,7 +1242,16 @@ async def ask(req: AskRequest, request: Request):
                     )
                     yield f"event: step\ndata: {json.dumps(cache_step, ensure_ascii=False)}\n\n"
                 else:
-                    step_iter = rag.retrieve_hybrid_stream(search_question, top_k=req.top_k)
+                    if V2_NATIVE_RETRIEVAL_MODE == "gray":
+                        step_iter = rag.retrieve_hybrid_stream(
+                            search_question,
+                            top_k=req.top_k,
+                            rollout_key=req.session_id or run_id,
+                        )
+                    else:
+                        step_iter = rag.retrieve_hybrid_stream(
+                            search_question, top_k=req.top_k
+                        )
                     while True:
                         # 和下面消费模型用的是同一套模式：同步生成器丢线程池里逐个取，
                         # 每个 await 都是一次让出控制权的机会。

@@ -17,7 +17,7 @@ import math
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from domain_models import Collection, Document, DocumentChunk, DocumentVersion
 from postgres import vector_literal
@@ -113,6 +113,46 @@ class V2PublicationError(ValueError):
 
 class V2PublishDisabled(RuntimeError):
     """调用者没有明确选择允许 V2/shadow 发布。"""
+
+
+def delete_v2_document(executor: V2Executor, document_id: str) -> dict[str, int | str]:
+    """事务内删除文档及其全部版本、片段、BM25 term 和 manifest。
+
+    删除顺序显式遵守外键依赖；不存在的文档也保持幂等，便于失败任务安全重试。
+    """
+    select_versions = f"""
+        SELECT id FROM {V2_SCHEMA_NAME}.document_versions
+        WHERE document_id = %s ORDER BY version_no
+    """
+    with executor.transaction():
+        rows = cast(Any, executor.execute(select_versions, (document_id,))).fetchall()
+        version_ids = [str(row["id"]) for row in rows]
+        for version_id in version_ids:
+            executor.execute(
+                f"""DELETE FROM {V2_SCHEMA_NAME}.chunk_terms
+                WHERE chunk_id IN (
+                    SELECT id FROM {V2_SCHEMA_NAME}.document_chunks
+                    WHERE document_version_id = %s
+                )""",
+                (version_id,),
+            )
+            executor.execute(
+                f"DELETE FROM {V2_SCHEMA_NAME}.index_manifests WHERE document_version_id = %s",
+                (version_id,),
+            )
+            executor.execute(
+                f"DELETE FROM {V2_SCHEMA_NAME}.document_chunks WHERE document_version_id = %s",
+                (version_id,),
+            )
+        if version_ids:
+            executor.execute(
+                f"DELETE FROM {V2_SCHEMA_NAME}.document_versions WHERE document_id = %s",
+                (document_id,),
+            )
+        executor.execute(
+            f"DELETE FROM {V2_SCHEMA_NAME}.documents WHERE id = %s", (document_id,)
+        )
+    return {"document_id": document_id, "versions": len(version_ids)}
 
 
 def _configured_storage_schema() -> str:

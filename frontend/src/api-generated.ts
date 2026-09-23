@@ -310,6 +310,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Knowledge Document */
+        delete: operations["delete_knowledge_document_api_knowledge_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge/documents/{document_id}/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rebuild Knowledge Document */
+        post: operations["rebuild_knowledge_document_api_knowledge_documents__document_id__rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge/documents/{document_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Knowledge Document Versions */
+        get: operations["list_knowledge_document_versions_api_knowledge_documents__document_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics/query-cache": {
         parameters: {
             query?: never;
@@ -760,6 +811,12 @@ export interface components {
             /** Versions */
             versions?: components["schemas"]["KnowledgeVersionSummary"][];
         };
+        /** KnowledgeDocumentTaskResult */
+        KnowledgeDocumentTaskResult: {
+            /** Document Id */
+            document_id: string;
+            task: components["schemas"]["IndexTaskStatus"];
+        };
         /** KnowledgeUploadResult */
         KnowledgeUploadResult: {
             /** Collection */
@@ -767,6 +824,11 @@ export interface components {
             /** Saved */
             saved: string[];
             task: components["schemas"]["IndexTaskStatus"];
+        };
+        /** KnowledgeVersionList */
+        KnowledgeVersionList: {
+            /** Versions */
+            versions: components["schemas"]["KnowledgeVersionSummary"][];
         };
         /**
          * KnowledgeVersionSummary
@@ -1552,6 +1614,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KnowledgeUploadResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_knowledge_document_api_knowledge_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rebuild_knowledge_document_api_knowledge_documents__document_id__rebuild_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDocumentTaskResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_document_versions_api_knowledge_documents__document_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeVersionList"];
                 };
             };
             /** @description Validation Error */

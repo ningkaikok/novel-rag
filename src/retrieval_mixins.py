@@ -28,6 +28,8 @@ from config import (
     CONTEXT_NEIGHBORS,
     TOP_K,
     V2_NATIVE_RETRIEVAL_ENABLED,
+    V2_NATIVE_RETRIEVAL_GRAY_PERCENT,
+    V2_NATIVE_RETRIEVAL_MODE,
 )
 from domain_models import RetrievalScope
 from index_quality import _token_count
@@ -41,6 +43,15 @@ from postgres import (
 from retrieval_scope import select_legacy_novels
 from tokenizer import query_terms
 from v2_retrieval import V2ReadRepository
+
+
+def _gray_read_enabled(rollout_key: str | None) -> bool:
+    if V2_NATIVE_RETRIEVAL_MODE != "gray" or not rollout_key:
+        return False
+    from hashlib import sha256
+
+    bucket = int(sha256(rollout_key.encode("utf-8")).hexdigest()[:8], 16) % 100
+    return bucket < V2_NATIVE_RETRIEVAL_GRAY_PERCENT
 
 
 class RetrievalMixin:
@@ -102,13 +113,21 @@ class RetrievalMixin:
             SourceChunk.from_legacy_row(row, distance=float(row["distance"])) for row in rows
         ]
 
-    def v2_native_retrieve(self, question: str, top_k: int = TOP_K) -> list[SourceChunk]:
+    def v2_native_retrieve(
+        self,
+        question: str,
+        top_k: int = TOP_K,
+        *,
+        rollout_key: str | None = None,
+    ) -> list[SourceChunk]:
         """V2 通用文档（非小说）的向量+关键词召回，投影成 SourceChunk 供 RRF 融合。
 
         开关关闭时零开销直接返回空列表。任何异常都退化为空列表——V2 只是
         锦上添花的一路召回，绝不能让它的故障拖垮 V1 小说问答主链路。
         """
-        if not V2_NATIVE_RETRIEVAL_ENABLED or top_k <= 0:
+        enabled = V2_NATIVE_RETRIEVAL_ENABLED or V2_NATIVE_RETRIEVAL_MODE == "on"
+        enabled = enabled or _gray_read_enabled(rollout_key)
+        if not enabled or top_k <= 0:
             return []
         try:
             repository = V2ReadRepository()

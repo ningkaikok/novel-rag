@@ -11,7 +11,8 @@
 - [x] 增加 V1/V2 shadow 稳定身份、chunk 数量和 locator 比较脚本；当前 6 个文档 mismatch=0
 - [x] 增加 `V2_SHADOW_ENABLED=1` 的真实 RAG shadow read；V1 继续负责回答，trace 记录 V2
   候选数量、缺失/新增数量和耗时，V2 异常不会阻断回答
-- [ ] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1
+- [x] 在固定问答评测集上积累 shadow 候选差异和延迟基线，验证完成前默认仍为 V1；新增
+  `scripts/eval_v2_native.py`，并支持 `V2_NATIVE_RETRIEVAL_MODE=gray` 可回滚灰度
 - [x] 新增 `V2_NATIVE_RETRIEVAL_ENABLED` 开关（默认关闭）：开启后非小说的 V2 原生
   文档作为第五路召回接入 `retrieve_hybrid_stream` 的 RRF 融合，真正参与回答上下文
   和引用；此前上传的 Markdown/PDF 只会被索引进 shadow schema，从不参与实际问答
@@ -20,7 +21,8 @@
 - [x] 同名文档重复上传按 source hash 幂等复用版本号，新内容自动递增 `version_no`，避免
   版本唯一约束冲突
 - [x] V2 catalog 已优先读取真实 V2，前端已切换为通用多格式上传入口
-- [ ] 补齐通用文档版本历史、删除、重建和恢复操作
+- [x] 补齐通用文档版本历史、删除、重建和恢复操作；V2 版本保留历史，删除按外键依赖
+  事务清理，失败后可通过 rebuild 重新发布
 
 ## 通用知识库切换：Phase 1（已完成，2026-09-12）
 

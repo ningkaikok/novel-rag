@@ -8,6 +8,15 @@
 import pytest
 
 import backend.main as main
+from backend.schemas import KnowledgeDocumentSummary, KnowledgeVersionSummary
+
+
+class _FakeContext:
+    def __enter__(self):
+        return object()
+
+    def __exit__(self, *_args):
+        return False
 
 
 def _index_task(status="running", *, task_id="task-1", result=None):
@@ -151,6 +160,84 @@ def test_upload_knowledge_accepts_markdown_and_uses_v2_task(client, tmp_path, mo
     assert calls[0][0][0][1] == "# 概览\n\n正文".encode()
     assert calls[0][1] == "AI 资料"
     assert (tmp_path / "设计说明.md").read_bytes() == "# 概览\n\n正文".encode()
+
+
+def test_knowledge_document_versions_endpoint_returns_history(client, monkeypatch):
+    document = KnowledgeDocumentSummary(
+        id="doc-1",
+        collection_id="collection-1",
+        title="设计说明.md",
+        source_type="markdown",
+        status="indexed",
+        versions=[
+            KnowledgeVersionSummary(
+                id="v-1",
+                version_no=1,
+                source_hash="sha-1",
+                parser_name="markdown",
+                parser_version="1",
+                chunk_count=2,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        main,
+        "build_v2_catalog",
+        lambda: (
+            main.KnowledgeCollectionList(collections=[]),
+            main.KnowledgeDocumentList(documents=[document]),
+        ),
+    )
+
+    response = client.get("/api/knowledge/documents/doc-1/versions")
+
+    assert response.status_code == 200
+    assert response.json()["versions"][0]["version_no"] == 1
+
+
+def test_knowledge_document_rebuild_reads_source_and_starts_task(
+    client, tmp_path, monkeypatch
+):
+    source = tmp_path / "设计说明.md"
+    source.write_text("# 重建\n\n正文")
+    monkeypatch.setattr(main, "KNOWLEDGE_DIR", tmp_path)
+    monkeypatch.setattr(main, "_v2_document_source", lambda _id: (source.name, "AI 资料"))
+    calls = []
+    monkeypatch.setattr(
+        main,
+        "_start_knowledge_rebuild_task",
+        lambda document_id, title, collection, payload: (
+            calls.append((document_id, title, collection, payload)) or _index_task()
+        ),
+    )
+
+    response = client.post("/api/knowledge/documents/doc-1/rebuild")
+
+    assert response.status_code == 200
+    assert calls == [("doc-1", source.name, "AI 资料", "# 重建\n\n正文".encode())]
+
+
+def test_knowledge_document_delete_removes_source_after_v2_delete(
+    client, tmp_path, monkeypatch
+):
+    source = tmp_path / "删除.md"
+    source.write_text("正文")
+    monkeypatch.setattr(main, "KNOWLEDGE_DIR", tmp_path)
+    monkeypatch.setattr(main, "_v2_document_source", lambda _id: (source.name, "默认知识库"))
+    monkeypatch.setattr(
+        main, "delete_v2_document", lambda _conn, _id: {"document_id": _id, "versions": 1}
+    )
+    monkeypatch.setattr(main, "connect", lambda: _FakeContext())
+
+    def start(build, **_kwargs):
+        return _index_task(result=build(lambda *_args: None, lambda: None))
+
+    monkeypatch.setattr(main.index_tasks, "start", start)
+    response = client.delete("/api/knowledge/documents/doc-1")
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == "doc-1"
+    assert not source.exists()
 
 
 def test_delete_removes_file_then_returns_cleanup_task(client, tmp_path, monkeypatch):
