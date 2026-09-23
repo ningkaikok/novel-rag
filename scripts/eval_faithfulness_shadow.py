@@ -140,9 +140,7 @@ def _build_generate_fn(model: str):
             return response.json()["response"]
 
         return generate_local
-    raise SystemExit(
-        f"不支持的模型前缀：{model}（支持 ollama:/glm:/claude: 前缀）"
-    )
+    raise SystemExit(f"不支持的模型前缀：{model}（支持 ollama:/glm:/claude: 前缀）")
 
 
 def _write_incremental_dump(path: Path, results_by_spec: dict, cases: list[dict]) -> None:
@@ -159,8 +157,12 @@ def _write_incremental_dump(path: Path, results_by_spec: dict, cases: list[dict]
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.",
-            suffix=".tmp", delete=False
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as temp:
             temp_path = Path(temp.name)
             json.dump(dump, temp, ensure_ascii=False, indent=1)
