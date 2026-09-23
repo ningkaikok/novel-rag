@@ -1,6 +1,8 @@
 # 项目路线图
 
-## 通用知识库切换：Phase 7（shadow 数据与只读检索已完成，2026-09-12）
+## 通用知识库切换：Phase 7（V2 shadow、可选原生检索与文档生命周期已完成，2026-09-23）
+
+> 当前状态以 Phase 7 和下方 M3/M4/M5/M6 为准。Phase 1～6 保留各阶段当时的范围与决策；其中标为未完成的工作有些已在 Phase 7 收口，不应直接当作当前待办。
 
 - [x] 在本机 PostgreSQL 完成 V1 → `knowledge_v2` 的逐文档 shadow 导入；6 个文档、33,542
   个 chunk、3,799,681 条 BM25 term 全部提交，V1 表未修改
@@ -35,10 +37,9 @@
 - [x] 查询缓存键预留 collection/document/version scope，旧的三字段构造方式继续兼容
 - [x] 为通用模型、定位语义、旧小说映射和缓存范围隔离补充后端单元测试
 
-当前仍以 `novel_chunks` 为唯一数据源，未改数据库 schema、未迁移数据，也未切换前端。
-Phase 2、Phase 3、Phase 4 和 Phase 5A 已在下方补充 V2 schema、解析器、发布基础和
-V1 检索/引用通用化接缝；通用文档 API、
-前端知识库界面和生产化多租户能力仍未完成。详细迁移策略见
+Phase 1 完成时仍以 `novel_chunks` 为唯一数据源，未迁移数据，也未切换前端。后续 Phase 2～7
+逐步落地 V2 schema、解析器、发布、真实 shadow/native retrieval、通用文档 API 和前端；
+生产化多租户能力仍未完成。详细迁移策略见
 `docs/knowledge-domain-migration.md`。
 
 ## 通用知识库切换：Phase 2（已完成 schema + dry-run 基础，2026-09-12）
@@ -48,11 +49,11 @@ V1 检索/引用通用化接缝；通用文档 API、
 - [x] 提供幂等 DDL 和显式 apply 函数；默认 `STORAGE_SCHEMA=v1`，不自动执行
 - [x] 提供 LegacyNovel snapshot → V2 migration plan、重复执行指纹和 dry-run validator
 - [x] 校验父子关系、chunk ordinal/locator、term 关系、source/pipeline hash 和 manifest 数量
-- [ ] 实现事务内数据 upsert、shadow read 和可回滚切换（Phase 4 基础已完成，真实接入仍待后续）
-- [ ] 接入 Markdown/PDF、通用文档 API 和前端知识库界面
+- [x] 后续在 Phase 7 完成事务内 upsert、shadow read、可回滚发布和可选原生检索
+- [x] 后续在 Phase 7 接入 Markdown/PDF、通用文档 API 和前端知识库界面
 
-本阶段刻意只交付 schema + dry-run validator 最小闭环，尚未将任何 V1 数据写入 V2，
-也没有删除或覆盖现有表。
+本阶段（2026-09-12）只交付 schema + dry-run validator 最小闭环，没有写入或覆盖 V1 表。
+V1→V2 发布、真实数据库读写和可选问答检索已在后续 Phase 7 完成；V1 仍是小说兼容路径的默认读写方案。
 
 ## 通用知识库切换：Phase 3（已完成，解析器基础，2026-09-12）
 
@@ -63,11 +64,11 @@ V1 检索/引用通用化接缝；通用文档 API、
 - [x] 新增 parser、section/page locator、限制和 TXT 兼容性单元测试
 - [x] parser 已提供给 V2 repository/index publication contract；仍由调用者传入预计算的
   embedding 与 BM25 term，不重复模型调用
-- [ ] 实现 V1 snapshot 的真实事务 upsert、shadow read、回滚切换和 parser 级检索评测
-- [ ] 接入通用文档 API、前端知识库界面和多租户能力
+- [x] 后续在 Phase 7 完成真实事务 upsert、shadow read、回滚发布和固定集 V2 原生检索评测
+- [x] 后续在 Phase 7 接入通用文档 API 与前端知识库界面；多租户能力转入 M5/M6
 
-Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中的通用
-`DocumentChunk`，不会修改 `novel_chunks` 或自动切换生产读写。
+Phase 3 当时保持 `STORAGE_SCHEMA=v1` 默认路径，parser 只产生内存中的通用
+`DocumentChunk`。Phase 7 后 parser 已接入 V2 文档索引与上传 API；EPUB/OCR 和多租户不在支持范围内。
 
 ## 通用知识库切换：Phase 4（已完成发布基础，2026-09-12）
 
@@ -78,10 +79,7 @@ Phase 3 仍保持 `STORAGE_SCHEMA=v1` 默认路径；parser 只产生内存中�
   关系；事务异常由 executor rollback，失败不会发布 manifest
 - [x] 新增 `STORAGE_SCHEMA=v2|shadow` 的显式发布门禁，默认 `v1` 保持拒绝和不执行
 - [x] 新增 V1/V2 shadow 快照比较及 document/chunk/locator/candidate mismatch 分类
-- [ ] 尚未连接真实 PostgreSQL、执行真实 V1→V2 upsert、启用双写或切换 API/RAG
-- [ ] 尚未完成真实 shadow read 观测、embedding/BM25 线上接入、前端和通用文档 API
-
-Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 发布影响。清理
+Phase 4 阶段的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 发布影响。清理
 独立 `knowledge_v2` schema 需要未来单独、显式、备份确认后的运维操作；当前不提供自动
 删除，也不触碰生产数据库。
 
@@ -95,11 +93,10 @@ Phase 4 的回滚方式是保持 `STORAGE_SCHEMA=v1`，V1 表和数据不受 V2 
 - [x] 新增 `DocumentChunk`/Legacy `SourceChunk` → `SourceRef` 的纯 response adapter，
   保留 document/version/chunk/locator，excerpt 限制为 80 字以内
 - [x] 补充 scope 隔离、未知/版本 scope、SourceRef 序列化与旧检索/缓存/trace 回归测试
-- [ ] 尚未实现真实 V2 read、V1/V2 shadow 检索接入和线上 mismatch 观测
-- [ ] 尚未修改 API response schema、前端引用卡或通用文档管理界面
+- Phase 7 已接入真实 V2 read/shadow 与通用文档管理界面；用户认证、多租户权限和生产审计仍属于后续工作。
 
-Phase 5A 的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；未知 scope 永远返回
-空结果，不会扩大搜索范围。V2 数据库、表和生产读写均未被本阶段自动切换或删除。
+Phase 5A 阶段的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；未知 scope 永远返回
+空结果，不会扩大搜索范围。本阶段没有自动删除 V1 数据；Phase 7 后 V2 原生检索可显式开启。
 
 ## 通用知识库切换：Phase 5B（已完成目录 API + 前端最小切换，2026-09-12）
 
@@ -109,10 +106,10 @@ Phase 5A 的回滚方式是停止传入 scope 或保持 `STORAGE_SCHEMA=v1`；�
   保持不变
 - [x] Sidebar 使用“知识库 / 文档”术语，展示来源类型和索引状态，小说上传/删除仍走
   TXT/V1 兼容路径
-- [ ] 真实 V2 read/shadow、Markdown/PDF 生产上传和多租户权限仍未完成
+- Phase 7 已完成 V2 read/shadow、Markdown/PDF 上传与版本管理；多租户权限仍未完成。
 
-Phase 5B 的回滚方式是保持 V1 和旧 `/api/books`；目录 API 是只读投影，不会写 V2 或改变
-生产检索路径。
+Phase 5B 阶段的回滚方式是保持 V1 和旧 `/api/books`。其只读目录投影后来由 Phase 7 的真实 V2
+catalog 和文档管理能力扩展。
 
 ## 通用知识库切换：Phase 6（已完成最小 AI-first 收口，2026-09-12）
 
@@ -122,7 +119,7 @@ Phase 5B 的回滚方式是保持 V1 和旧 `/api/books`；目录 API 是只读�
 - [x] 新增显式通用 `SourceRef` → `tool_spec.SourceRef` adapter，保留 document/version/
   locator 扩展和旧定位字段；MCP/Agent 摘录继续限制为 80 字且不含完整正文
 - [x] 增加工具 schema、只读权限、摘要/引用字段和外部文本指令隔离的离线契约测试
-- [ ] V2 API/真实数据库 read、认证、权限策略、多租户、生产审计和多 Agent/LangGraph 仍未完成
+- Phase 7 已完成 V2 API/真实数据库读写；认证、权限策略、多租户、生产审计和多 Agent/LangGraph 仍未完成。
 
 Phase 6 仍是本地单用户只读兼容层；外部文本中的指令不会改变 Tool Registry 权限。回滚只需
 保持 `STORAGE_SCHEMA=v1`、继续使用现有 Agent Lab/MCP 入口，不涉及表删除或生产切换。
@@ -229,7 +226,7 @@ M3.2 的验收标准是“初学者能直接看到 观察 → 选择工具 → �
 > 先加一条“动作解析失败/走正则兜底”的计数埋点，用真实失败率决定这件事排在 M3.4 之前还是之后，
 > 不要凭“这个设计更好”就抢跑——这与本路线图对 T0 渲染通道、多小问的处理方式一致。
 >
-> **埋点已完成（2026-09-05）**，上面三项仍待真实数据决定排期。每个由规划器产出的步骤
+> **埋点已完成（2026-09-05），统计结果待补**，上面三项仍待真实数据决定排期。每个由规划器产出的步骤
 > 都带 `parse_mode`（`strict` / `fenced` / `regex` / `failed:<类别>`）并随 `agent_steps`
 > 落库，用 `uv run python scripts/agent_parse_stats.py` 聚合。规划器没参与的步骤
 > （最后一步强制收尾）记 None，不进分母；动作被目录门禁换掉的步骤**仍然计入**——
@@ -342,7 +339,8 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
   单独立项研究。注意 BGE-M3 的多向量检索不等价 Cross-Encoder 重排，不能替代后者
 - [x] 整章扩展实验：「命中后带入整章」实现为可配置对照项（`CHAPTER_EXPANSION_MODE=
   off/neighbors/chapter`），受真实 tokenizer 的 token 预算闸门约束（命中片段无条件
-  保留、向两侧对称生长、截断写 trace）；在固定评测集上的大部头对比待跑
+  保留、向两侧对称生长、截断写 trace）。
+- [ ] 在固定大部头语料上评测整章扩展的召回与延迟变化，并记录逐例回退情况。
 - [x] 实验使用受控样本和临时索引/独立命名空间，不覆盖当前可用索引；报告逐条展示相对
   基线的新增命中和回退案例，而不只给出平均分
 - [x] 定义可解释的低置信度信号：候选分数/排名差距（只用重排器归一化分数）、问题词
@@ -405,6 +403,8 @@ CI 能自动发现检索指标回退。**本里程碑已完成。**
 二分类器。已定义两档启用门槛（轻提示 / 拒答），`judge_support` 在达标前保持
 仅影子调用。完整数据与决策框架见
 [忠实度 Judge 校准报告](experiments/m35-faithfulness-calibration.md)。
+
+- [ ] 完成两步 Judge 实验报告：补齐结果、partial 盲区分析、启用门槛判断和下一步建议；扩大标注集前为评测输出增加增量落盘。见 [两步 Judge 实验](experiments/m35-two-step-judge.md)。Judge 保持影子模式，不影响回答。
 
 ## M3.6：多轮上下文与记忆边界（已完成，2026-09-05）
 
@@ -495,12 +495,15 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
 （达成方式说明：在线结果经 explicit+置信度门槛过滤后不再输出纯共现边；每条边
 带 `source_chunk_ids`，审核界面据此展示原文摘录。评测集见 `tests/graph_eval_set.json`。）
 
+- [ ] 在更大、更多样的语料上复核关系抽取质量；达到验收门槛前保持 `GRAPH_ENABLED=0`。
+
 ## M5：部署与多用户边界（后续阶段）
 
 - [x] Docker Compose 一键启动应用、PostgreSQL 和 pgvector（多阶段 Dockerfile：
   Node 构建前端 → uv 装锁定运行时依赖；FastAPI 检测到 `frontend/dist` 自动托管
   静态文件，单端口对外；模型缓存与小说文本独立挂载，`/api/health` 做容器健康检查）
-- [ ] 上传大小、文件类型和资源配额限制
+- [x] 单文件大小、文档类型、PDF 页数和解析片段数限制（默认最大上传 20 MiB）
+- [ ] 用户级存储/调用配额与超限治理
 - [ ] 用户、书架、索引和会话隔离
 - [ ] 多版本语料共存后，在检索前强制执行租户、书籍、章节、来源版本和时间范围过滤
 - [ ] 备份恢复、结构化日志和基础监控
@@ -520,7 +523,7 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
   `src/tool_spec.py` 定义 `ToolSpec`/`ToolResultV1` 与六工具不可变 `TOOL_REGISTRY`
   （answer_with_citations 结果 schema 单独定义），MCP 服务器已改为从 Registry 生成注册；
   当前已补齐 query_library、权限、版本、启停字段，并由冻结的 Registry 提供运行时快照。
-- [ ] M6.2：增加 Tool Gateway，集中做鉴权、参数校验、出站白名单、Prompt Injection
+- [x] M6.2：建立本地只读 Tool Gateway 基础，集中做权限与参数校验、出站白名单、Prompt Injection
   隔离、限流、超时、幂等、分类重试、熔断和审计
   当前已完成统一执行入口、权限与参数校验、出站 host 白名单、工具输出不可信数据隔离、
   调用次数闸门、硬超时、幂等键、只读下游失败重试、按工具熔断和不含正文的审计摘要；
@@ -540,10 +543,7 @@ M3.3～M3.6 优先复用现有的 [检索可视化评测](retrieval-observabilit
   依赖此阶段的 Event Log，不提前实现
   当前已先把短问答/Agent 的 Event Log 从 `chat_turns` 正文中拆出；索引任务已有
   `job_id` 状态机，跨进程 worker、checkpoint 和恢复仍待下一阶段。
-- [ ] M6.6：在工具需要跨客户端复用时增加 MCP 适配，不绕过内部权限和审计边界。
-  允许的提前项：M3.3.5 完成后可做一个只读、stdio 传输的最小 MCP PoC 作为低成本探针，
-  用真实客户端（Claude Code 等）暴露 ToolResult Schema 的设计问题并反哺 M6.1；
-  PoC 不接权限体系、不做发现机制，正式 MCP 仍按 Registry→Gateway→Adapter 的顺序来。✅ PoC 已落地（2026-08-23）：`scripts/mcp_server.py` 四个只读工具经 stdio 通过真实客户端验证（结构化输出 + 80 字摘录红线），发现的 SDK v2 结构化输出需具体返回类型注解等约束已记录在案
+- [ ] M6.6：将 MCP PoC 演进为经 Gateway 执行的正式适配器，保留内部权限与审计边界。只读 stdio PoC 已于 2026-08-23 落地：`scripts/mcp_server.py` 暴露四个只读工具，并经真实客户端验证结构化输出与 80 字摘录限制；正式适配器仍待实施。
 - [ ] M6.7：结合 M5 完成租户隔离、配额、数据保留/删除、备份、结构化日志、监控告警
   和灰度发布；高风险写工具默认需要人工审批
 
