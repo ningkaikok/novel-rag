@@ -1,0 +1,269 @@
+{
+ "ollama:qwen2.5:7b": {
+  "sha_role": {
+   "label": "supported",
+   "reason": "证据中明确提到‘队里人都叫他“活地图”——因为他从没在没有参照物的沙海里迷过路’，这与陈述中‘队里人都叫他“活地图”’一致，因此可以从中直接推出。",
+   "human_label": "supported"
+  },
+  "sha_water": {
+   "label": "supported",
+   "reason": "证据中提到小何第一天就喝完了配给的两升水，与陈述一致。",
+   "human_label": "supported"
+  },
+  "sha_depth": {
+   "label": "supported",
+   "reason": "证据中明确提到承压水埋深为四点二米，且水质达到饮用标准，与陈述内容一致",
+   "human_label": "supported"
+  },
+  "sha_metaphor": {
+   "label": "supported",
+   "reason": "证据中的“数据是沙漠里的航灯”与陈述中的“准确的数据就像沙漠里的航灯”意思一致，因此可以从中直接推出。",
+   "human_label": "supported"
+  },
+  "sha_well_time": {
+   "label": "unsupported",
+   "reason": "证据中提到七号井是在第二年春天出水的，与陈述中当年冬天出水的时间点不符",
+   "human_label": "unsupported"
+  },
+  "sha_lamp_literal": {
+   "label": "unsupported",
+   "reason": "证据中提到老白是一只四岁的骆驼，而不是一盏航灯。",
+   "human_label": "unsupported"
+  },
+  "qing_rename_origin": {
+   "label": "supported",
+   "reason": "证据中明确提到沈砚秋养了一只通体乌黑的猫，因为总爱蜷成一团，取名墨团，与陈述一致。",
+   "human_label": "supported"
+  },
+  "qing_cat_lock": {
+   "label": "supported",
+   "reason": "证据中的内容与陈述一致，只是顺序略有不同，但信息完全相同",
+   "human_label": "supported"
+  },
+  "qing_thief_partial": {
+   "label": "unsupported",
+   "reason": "证据中提到小顺偷表是为了学习制表技艺并赎回工具，没有提到他偷表后将表高价卖给了当铺。",
+   "human_label": "partial"
+  },
+  "qing_watch_mixup": {
+   "label": "unsupported",
+   "reason": "证据中提到的怀表是顾长风去世前交给他的，而陈述中的怀表是沈砚秋自己买的，两者对象不符。",
+   "human_label": "unsupported"
+  },
+  "qing_order_reverse": {
+   "label": "unsupported",
+   "reason": "证据中没有提到小顺装好第一块表与镇上丢怀表之间的因果关系，且时间顺序也不一致。",
+   "human_label": "unsupported"
+  },
+  "wu_poison": {
+   "label": "supported",
+   "reason": "证据中明确提到顾长风所患的是十几年前中的一种罕见奇毒“蚀骨散”，与陈述内容一致。",
+   "human_label": "supported"
+  },
+  "wu_letter_partial": {
+   "label": "unsupported",
+   "reason": "证据中提到信封上写着“转交顾长风亲启”，并未说明信是交给沈砚之的师父临终前交给沈砚之本人，也没有提到师父当面讲解信里的内容。",
+   "human_label": "partial"
+  },
+  "wu_sworn_brothers": {
+   "label": "supported",
+   "reason": "证据中的内容完全支持陈述中的信息，包括师兄弟关系、反目原因以及时间线。",
+   "human_label": "supported"
+  },
+  "wu_peach": {
+   "label": "unsupported",
+   "reason": "证据中提到的是药田而非桃树，且没有提到春天满山桃花盛开的情景。",
+   "human_label": "unsupported"
+  },
+  "wu_jade_order": {
+   "label": "supported",
+   "reason": "证据中提到顾长风将刻有“长风”二字的玉佩传给了沈砚之，并且之后才向他讲述了三十年前师兄弟反目的旧事，与陈述内容一致。",
+   "human_label": "unsupported"
+  },
+  "qing_villager_reward": {
+   "label": "supported",
+   "reason": "证据中明确提到了镇上接连丢了三块老怀表，且丢表的分别是开茶馆的周掌柜、教书的白先生和渡口的艄公陈伯，与陈述中的信息一致。",
+   "human_label": "supported"
+  },
+  "sha_ration_rule": {
+   "label": "unsupported",
+   "reason": "证据中提到的是在日头最毒的时候不要走，而在陈述中说的是照常赶路，这与证据中的内容不符。",
+   "human_label": "partial"
+  },
+  "x2_sha_neg_nomap": {
+   "label": "supported",
+   "reason": "证据中的“因为他从没在没有参照物的沙海里迷过路”直接支持了陈述中的内容",
+   "human_label": "supported"
+  },
+  "x2_qing_neg_notmoney": {
+   "label": "supported",
+   "reason": "证据明确指出小顺偷表是为了拆机芯学习，而不是为了卖钱，这与陈述一致",
+   "human_label": "supported"
+  },
+  "x2_qing_neg_reward": {
+   "label": "supported",
+   "reason": "证据中提到沈砚秋没有报官，且周掌柜和白先生没有给他任何酬谢，与陈述一致。",
+   "human_label": "partial"
+  },
+  "x2_wu_neg_purpose": {
+   "label": "supported",
+   "reason": "证据中的信息表明沈砚之是为了学医而特意拜访顾长风，这与陈述中的内容一致。",
+   "human_label": "partial"
+  },
+  "x2_wu_neg_bedridden": {
+   "label": "supported",
+   "reason": "证据中提到顾长风患的是罕见奇毒‘蚀骨散’，且只有解毒的方子才能救命，这表明蚀骨散并非无药可救。证据还提到半月之后，顾长风终于能下床行走，这与陈述中提到的顾长风服下解药后第二天就能下床行走的时间差异可以理解为时间上的不同表述，因此可以认为陈述是被证据支持的。",
+   "human_label": "partial"
+  },
+  "x2_qing_neg_rain": {
+   "label": "unsupported",
+   "reason": "证据表明三块表都是在雨天丢的，与陈述相反",
+   "human_label": "unsupported"
+  },
+  "x2_qing_neg_ledger": {
+   "label": "unsupported",
+   "reason": "证据中提到墨团夜里巡逻，而陈述中说墨团夜里从不巡逻，这与证据矛盾。",
+   "human_label": "unsupported"
+  },
+  "x2_wu_cross_threedays": {
+   "label": "supported",
+   "reason": "证据中详细描述了沈砚之为救顾长风忙活了三天三夜，并且顾长风的气色好转，最终在半个月之后能下床行走，与陈述内容一致。",
+   "human_label": "supported"
+  },
+  "x2_sha_cross_wellreq": {
+   "label": "supported",
+   "reason": "证据中的内容直接支持了陈述中的所有信息，包括重新测定坐标、判断能否打井、承压水埋深和水质情况。",
+   "human_label": "supported"
+  },
+  "x2_qing_cross_copper": {
+   "label": "supported",
+   "reason": "证据中的描述与陈述中的内容一致，只是顺序略有不同。",
+   "human_label": "supported"
+  },
+  "x2_sha_cross_retest": {
+   "label": "supported",
+   "reason": "证据中提到陆知微发现白天走的直线因为绕流沙偏了六公里，并且让小何再测一遍数据，与陈述内容一致。",
+   "human_label": "partial"
+  },
+  "x2_qing_cross_lockcredit": {
+   "label": "supported",
+   "reason": "证据中的信息与陈述一致，即‘夜半闻钟楼有声’的记载帮助沈砚秋锁定了钟楼，并且他发现门锁早被人撬开。",
+   "human_label": "partial"
+  },
+  "x2_sha_cross_flag": {
+   "label": "unsupported",
+   "reason": "证据中没有提到牧民给井起名的具体原因，也没有直接说明锦旗与井名之间的联系。",
+   "human_label": "unsupported"
+  },
+  "x2_wu_cross_grandpa_poison": {
+   "label": "unsupported",
+   "reason": "证据中提到的是顾青黛的父亲顾长风中了蚀骨散的毒，而非顾青黛的祖父。",
+   "human_label": "unsupported"
+  },
+  "x2_hop_shun_family": {
+   "label": "supported",
+   "reason": "证据中明确提到小顺偷表不是为了钱，而是想拆出机芯重新装表，这与陈述完全一致。",
+   "human_label": "supported"
+  },
+  "x2_hop_enamel_watch": {
+   "label": "supported",
+   "reason": "证据中提到脚边摊着三块怀表，其中珐琅面的那块已经被撬开了盖子，与陈述中提到的钟楼上被撬开盖子的珐琅面怀表相吻合。同时，证据中提到的怀表是瑞士产的，且是周掌柜丢的那块，这也与陈述中的信息一致。",
+   "human_label": "supported"
+  },
+  "x2_hop_shibo": {
+   "label": "supported",
+   "reason": "证据中提到顾长风是沈砚之师父的师兄，因此沈砚之得叫顾长风师伯",
+   "human_label": "supported"
+  },
+  "x2_hop_jade_origin": {
+   "label": "supported",
+   "reason": "证据中的内容与陈述一致，只是顺序略有不同，但核心信息相同",
+   "human_label": "partial"
+  },
+  "x2_hop_needle_master": {
+   "label": "unsupported",
+   "reason": "证据中没有提到沈砚之是靠师父临终前亲手教他的医术来用银针打通经脉救活顾长风，仅提到信中所述的方子。",
+   "human_label": "partial"
+  },
+  "x2_hop_laobai_repair": {
+   "label": "supported",
+   "reason": "证据中提到老白打了个响鼻，用蹄子刨地，暗示鼻子灵光，又提到巴特尔能蒙着眼睛修好一辆抛锚的卡车，与陈述中的信息一致。",
+   "human_label": "unsupported"
+  },
+  "x2_hop_wrong_master": {
+   "label": "unsupported",
+   "reason": "证据中提到沈砚秋的手艺是由师父顾长风带出来的，没有提到顾长风的身份或与杂货铺伙计的关系，因此无法直接从证据中推出沈砚秋的手艺是跟杂货铺伙计的父亲学出来的。",
+   "human_label": "unsupported"
+  },
+  "x2_scope_windows_latched": {
+   "label": "supported",
+   "reason": "证据中提到的三起案件的窗户都是从里面闩着的，与陈述一致",
+   "human_label": "supported"
+  },
+  "x2_scope_laobai_bite": {
+   "label": "supported",
+   "reason": "证据中的内容直接说明了除了陆知微之外，牵老白的人都要挨它一口，与陈述一致。",
+   "human_label": "supported"
+  },
+  "x2_scope_all_gifts": {
+   "label": "unsupported",
+   "reason": "证据中只提到白先生送了一方砚台给沈砚秋，没有提到另外两位失主送了礼物给沈砚秋。",
+   "human_label": "partial"
+  },
+  "x2_scope_season_yearround": {
+   "label": "supported",
+   "reason": "证据中的“春夏时节药香满山”可以理解为一年到头都药香满山，证据中的“庄子四周种满了成片的药田”对应陈述中的“四周种满了成片的药田”。",
+   "human_label": "partial"
+  },
+  "x2_scope_rain_month": {
+   "label": "supported",
+   "reason": "证据中提到那年秋天连着下了半个月的雨，且河水涨得几乎要漫过东街的石桥，与陈述中的内容一致。",
+   "human_label": "unsupported"
+  },
+  "x2_scope_unit_cm": {
+   "label": "unsupported",
+   "reason": "证据中提到的是两米，而陈述中说的是两厘米，两者单位和数值不一致，无法直接推出。",
+   "human_label": "unsupported"
+  },
+  "x2_scope_years20": {
+   "label": "supported",
+   "reason": "证据中提到陆知微跑了十二年沙漠，从未在没有参照物的沙海里迷过路，与陈述中的二十年沙漠经历和从未迷路的信息一致，只是时间上有所差异，但不影响陈述的直接支持性。",
+   "human_label": "unsupported"
+  },
+  "x2_pron_shopboy_father": {
+   "label": "supported",
+   "reason": "证据中提到小顺的父亲当年也是钟表匠，与陈述中的杂货铺伙计的父亲当年也是钟表匠信息一致。",
+   "human_label": "supported"
+  },
+  "x2_pron_laobai_neck": {
+   "label": "supported",
+   "reason": "证据中的内容与陈述一致，只是将直接引用改为转述，且人物和情节没有改变。",
+   "human_label": "supported"
+  },
+  "x2_pron_intern_water": {
+   "label": "supported",
+   "reason": "证据中的陆知微对应陈述中的队长，小何对应实习生，时间顺序和事件描述与陈述一致",
+   "human_label": "supported"
+  },
+  "x2_pron_who_checked": {
+   "label": "supported",
+   "reason": "证据中的“沈砚秋检查了半天，只在机芯夹板上找到一处多余的划痕”与陈述中的“他父亲检查了半天，只在机芯夹板上找到一处多余的划痕”信息一致，可以从中直接推出。",
+   "human_label": "partial"
+  },
+  "x2_pron_zhou_table": {
+   "label": "unsupported",
+   "reason": "证据中提到的怀表是顾长风交给他的，而不是周掌柜找他修的。",
+   "human_label": "partial"
+  },
+  "x2_pron_speaker_misread": {
+   "label": "unsupported",
+   "reason": "证据中没有提到实习生小何或他对水文很内行的信息",
+   "human_label": "unsupported"
+  },
+  "x2_pron_roleswap": {
+   "label": "supported",
+   "reason": "证据中的“见沈砚之几乎不眠不休”与陈述中的“顾长风几乎不眠不休地照看自己”意思相近，且两者都表达了青黛心中十分感激的情感。",
+   "human_label": "unsupported"
+  }
+ }
+}
