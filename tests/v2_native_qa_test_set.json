@@ -1,0 +1,17 @@
+[
+  {
+    "id": "native-001",
+    "question": "知识库文档的版本更新和失败恢复应该如何处理？",
+    "expect_keywords": ["版本", "恢复"]
+  },
+  {
+    "id": "native-002",
+    "question": "V2 原生文档检索如何参与混合召回？",
+    "expect_keywords": ["V2", "召回"]
+  },
+  {
+    "id": "native-003",
+    "question": "上传文档后，哪些信息可以用于核验来源？",
+    "expect_keywords": ["来源", "文档"]
+  }
+]

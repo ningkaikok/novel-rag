@@ -144,6 +144,13 @@ Embedding、BM25 索引并写入 `knowledge_v2` schema；`STORAGE_SCHEMA` 默认
 TXT 文件同时作为一个兼容文档、文件名会作为来源标注；目录里已经有一篇原创的示例
 短篇小说 `雾隐山庄.txt`，用于快速验证整个流程，可以直接删掉换成你自己的合法文本。
 
+V2 原生 read path 支持可回滚灰度：设置 `V2_NATIVE_RETRIEVAL_MODE=gray` 和
+`V2_NATIVE_RETRIEVAL_GRAY_PERCENT=10` 后，按 `session_id`（没有会话时按本轮请求）
+稳定分桶 10% 流量；回滚只需重启并设回 `off`。灰度期间查询缓存自动绕过，避免同一个
+问题在不同灰度组之间串结果。固定问答集可用
+`uv run python scripts/eval_v2_native.py --save /tmp/v2-native.json` 运行，脚本只保存
+排名、来源类型和耗时，不保存正文。
+
 ## 启动（FastAPI + React，推荐）
 
 需要开两个终端：
@@ -311,6 +318,8 @@ python scripts/check_index_quality.py --novel data/novels/雾隐山庄.txt
 | `MODEL_OUTPUT_USD_PER_MILLION_TOKENS` | `0` | 输出 token 估算单价；需按实际供应商价格配置 |
 | `V2_SHADOW_ENABLED` | `0` | 设为 `1` 时额外读取 V2 候选并写入 trace；V1 仍负责最终回答 |
 | `V2_NATIVE_RETRIEVAL_ENABLED` | `0` | 设为 `1` 时，上传的非小说 V2 文档（Markdown/PDF 等）作为额外一路召回真正参与回答和引用；小说仍走 V1 |
+| `V2_NATIVE_RETRIEVAL_MODE` | `off` | V2 原生 read path 发布模式：`off`、`gray` 或 `on`；旧 `V2_NATIVE_RETRIEVAL_ENABLED=1` 仍兼容 |
+| `V2_NATIVE_RETRIEVAL_GRAY_PERCENT` | `0` | `gray` 模式的稳定分桶百分比，范围 0～100；按会话或请求键计算 |
 | `FAITHFULNESS_SHADOW_ENABLED` | `0` | 回答完成后后台运行引用忠实度影子核验，不阻塞回答、不自动改写 |
 | `FAITHFULNESS_JUDGE_MODE` | `two_step` | 影子/按需核验方式：`single_step` 或 `two_step` |
 | `HISTORY_IN_PROMPT` | `1` | 最终回答的 prompt 里带上「对话背景」段（M3.6）；设成 `0` 回到只有当前问题和检索证据 |

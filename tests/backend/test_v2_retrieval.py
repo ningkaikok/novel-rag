@@ -150,6 +150,27 @@ def test_v2_native_retrieve_returns_empty_when_disabled(monkeypatch):
     assert mixin.v2_native_retrieve("问题", top_k=5) == []
 
 
+def test_v2_native_retrieve_supports_deterministic_gray_rollout(monkeypatch):
+    """灰度 100%/0% 必须分别等价于开启/关闭，且不依赖随机数。"""
+    import retrieval_mixins
+
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_ENABLED", False)
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_MODE", "gray")
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_GRAY_PERCENT", 0)
+    mixin = retrieval_mixins.RetrievalMixin()
+    mixin.embedder = _StubEmbedder()
+    monkeypatch.setattr(
+        retrieval_mixins,
+        "V2ReadRepository",
+        lambda: (_ for _ in ()).throw(AssertionError("0% 灰度不应访问 V2")),
+    )
+    assert mixin.v2_native_retrieve("问题", rollout_key="session-a") == []
+
+    monkeypatch.setattr(retrieval_mixins, "V2_NATIVE_RETRIEVAL_GRAY_PERCENT", 100)
+    monkeypatch.setattr(retrieval_mixins, "V2ReadRepository", lambda: _Connection([]))
+    assert mixin.v2_native_retrieve("问题", rollout_key="session-a") == []
+
+
 def test_v2_native_retrieve_degrades_to_empty_on_repository_error(monkeypatch):
     """V2 只是锦上添花的一路召回：DB/embedding 异常绝不能拖垮 V1 主链路。"""
     import retrieval_mixins

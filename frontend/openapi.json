@@ -791,6 +791,23 @@
     "title": "KnowledgeDocumentSummary",
     "type": "object"
    },
+   "KnowledgeDocumentTaskResult": {
+    "properties": {
+     "document_id": {
+      "title": "Document Id",
+      "type": "string"
+     },
+     "task": {
+      "$ref": "#/components/schemas/IndexTaskStatus"
+     }
+    },
+    "required": [
+     "document_id",
+     "task"
+    ],
+    "title": "KnowledgeDocumentTaskResult",
+    "type": "object"
+   },
    "KnowledgeUploadResult": {
     "properties": {
      "collection": {
@@ -814,6 +831,22 @@
      "task"
     ],
     "title": "KnowledgeUploadResult",
+    "type": "object"
+   },
+   "KnowledgeVersionList": {
+    "properties": {
+     "versions": {
+      "items": {
+       "$ref": "#/components/schemas/KnowledgeVersionSummary"
+      },
+      "title": "Versions",
+      "type": "array"
+     }
+    },
+    "required": [
+     "versions"
+    ],
+    "title": "KnowledgeVersionList",
     "type": "object"
    },
    "KnowledgeVersionSummary": {
@@ -2324,6 +2357,123 @@
      }
     },
     "summary": "Upload Knowledge Documents"
+   }
+  },
+  "/api/knowledge/documents/{document_id}": {
+   "delete": {
+    "operationId": "delete_knowledge_document_api_knowledge_documents__document_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "document_id",
+      "required": true,
+      "schema": {
+       "title": "Document Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Knowledge Document"
+   }
+  },
+  "/api/knowledge/documents/{document_id}/rebuild": {
+   "post": {
+    "operationId": "rebuild_knowledge_document_api_knowledge_documents__document_id__rebuild_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "document_id",
+      "required": true,
+      "schema": {
+       "title": "Document Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeDocumentTaskResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Rebuild Knowledge Document"
+   }
+  },
+  "/api/knowledge/documents/{document_id}/versions": {
+   "get": {
+    "operationId": "list_knowledge_document_versions_api_knowledge_documents__document_id__versions_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "document_id",
+      "required": true,
+      "schema": {
+       "title": "Document Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KnowledgeVersionList"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Knowledge Document Versions"
    }
   },
   "/api/metrics/query-cache": {

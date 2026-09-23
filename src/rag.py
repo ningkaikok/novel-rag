@@ -38,6 +38,7 @@ Web 层和云端模型路由在 ``backend/main.py``；这里不依赖 FastAPI，
 
 import time
 from collections.abc import Iterator
+from hashlib import sha256
 
 from sentence_transformers import SentenceTransformer
 
@@ -54,6 +55,8 @@ from config import (
     RERANK_ENABLED,
     TOP_K,
     V2_NATIVE_RETRIEVAL_ENABLED,
+    V2_NATIVE_RETRIEVAL_GRAY_PERCENT,
+    V2_NATIVE_RETRIEVAL_MODE,
     V2_SHADOW_ENABLED,
 )
 from domain_models import RetrievalScope
@@ -113,6 +116,16 @@ from query_expander import expand_query_variants
 from reranker import rerank_with_scores
 from retrieval_mixins import RetrievalMixin
 from v2_shadow_reader import V2ShadowReader
+
+
+def _v2_native_read_enabled(rollout_key: str | None) -> bool:
+    """按兼容开关和确定性灰度键决定本轮是否启用 V2 原生召回。"""
+    if V2_NATIVE_RETRIEVAL_ENABLED or V2_NATIVE_RETRIEVAL_MODE == "on":
+        return True
+    if V2_NATIVE_RETRIEVAL_MODE != "gray" or not rollout_key:
+        return False
+    bucket = int(sha256(rollout_key.encode("utf-8")).hexdigest()[:8], 16) % 100
+    return bucket < V2_NATIVE_RETRIEVAL_GRAY_PERCENT
 
 
 class NovelRAG(RetrievalMixin, GenerationMixin):
@@ -314,6 +327,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         _allow_expand: bool = True,
         *,
         scope: RetrievalScope | None = None,
+        rollout_key: str | None = None,
     ) -> Iterator[tuple[str, dict[str, object] | list[SourceChunk]]]:
         """检索流水线的生成器版本：每完成一个阶段就 yield 一次，最后 yield 结果。
 
@@ -563,8 +577,14 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
         # V1 小说范围收敛使用，混入非小说文档候选没有意义。开关关闭或异常时
         # 该方法本身已退化为空列表，这里不需要额外的 try/except。
         v2_native_sources: list[SourceChunk] = []
-        if V2_NATIVE_RETRIEVAL_ENABLED and scope is None:
-            v2_native_sources = self.v2_native_retrieve(question, top_k=candidate_k)
+        native_read_enabled = _v2_native_read_enabled(rollout_key)
+        if native_read_enabled and scope is None:
+            if V2_NATIVE_RETRIEVAL_MODE == "gray" and not V2_NATIVE_RETRIEVAL_ENABLED:
+                v2_native_sources = self.v2_native_retrieve(
+                    question, top_k=candidate_k, rollout_key=rollout_key
+                )
+            else:
+                v2_native_sources = self.v2_native_retrieve(question, top_k=candidate_k)
             yield (
                 "step",
                 {

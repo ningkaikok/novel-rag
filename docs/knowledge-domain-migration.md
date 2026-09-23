@@ -105,11 +105,17 @@ shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比�
    `retrieve_hybrid_stream` 的 RRF 融合，真正参与回答上下文和引用——此前
    `V2ShadowReader` 只产出 `missing_count/extra_count` 这类聚合观测数字，从不
    影响实际回答。V1 小说检索、`V2_SHADOW_ENABLED` 观测路径本身不受影响。
-2. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
+   read path 还提供 `V2_NATIVE_RETRIEVAL_MODE=gray` +
+   `V2_NATIVE_RETRIEVAL_GRAY_PERCENT` 的确定性灰度；默认仍为 `off`，灰度期间禁用查询
+   缓存，回滚只需把模式改回 `off` 并重启服务。
+2. **已完成（2026-09-23）**：新增 `scripts/eval_v2_native.py` 和固定问答集，分别跑
+   V2 关闭/开启两组，比较 Recall@k、MRR、V2 来源命中数、候选变化和平均延迟。报告不含
+   文档正文，可作为灰度前后的可审计基线。
+3. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
    切到真实 V2 读取。
-3. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；
+4. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；
    当前 Agent/MCP 仍只读 V1/legacy adapter。
-4. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。
-5. 稳定后再考虑停用旧 `/api/books` 兼容入口。
+5. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。
+6. 稳定后再考虑停用旧 `/api/books` 兼容入口。
 
 首次切换不删除旧表，不引入独立向量数据库、消息队列或多租户权限系统。

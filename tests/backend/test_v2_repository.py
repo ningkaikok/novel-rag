@@ -8,6 +8,7 @@ from v2_repository import (
     V2PublicationError,
     V2PublishDisabled,
     build_v2_publication_plan,
+    delete_v2_document,
     dry_run_v2_index,
     publish_v2_index,
 )
@@ -34,6 +35,15 @@ class _FakeExecutor:
             raise
         else:
             self.events.append("commit")
+
+
+class _DeleteExecutor(_FakeExecutor):
+    def execute(self, query: str, params=()):
+        self.calls.append((query, tuple(params)))
+        return self
+
+    def fetchall(self):
+        return [{"id": "doc-1-v1"}, {"id": "doc-1-v2"}]
 
 
 def _input(document_id: str = "doc-1", *, pipeline_hash: str = "pipeline-1"):
@@ -193,3 +203,18 @@ def test_default_v1_rejects_apply_and_dry_run_has_no_executor():
 
     assert executor.calls == []
     assert dry_run_v2_index(plan)["chunks"] == 2
+
+
+def test_delete_document_removes_children_before_parent_in_one_transaction():
+    executor = _DeleteExecutor()
+
+    result = delete_v2_document(executor, "doc-1")
+
+    assert result == {"document_id": "doc-1", "versions": 2}
+    assert executor.events == ["begin", "commit"]
+    queries = [query for query, _params in executor.calls]
+    assert queries[0].lstrip().startswith("SELECT id")
+    assert queries.index(next(q for q in queries if "chunk_terms" in q)) < queries.index(
+        next(q for q in queries if "document_versions WHERE" in q and q.startswith("DELETE"))
+    )
+    assert queries[-1].startswith("DELETE FROM knowledge_v2.documents")
