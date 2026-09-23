@@ -1,6 +1,11 @@
 # 通用知识库领域边界迁移说明
 
-## 当前状态：Phase 7 shadow 数据与只读检索（已完成，生产读路径未切换）
+## 当前状态：v0.12.0（V2 原生检索与文档生命周期已接入）
+
+小说兼容链路默认仍使用 V1；非小说 V2 文档已可作为真实召回来源参与答案和引用。可显式开启，
+也可按会话稳定分桶灰度；默认关闭，异常时可回滚到原有 V1 路径。固定问答集评测脚本已提供。
+通用文档支持版本历史、删除、来源文件重建和失败恢复。当前仍是本地单用户能力，尚无认证、
+租户隔离和用户级配额。
 
 Phase 1～5B 已建立通用领域模型、V2 发布基础、解析器、V1 scope、SourceRef adapter、
 只读目录 API 和知识库 Sidebar。Phase 6 收口 Agent/MCP 的语义边界，不改变现有
@@ -44,7 +49,8 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
   数量、chunk 稳定键、机器 locator 和检索候选稳定键分类 mismatch；不比较浮点向量，
   不宣称向量召回完全一致。
 - `src/v2_retrieval.py`：提供 knowledge_v2 的通用只读向量/BM25 检索和 scope 过滤，返回
-  `V2SearchHit` 及完整的 collection/document/version/chunk 身份链；不改变现有 V1 RAG。
+  `V2SearchHit` 及完整的 collection/document/version/chunk 身份链；非小说 V2 hit 已能通过
+  source adapter 进入现有 RRF 融合与回答引用，开关和灰度模式默认关闭。
 - `scripts/apply_v1_to_v2.py`：显式执行逐文档、逐事务的 V1 → V2 shadow 发布；默认 dry-run，
   不修改 V1。
 - `scripts/compare_v1_v2_shadow.py`：只读比较 V1/V2 的稳定身份、数量和 locator，不输出正文。
@@ -69,12 +75,13 @@ Collection → Document → DocumentVersion → DocumentChunk → SourceRef
 - `scripts/mcp_server.py`：MCP instructions 已改为通用知识库只读语义，仍只暴露查询工具，
   不包含完整正文。
 
-V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 预留开关，默认值为 `v1`。V2 schema 已完成真实
-shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比较和可选 RAG shadow read
-均已接通；候选差异和延迟评测仍需积累，当前代码不会因为该配置自动把 NovelRAG/API/Agent
-切到 V2。Agent/MCP 目前只是本地单用户只读兼容层。
+V2 使用 `STORAGE_SCHEMA=v1|v2|shadow` 发布开关，默认值为 `v1`。V1/V2 locator 比较、shadow
+候选/延迟固定集评测和可回滚灰度已接通。`V2_NATIVE_RETRIEVAL_ENABLED` 默认关闭；打开后只把
+非小说 V2 文档接入 RRF，小说仍走 V1。Agent/MCP 仍是本地单用户只读兼容层。
 
-## Phase 4 的安全边界
+## Phase 4 初始实现的安全边界（历史记录）
+
+以下约束描述 Phase 4 刚完成发布接口时的范围；真实数据库发布、shadow read、原生检索和文档生命周期已在 Phase 7/v0.12.0 后续接入。
 
 - 不改 `novel_chunks` 或其他 V1 数据库表；V2 DDL 仅定义在独立 schema 中，默认不执行
 - 不连接真实 PostgreSQL；本阶段只提供 mock executor 可验证的 repository contract
@@ -86,12 +93,13 @@ shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比�
 
 ## 回滚边界
 
-- V1 是默认且唯一的在线读写路径；V2 发布失败时事务 executor 必须 rollback，manifest
-  是最后写入对象，未发布的版本不会被视为可检索索引。
+- 小说兼容链路默认走 V1；V2 发布失败时事务 executor 必须 rollback，manifest
+  是最后写入对象，未发布的版本不会被视为可检索索引。非小说 V2 原生检索是显式可关闭的可选路径。
 - V2 重发布采用版本内原子 replace，而不是只依赖 `ON CONFLICT`：旧 chunk/term 的清理和
   新索引写入在同一事务内完成；如果中途失败，rollback 会恢复清理前的 V2 状态。
-- 即使 V2 已在独立 schema 中发布，回滚只需保持 `STORAGE_SCHEMA=v1`，不读取 V2；V1
-  表和数据不会被删除或覆盖。
+- 小说兼容路径保持 `STORAGE_SCHEMA=v1`。若关闭 V2 原生检索，设置
+  `V2_NATIVE_RETRIEVAL_ENABLED=0` 且 `V2_NATIVE_RETRIEVAL_MODE=off` 后重启；V1 表和数据
+  不会被删除或覆盖。
 - 清理 V2 独立 schema、表或数据尚未提供自动化操作，未来必须作为单独、显式、经备份
   确认的运维动作执行；本阶段不会隐式 DROP 或迁移。
 - Phase 5A 的 scope 失败安全规则是：未知 collection/document/version 返回空结果；不
@@ -111,10 +119,8 @@ shadow 数据导入，向量/BM25 只读 smoke test、V1/V2 稳定 locator 比�
 2. **已完成（2026-09-23）**：新增 `scripts/eval_v2_native.py` 和固定问答集，分别跑
    V2 关闭/开启两组，比较 Recall@k、MRR、V2 来源命中数、候选变化和平均延迟。报告不含
    文档正文，可作为灰度前后的可审计基线。
-3. 补充通用文档的版本更新/删除、来源文件重建和失败恢复，并将 V2 catalog 从 V1 投影
-   切到真实 V2 读取。
-4. 在真实 V2 read/shadow 中接入 `SourceRef` 和 `RetrievalScope`，再考虑默认读取切换；
-   当前 Agent/MCP 仍只读 V1/legacy adapter。
+3. **已完成（2026-09-23）**：增加通用文档版本历史、删除、来源文件重建和失败恢复，并将 V2 catalog 切到真实 V2 读取。
+4. 继续核对 V2 `SourceRef`/`RetrievalScope` 在 API、标准 RAG、Agent/MCP 各入口的一致性；评估默认打开原生 V2 路径前，先积累灰度质量和延迟数据。Agent/MCP 的多租户使用仍未开放。
 5. 补齐认证、权限、多租户、配额和生产审计后，才考虑让 Agent/MCP 面向多用户服务。
 6. 稳定后再考虑停用旧 `/api/books` 兼容入口。
 
