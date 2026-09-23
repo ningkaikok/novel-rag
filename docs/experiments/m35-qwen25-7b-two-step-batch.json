@@ -1,0 +1,1302 @@
+{
+ "ollama:qwen2.5:7b": {
+  "sha_role": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "陆知微是地质勘探队的队长",
+    "队里人都叫他‘活地图’"
+   ],
+   "verdicts": [
+    {
+     "claim": "陆知微是地质勘探队的队长",
+     "label": "supported",
+     "reason": "证据中明确提到‘队长陆知微’"
+    },
+    {
+     "claim": "队里人都叫他‘活地图’",
+     "label": "supported",
+     "reason": "证据中提到‘队里人都叫他‘活地图’’"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "sha_water": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 0 / not_found 1）",
+   "claims": [
+    "实习生小何第一次进沙漠",
+    "配给的水是两升",
+    "水还没到日子就喝完了"
+   ],
+   "verdicts": [
+    {
+     "claim": "实习生小何第一次进沙漠",
+     "label": "not_found",
+     "reason": "证据中未提及小何是否为实习生，也未明确说明这是他第一次进沙漠"
+    },
+    {
+     "claim": "配给的水是两升",
+     "label": "supported",
+     "reason": "证据中提到‘配给的两升水’"
+    },
+    {
+     "claim": "水还没到日子就喝完了",
+     "label": "supported",
+     "reason": "证据中提到‘他年轻，出汗多，配给的两升水提前喝完了’"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "sha_depth": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "七号井位的承压水埋深只有四点二米",
+    "水质达到饮用标准"
+   ],
+   "verdicts": [
+    {
+     "claim": "七号井位的承压水埋深只有四点二米",
+     "label": "supported",
+     "reason": "证据直接说明了井位的承压水埋深为四点二米，与断言一致"
+    },
+    {
+     "claim": "水质达到饮用标准",
+     "label": "supported",
+     "reason": "证据明确指出水质达到饮用标准，与断言一致"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "sha_metaphor": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "勘探队认为准确的数据很重要",
+    "准确的数据对勘探队如同沙漠里的航灯",
+    "航灯为人引路"
+   ],
+   "verdicts": [
+    {
+     "claim": "勘探队认为准确的数据很重要",
+     "label": "supported",
+     "reason": "证据中的'数据是沙漠里的航灯'表明勘探队认为准确的数据很重要"
+    },
+    {
+     "claim": "准确的数据对勘探队如同沙漠里的航灯",
+     "label": "supported",
+     "reason": "证据中的'数据是沙漠里的航灯'直接对应断言，表明准确的数据对勘探队如同沙漠里的航灯"
+    },
+    {
+     "claim": "航灯为人引路",
+     "label": "supported",
+     "reason": "证据中的'航灯'直接对应断言，表明航灯为人引路"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "sha_well_time": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 1 / not_found 0）",
+   "claims": [
+    "七号井位批准建井",
+    "当年冬天出水"
+   ],
+   "verdicts": [
+    {
+     "claim": "七号井位批准建井",
+     "label": "supported",
+     "reason": "证据明确提到七号井位批准建井"
+    },
+    {
+     "claim": "当年冬天出水",
+     "label": "contradicted",
+     "reason": "证据显示出水是在第二年春天，而非当年冬天"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "sha_lamp_literal": {
+   "label": "unsupported",
+   "reason": "全部断言在证据中无据（3 条断言：supported 0 / contradicted 0 / not_found 3）",
+   "claims": [
+    "老白是一盏航灯",
+    "航灯晚上挂在营地旗杆上",
+    "航灯给驼队照明"
+   ],
+   "verdicts": [
+    {
+     "claim": "老白是一盏航灯",
+     "label": "not_found",
+     "reason": "证据中未提到老白是航灯"
+    },
+    {
+     "claim": "航灯晚上挂在营地旗杆上",
+     "label": "not_found",
+     "reason": "证据中未提到航灯的位置"
+    },
+    {
+     "claim": "航灯给驼队照明",
+     "label": "not_found",
+     "reason": "证据中未提到航灯给驼队照明"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "qing_rename_origin": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 0 / not_found 1）",
+   "claims": [
+    "沈砚秋养了一只黑猫",
+    "这只黑猫总爱蜷成一团",
+    "因为总爱蜷成一团，所以给这只黑猫取名叫墨团"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚秋养了一只黑猫",
+     "label": "supported",
+     "reason": "证据直接说明沈砚秋养了一只通体乌黑的猫，即黑猫。"
+    },
+    {
+     "claim": "这只黑猫总爱蜷成一团",
+     "label": "supported",
+     "reason": "证据明确提到墨团总爱蜷成一团。"
+    },
+    {
+     "claim": "因为总爱蜷成一团，所以给这只黑猫取名叫墨团",
+     "label": "not_found",
+     "reason": "证据中没有提到给猫取名的原因，仅说明了名字的由来。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "qing_cat_lock": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "墨团半夜追老鼠",
+    "墨团爬上钟楼",
+    "沈砚秋发现钟楼的门锁被人撬开"
+   ],
+   "verdicts": [
+    {
+     "claim": "墨团半夜追老鼠",
+     "label": "supported",
+     "reason": "证据直接说明墨团半夜追老鼠"
+    },
+    {
+     "claim": "墨团爬上钟楼",
+     "label": "supported",
+     "reason": "证据直接说明墨团爬上钟楼"
+    },
+    {
+     "claim": "沈砚秋发现钟楼的门锁被人撬开",
+     "label": "supported",
+     "reason": "证据直接说明沈砚秋发现钟楼的门锁被人撬开"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "qing_thief_partial": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（5 条断言：supported 3 / contradicted 0 / not_found 2）",
+   "claims": [
+    "小顺偷表",
+    "小顺拆机芯学父亲的手艺",
+    "小顺得手",
+    "小顺把三块怀表卖掉",
+    "小顺把怀表卖给当铺"
+   ],
+   "verdicts": [
+    {
+     "claim": "小顺偷表",
+     "label": "supported",
+     "reason": "证据中明确提到小顺偷表"
+    },
+    {
+     "claim": "小顺拆机芯学父亲的手艺",
+     "label": "supported",
+     "reason": "证据中提到小顺想拆出机芯学父亲的手艺"
+    },
+    {
+     "claim": "小顺得手",
+     "label": "supported",
+     "reason": "证据中提到小顺偷了表，可以推断他得手"
+    },
+    {
+     "claim": "小顺把三块怀表卖掉",
+     "label": "not_found",
+     "reason": "证据中没有提到小顺把怀表卖掉"
+    },
+    {
+     "claim": "小顺把怀表卖给当铺",
+     "label": "not_found",
+     "reason": "证据中没有提到小顺把怀表卖给当铺"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "qing_watch_mixup": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "那块黄铜怀表是1897年的",
+    "沈砚秋自己买来的",
+    "他花了六十块大洋"
+   ],
+   "verdicts": [
+    {
+     "claim": "那块黄铜怀表是1897年的",
+     "label": "supported",
+     "reason": "证据明确提到这块怀表是1897年产的"
+    },
+    {
+     "claim": "沈砚秋自己买来的",
+     "label": "not_found",
+     "reason": "证据中没有提到这块黄铜怀表是谁买的"
+    },
+    {
+     "claim": "他花了六十块大洋",
+     "label": "contradicted",
+     "reason": "证据中提到的怀表是珐琅面的，而断言中的怀表是黄铜的，且价值不同"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "qing_order_reverse": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "小顺装好了平生第一块表",
+    "镇上开始接连丢老怀表"
+   ],
+   "verdicts": [
+    {
+     "claim": "小顺装好了平生第一块表",
+     "label": "supported",
+     "reason": "证据直接说明了小顺装好了平生第一块表"
+    },
+    {
+     "claim": "镇上开始接连丢老怀表",
+     "label": "supported",
+     "reason": "证据直接提到镇上接连丢了三块老怀表"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "wu_poison": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "顾长风患奇毒",
+    "奇毒名为‘蚀骨散’",
+    "顾长风患病时间是十几年前"
+   ],
+   "verdicts": [
+    {
+     "claim": "顾长风患奇毒",
+     "label": "supported",
+     "reason": "证据明确指出顾长风所患的并非寻常旧疾，而是罕见奇毒‘蚀骨散’。"
+    },
+    {
+     "claim": "奇毒名为‘蚀骨散’",
+     "label": "supported",
+     "reason": "证据直接提到奇毒名为‘蚀骨散’。"
+    },
+    {
+     "claim": "顾长风患病时间是十几年前",
+     "label": "supported",
+     "reason": "证据表明顾长风所患的奇毒‘蚀骨散’是十几年前中的一种，暗示患病时间是十几年前。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "wu_letter_partial": {
+   "label": "uncertain",
+   "reason": "Judge 输出解析失败：ValueError: 输出中找不到 JSON 对象；原始输出前 200 字：{\"verdicts\":[{\"index\":0,\"label\":\"supported\",\"reason\":\"证据明确说明沈砚之的师父临终前把那封信交给了他\"},{\"index\":1,\"label\":contradicted,\"reason\":\"证据表明信中是解毒药方，但并未提及师父当面讲解过\"}]}",
+   "claims": [
+    "沈砚之的师父临终前把那封信交给了他",
+    "沈砚之的师父当面把信里的解毒药方讲解了一遍"
+   ],
+   "verdicts": [],
+   "human_label": "partial"
+  },
+  "wu_sworn_brothers": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（5 条断言：supported 4 / contradicted 0 / not_found 1）",
+   "claims": [
+    "三十年前存在",
+    "顾长风和沈砚之有师父",
+    "顾长风和沈砚之的师父是过命的师兄弟",
+    "顾长风和沈砚之的师父后来反目",
+    "反目原因是追查贩卖蚀骨散的黑市"
+   ],
+   "verdicts": [
+    {
+     "claim": "三十年前存在",
+     "label": "not_found",
+     "reason": "证据中未提及三十年前的具体存在"
+    },
+    {
+     "claim": "顾长风和沈砚之有师父",
+     "label": "supported",
+     "reason": "证据中提到沈砚之的师父，暗示顾长风也有师父"
+    },
+    {
+     "claim": "顾长风和沈砚之的师父是过命的师兄弟",
+     "label": "supported",
+     "reason": "证据中明确提到顾长风与沈砚之的师父是过命的师兄弟"
+    },
+    {
+     "claim": "顾长风和沈砚之的师父后来反目",
+     "label": "supported",
+     "reason": "证据中明确提到顾长风与沈砚之的师父因为一次追查江湖上贩卖蚀骨散的黑市而反目"
+    },
+    {
+     "claim": "反目原因是追查贩卖蚀骨散的黑市",
+     "label": "supported",
+     "reason": "证据中明确提到反目原因是追查贩卖蚀骨散的黑市"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "wu_peach": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "雨停之后才发现",
+    "雾隐山庄四周种满了桃树",
+    "春天满山桃花盛开"
+   ],
+   "verdicts": [
+    {
+     "claim": "雨停之后才发现",
+     "label": "supported",
+     "reason": "证据中提到雨停后雾气散去，符合断言\"雨停之后才发现\""
+    },
+    {
+     "claim": "雾隐山庄四周种满了桃树",
+     "label": "contradicted",
+     "reason": "证据中提到庄子四周种满了成片的药田，而非桃树，与断言\"雾隐山庄四周种满了桃树\"矛盾"
+    },
+    {
+     "claim": "春天满山桃花盛开",
+     "label": "not_found",
+     "reason": "证据中未提及春天满山桃花盛开的情况"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "wu_jade_order": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "顾长风把刻着“长风”的玉佩传给沈砚之",
+    "之后顾长风才向沈砚之道出三十年前师兄弟反目的旧事"
+   ],
+   "verdicts": [
+    {
+     "claim": "顾长风把刻着“长风”的玉佩传给沈砚之",
+     "label": "supported",
+     "reason": "证据明确提到顾长风将一枚刻着‘长风’二字的玉佩传给了沈砚之。"
+    },
+    {
+     "claim": "之后顾长风才向沈砚之道出三十年前师兄弟反目的旧事",
+     "label": "supported",
+     "reason": "证据明确提到顾长风看完信后才向沈砚之道出三十年前师兄弟反目的旧事。"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "qing_villager_reward": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "镇上接连丢了三块怀表",
+    "丢表的三个人里包括渡口的艄公陈伯",
+    "丢表的三个人里包括开茶馆的周掌柜"
+   ],
+   "verdicts": [
+    {
+     "claim": "镇上接连丢了三块怀表",
+     "label": "supported",
+     "reason": "证据直接说明了镇上接连丢了三块老怀表"
+    },
+    {
+     "claim": "丢表的三个人里包括渡口的艄公陈伯",
+     "label": "supported",
+     "reason": "证据明确提到了艄公陈伯丢失了怀表"
+    },
+    {
+     "claim": "丢表的三个人里包括开茶馆的周掌柜",
+     "label": "supported",
+     "reason": "证据明确提到了开茶馆的周掌柜丢失了怀表"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "sha_ration_rule": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（4 条断言：supported 3 / contradicted 1 / not_found 0）",
+   "claims": [
+    "陆知微给小何水",
+    "立下规矩",
+    "日头最毒的时候照常赶路",
+    "省下水就省了力气"
+   ],
+   "verdicts": [
+    {
+     "claim": "陆知微给小何水",
+     "label": "supported",
+     "reason": "证据中明确提到陆知微把自己的水匀给他一半，直接支持了断言0"
+    },
+    {
+     "claim": "立下规矩",
+     "label": "supported",
+     "reason": "证据中提到教他一个沙漠里的老规矩，直接支持了断言1"
+    },
+    {
+     "claim": "日头最毒的时候照常赶路",
+     "label": "contradicted",
+     "reason": "证据中提到日头最毒的时候不要走，与断言2中的日头最毒的时候照常赶路相矛盾"
+    },
+    {
+     "claim": "省下水就省了力气",
+     "label": "supported",
+     "reason": "证据中提到省水也省力气，直接支持了断言3"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_sha_neg_nomap": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "在没有参照物的沙海里",
+    "陆知微从来没有迷过路"
+   ],
+   "verdicts": [
+    {
+     "claim": "在没有参照物的沙海里",
+     "label": "supported",
+     "reason": "证据中提到他从没在没有参照物的沙海里迷过路，与断言一致"
+    },
+    {
+     "claim": "陆知微从来没有迷过路",
+     "label": "supported",
+     "reason": "证据中提到他被队里人称为‘活地图’，意味着他从来没有迷过路，与断言一致"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_qing_neg_notmoney": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 0 / not_found 1）",
+   "claims": [
+    "小顺偷那几块怀表",
+    "不是为了卖钱"
+   ],
+   "verdicts": [
+    {
+     "claim": "小顺偷那几块怀表",
+     "label": "not_found",
+     "reason": "证据中未提及小顺偷哪几块怀表"
+    },
+    {
+     "claim": "不是为了卖钱",
+     "label": "supported",
+     "reason": "证据明确说明小顺偷表不是为了钱"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_qing_neg_reward": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "沈砚秋查明真相后没有报官",
+    "周掌柜没有给沈砚秋任何酬谢",
+    "白先生没有给沈砚秋任何酬谢"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚秋查明真相后没有报官",
+     "label": "supported",
+     "reason": "证据明确指出沈砚秋没有报官"
+    },
+    {
+     "claim": "周掌柜没有给沈砚秋任何酬谢",
+     "label": "contradicted",
+     "reason": "证据显示周掌柜给了沈砚秋一方砚台，而非任何成本外的酬谢"
+    },
+    {
+     "claim": "白先生没有给沈砚秋任何酬谢",
+     "label": "not_found",
+     "reason": "证据中未提及白先生是否给沈砚秋任何酬谢"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_wu_neg_purpose": {
+   "label": "uncertain",
+   "reason": "Judge 输出解析失败：ValueError: 输出中找不到 JSON 对象；原始输出前 200 字：{\"verdicts\":[{\"index\":0,\"label\":\"supported\",\"reason\":\"证据中提到他是为了寻访传说中隐居在雾隐山庄的老医师顾长风而来，没有提到买药材。\"},{\"index\":1,\"contradicted\",\"reason\":\"证据中没有提到他翻山而来，且没有明确反证。\"},{\"index\":2,\"label\":\"supported\",\"reason\":\"证据中",
+   "claims": [
+    "沈砚之不是来买药材的",
+    "沈砚之专程翻山",
+    "沈砚之拜顾长风为师",
+    "沈砚之学医"
+   ],
+   "verdicts": [],
+   "human_label": "partial"
+  },
+  "x2_wu_neg_bedridden": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "蚀骨散并非无药可救",
+    "顾长风服下解药后",
+    "顾长风第二天就能下床行走"
+   ],
+   "verdicts": [
+    {
+     "claim": "蚀骨散并非无药可救",
+     "label": "supported",
+     "reason": "证据明确提到只有解毒的方子才能救命，说明蚀骨散并非无药可救。"
+    },
+    {
+     "claim": "顾长风服下解药后",
+     "label": "not_found",
+     "reason": "证据中没有提到顾长风服下解药的情节。"
+    },
+    {
+     "claim": "顾长风第二天就能下床行走",
+     "label": "contradicted",
+     "reason": "证据中提到半月之后顾长风才能下床行走，与第二天就能下床行走的断言矛盾。"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_qing_neg_rain": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 1 / not_found 0）",
+   "claims": [
+    "镇上接连丢了三块老怀表",
+    "都不是在雨天丢的"
+   ],
+   "verdicts": [
+    {
+     "claim": "镇上接连丢了三块老怀表",
+     "label": "supported",
+     "reason": "证据明确说明三块表都是在雨天丢的，与断言一致。"
+    },
+    {
+     "claim": "都不是在雨天丢的",
+     "label": "contradicted",
+     "reason": "证据表明三块表都是在雨天丢的，与断言‘都不是在雨天丢的’矛盾。"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_qing_neg_ledger": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（3 条断言：supported 0 / contradicted 2 / not_found 1）",
+   "claims": [
+    "墨团夜里不巡逻",
+    "沈记的账本被老鼠咬过",
+    "老鼠咬过账本好几回"
+   ],
+   "verdicts": [
+    {
+     "claim": "墨团夜里不巡逻",
+     "label": "contradicted",
+     "reason": "证据表明墨团夜里就在铺子里巡逻，与断言矛盾"
+    },
+    {
+     "claim": "沈记的账本被老鼠咬过",
+     "label": "contradicted",
+     "reason": "证据表明沈记的账本从来没被老鼠咬过，与断言矛盾"
+    },
+    {
+     "claim": "老鼠咬过账本好几回",
+     "label": "not_found",
+     "reason": "证据中没有提到老鼠咬账本的次数"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_wu_cross_threedays": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "沈砚之为救顾长风忙活了三天三夜",
+    "半个月之后顾长风终于能下床行走"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚之为救顾长风忙活了三天三夜",
+     "label": "supported",
+     "reason": "证据直接说明了沈砚之忙活了三天三夜"
+    },
+    {
+     "claim": "半个月之后顾长风终于能下床行走",
+     "label": "supported",
+     "reason": "证据明确提到半个月之后顾长风能下床行走"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_sha_cross_wellreq": {
+   "label": "supported",
+   "reason": "全部断言有据（4 条断言：supported 4 / contradicted 0 / not_found 0）",
+   "claims": [
+    "上级要求重新测定七号井位的坐标",
+    "上级要求判断能否打井",
+    "实测结果承压水埋深只有四点二米",
+    "实测结果水质达到饮用标准"
+   ],
+   "verdicts": [
+    {
+     "claim": "上级要求重新测定七号井位的坐标",
+     "label": "supported",
+     "reason": "证据直接说明了上级要求重新测定七号井位的坐标"
+    },
+    {
+     "claim": "上级要求判断能否打井",
+     "label": "supported",
+     "reason": "证据直接说明了上级要求判断能否打井"
+    },
+    {
+     "claim": "实测结果承压水埋深只有四点二米",
+     "label": "supported",
+     "reason": "证据直接提供了实测结果承压水埋深只有四点二米"
+    },
+    {
+     "claim": "实测结果水质达到饮用标准",
+     "label": "supported",
+     "reason": "证据直接提供了实测结果水质达到饮用标准"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_qing_cross_copper": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "沈砚秋在自家柜台缝里发现了一缕发红的铜屑",
+    "沈砚秋在白先生家阁楼的窗棂上找到了同样的红铜屑",
+    "沈砚秋在白先生家阁楼的窗棂上找到了一小截烧过的灯芯"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚秋在自家柜台缝里发现了一缕发红的铜屑",
+     "label": "supported",
+     "reason": "证据中提到他在柜台缝里发现一缕极细的铜屑，颜色发红，不是新铜，与断言一致。"
+    },
+    {
+     "claim": "沈砚秋在白先生家阁楼的窗棂上找到了同样的红铜屑",
+     "label": "supported",
+     "reason": "证据中提到他在白先生家阁楼的窗棂上找到了同样的红铜屑，与断言一致。"
+    },
+    {
+     "claim": "沈砚秋在白先生家阁楼的窗棂上找到了一小截烧过的灯芯",
+     "label": "supported",
+     "reason": "证据中提到他在白先生家阁楼的窗棂上找到了一小截烧过的灯芯，与断言一致。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_sha_cross_retest": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "陆知微让小何再测一遍数据",
+    "因为白天走的直线因绕流沙偏了六公里"
+   ],
+   "verdicts": [
+    {
+     "claim": "陆知微让小何再测一遍数据",
+     "label": "supported",
+     "reason": "证据中提到陆知微让他再测一遍数据，符合断言内容。"
+    },
+    {
+     "claim": "因为白天走的直线因绕流沙偏了六公里",
+     "label": "supported",
+     "reason": "证据中提到因为绕流沙偏了整整六公里，符合断言内容。"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_qing_cross_lockcredit": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 0 / not_found 1）",
+   "claims": [
+    "更夫雨簿里记载了夜半闻钟楼有声",
+    "记载帮沈砚秋锁定了钟楼",
+    "记载让沈砚秋顺带发现了门锁早被人撬开"
+   ],
+   "verdicts": [
+    {
+     "claim": "更夫雨簿里记载了夜半闻钟楼有声",
+     "label": "supported",
+     "reason": "证据明确记载了‘夜半闻钟楼有声’"
+    },
+    {
+     "claim": "记载帮沈砚秋锁定了钟楼",
+     "label": "not_found",
+     "reason": "证据中未提及记载帮助沈砚秋锁定钟楼"
+    },
+    {
+     "claim": "记载让沈砚秋顺带发现了门锁早被人撬开",
+     "label": "supported",
+     "reason": "证据提到沈砚秋发现钟楼门锁被人撬开"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_sha_cross_flag": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "牧民给七号井起名“知微井”",
+    "是为了感谢勘探队",
+    "勘探队送来了那面锦旗"
+   ],
+   "verdicts": [
+    {
+     "claim": "牧民给七号井起名“知微井”",
+     "label": "not_found",
+     "reason": "证据中未提及七号井"
+    },
+    {
+     "claim": "是为了感谢勘探队",
+     "label": "supported",
+     "reason": "当地牧民给那口井起了个名字，叫‘知微井’，表明是为了感谢勘探队"
+    },
+    {
+     "claim": "勘探队送来了那面锦旗",
+     "label": "contradicted",
+     "reason": "证据显示是钻井队送来了锦旗，而非勘探队"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_wu_cross_grandpa_poison": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（2 条断言：supported 0 / contradicted 1 / not_found 1）",
+   "claims": [
+    "顾青黛的祖父当年追查贩卖蚀骨散的黑市",
+    "顾青黛的祖父因此中了蚀骨散的毒"
+   ],
+   "verdicts": [
+    {
+     "claim": "顾青黛的祖父当年追查贩卖蚀骨散的黑市",
+     "label": "not_found",
+     "reason": "证据中未提及顾青黛的祖父"
+    },
+    {
+     "claim": "顾青黛的祖父因此中了蚀骨散的毒",
+     "label": "contradicted",
+     "reason": "证据表明顾长风患的是蚀骨散，而非顾青黛的祖父中了蚀骨散的毒"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_hop_shun_family": {
+   "label": "supported",
+   "reason": "全部断言有据（4 条断言：supported 4 / contradicted 0 / not_found 0）",
+   "claims": [
+    "杂货铺有个伙计偷表",
+    "伙计不为钱",
+    "伙计想学父亲",
+    "伙计想重新装一块表"
+   ],
+   "verdicts": [
+    {
+     "claim": "杂货铺有个伙计偷表",
+     "label": "supported",
+     "reason": "证据直接提到小顺是杂货铺的伙计，并且偷了表。"
+    },
+    {
+     "claim": "伙计不为钱",
+     "label": "supported",
+     "reason": "证据明确指出小顺偷表不是为了钱。"
+    },
+    {
+     "claim": "伙计想学父亲",
+     "label": "supported",
+     "reason": "证据提到小顺想拆出机芯学习，暗示他想学父亲。"
+    },
+    {
+     "claim": "伙计想重新装一块表",
+     "label": "supported",
+     "reason": "证据提到小顺想重新装一块表。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_hop_enamel_watch": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "钟楼上被撬开盖子的珐琅面怀表存在",
+    "周掌柜丢了一块瑞士产怀表"
+   ],
+   "verdicts": [
+    {
+     "claim": "钟楼上被撬开盖子的珐琅面怀表存在",
+     "label": "supported",
+     "reason": "证据明确提到脚边摊着三块怀表，其中珐琅面的那块已经被撬开了盖子，与断言一致。"
+    },
+    {
+     "claim": "周掌柜丢了一块瑞士产怀表",
+     "label": "supported",
+     "reason": "证据提到他丢的是瑞士产的珐琅面怀表，与断言一致。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_hop_shibo": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 0 / not_found 1）",
+   "claims": [
+    "沈砚之得叫管顾长风师伯",
+    "管顾长风是师父的师兄"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚之得叫管顾长风师伯",
+     "label": "not_found",
+     "reason": "证据中未提及沈砚之应如何称呼顾长风"
+    },
+    {
+     "claim": "管顾长风是师父的师兄",
+     "label": "supported",
+     "reason": "证据中提到顾长风是沈砚之师父的师兄"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_hop_jade_origin": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 0 / not_found 1）",
+   "claims": [
+    "顾长风把刻着“长风”的玉佩传给沈砚之",
+    "这块玉佩是当年师兄弟反目之前顾长风的随身信物"
+   ],
+   "verdicts": [
+    {
+     "claim": "顾长风把刻着“长风”的玉佩传给沈砚之",
+     "label": "supported",
+     "reason": "证据直接说明顾长风将刻着‘长风’二字的玉佩传给了沈砚之"
+    },
+    {
+     "claim": "这块玉佩是当年师兄弟反目之前顾长风的随身信物",
+     "label": "not_found",
+     "reason": "证据中未提及玉佩是顾长风与师兄弟反目前的随身信物"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_hop_needle_master": {
+   "label": "uncertain",
+   "reason": "Judge 输出解析失败：ValueError: 输出中找不到 JSON 对象；原始输出前 200 字：{\"verdicts\":[{\"index\":0,\"label\":\"supported\",\"reason\":\"证据明确提到沈砚之用银针为顾长风打通经脉\"},{\"index\":1,\"label\":not_found,\"reason\":\"证据中未提及沈砚之是否受其师父亲自教导医术\"}]}",
+   "claims": [
+    "沈砚之能用银针打通经脉救活回顾长风",
+    "师父临终前亲手教过沈砚之医术"
+   ],
+   "verdicts": [],
+   "human_label": "partial"
+  },
+  "x2_hop_laobai_repair": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（3 条断言：supported 0 / contradicted 1 / not_found 2）",
+   "claims": [
+    "陆知微让老白去闻芦苇根",
+    "这头骆驼能蒙着眼睛修好一辆抛锚的卡车",
+    "这头骆驼的鼻子灵光得很"
+   ],
+   "verdicts": [
+    {
+     "claim": "陆知微让老白去闻芦苇根",
+     "label": "not_found",
+     "reason": "证据中未提到陆知微让老白闻芦苇根"
+    },
+    {
+     "claim": "这头骆驼能蒙着眼睛修好一辆抛锚的卡车",
+     "label": "contradicted",
+     "reason": "证据中提到的是巴特尔能蒙着眼睛修好一辆抛锚的卡车，而非骆驼"
+    },
+    {
+     "claim": "这头骆驼的鼻子灵光得很",
+     "label": "not_found",
+     "reason": "证据中未提到骆驼鼻子灵光"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_hop_wrong_master": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 1 / not_found 0）",
+   "claims": [
+    "沈砚秋的手艺是学出来的",
+    "沈砚秋的手艺是跟杂货铺伙计的父亲学的"
+   ],
+   "verdicts": [
+    {
+     "claim": "沈砚秋的手艺是学出来的",
+     "label": "supported",
+     "reason": "证据明确提到沈砚秋的手艺是师父顾长风一手带出来的，说明她是学出来的。"
+    },
+    {
+     "claim": "沈砚秋的手艺是跟杂货铺伙计的父亲学的",
+     "label": "contradicted",
+     "reason": "证据中提到的小顺的父亲是钟表匠，并未提及沈砚秋的手艺是跟小顺的父亲学的。"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_scope_windows_latched": {
+   "label": "supported",
+   "reason": "全部断言有据（2 条断言：supported 2 / contradicted 0 / not_found 0）",
+   "claims": [
+    "三起盗案",
+    "窗户都是从里面闩着的"
+   ],
+   "verdicts": [
+    {
+     "claim": "三起盗案",
+     "label": "supported",
+     "reason": "证据明确说明三个人报的案由一致，符合三起盗案的描述"
+    },
+    {
+     "claim": "窗户都是从里面闩着的",
+     "label": "supported",
+     "reason": "证据中明确提到窗户都是从里面闩着的"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_scope_laobai_bite": {
+   "label": "supported",
+   "reason": "全部断言有据（3 条断言：supported 3 / contradicted 0 / not_found 0）",
+   "claims": [
+    "牵老白的人里",
+    "除了陆知微",
+    "都得挨它一口"
+   ],
+   "verdicts": [
+    {
+     "claim": "牵老白的人里",
+     "label": "supported",
+     "reason": "证据直接说明了除了陆知微外，牵老白的人都要挨一口"
+    },
+    {
+     "claim": "除了陆知微",
+     "label": "supported",
+     "reason": "证据直接说明了除了陆知微外，牵老白的人都要挨一口"
+    },
+    {
+     "claim": "都得挨它一口",
+     "label": "supported",
+     "reason": "证据直接说明了除了陆知微外，牵老白的人都要挨一口"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_scope_all_gifts": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（2 条断言：supported 0 / contradicted 1 / not_found 1）",
+   "claims": [
+    "三位失主都送了礼物",
+    "答谢沈砚秋"
+   ],
+   "verdicts": [
+    {
+     "claim": "三位失主都送了礼物",
+     "label": "contradicted",
+     "reason": "周掌柜和陈伯都没有送礼物"
+    },
+    {
+     "claim": "答谢沈砚秋",
+     "label": "not_found",
+     "reason": "证据中未提及沈砚秋"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_scope_season_yearround": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 0 / not_found 1）",
+   "claims": [
+    "雾隐山庄四周种满了药田",
+    "一年到头都",
+    "药香满山"
+   ],
+   "verdicts": [
+    {
+     "claim": "雾隐山庄四周种满了药田",
+     "label": "supported",
+     "reason": "证据直接说明了雾隐山庄四周种满了药田"
+    },
+    {
+     "claim": "一年到头都",
+     "label": "not_found",
+     "reason": "证据中没有提到一年到头的情况"
+    },
+    {
+     "claim": "药香满山",
+     "label": "supported",
+     "reason": "证据提到春夏时节药香满山，可以推断药香满山"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_scope_rain_month": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 1 / not_found 0）",
+   "claims": [
+    "那年秋雨连续下了一个月",
+    "那年秋雨都没停过",
+    "河水漫过了东街的石桥"
+   ],
+   "verdicts": [
+    {
+     "claim": "那年秋雨连续下了一个月",
+     "label": "contradicted",
+     "reason": "证据中提到的是下了半个月的雨，而非一个月"
+    },
+    {
+     "claim": "那年秋雨都没停过",
+     "label": "supported",
+     "reason": "证据中提到的雨势之大，可以推断出雨都没停过"
+    },
+    {
+     "claim": "河水漫过了东街的石桥",
+     "label": "supported",
+     "reason": "证据明确提到河水涨得几乎要漫过东街的石桥"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_scope_unit_cm": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（2 条断言：supported 0 / contradicted 1 / not_found 1）",
+   "claims": [
+    "芦苇根下面两厘米是湿沙层",
+    "扒开就能看见水汽"
+   ],
+   "verdicts": [
+    {
+     "claim": "芦苇根下面两厘米是湿沙层",
+     "label": "contradicted",
+     "reason": "证据中提到芦苇根下面两米是湿沙层，而断言中说的是两厘米，数字不符"
+    },
+    {
+     "claim": "扒开就能看见水汽",
+     "label": "not_found",
+     "reason": "证据中没有提到扒开就能看见水汽的内容"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_scope_years20": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 1 / not_found 0）",
+   "claims": [
+    "陆知微跑了二十年沙漠",
+    "从没在没有参照物的沙海里迷过路"
+   ],
+   "verdicts": [
+    {
+     "claim": "陆知微跑了二十年沙漠",
+     "label": "contradicted",
+     "reason": "证据中提到他跑了十二年沙漠，与断言中的二十年不符"
+    },
+    {
+     "claim": "从没在没有参照物的沙海里迷过路",
+     "label": "supported",
+     "reason": "证据中明确提到他从没在没有参照物的沙海里迷过路"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_pron_shopboy_father": {
+   "label": "supported",
+   "reason": "全部断言有据（1 条断言：supported 1 / contradicted 0 / not_found 0）",
+   "claims": [
+    "那个杂货铺伙计的父亲是钟表匠"
+   ],
+   "verdicts": [
+    {
+     "claim": "那个杂货铺伙计的父亲是钟表匠",
+     "label": "supported",
+     "reason": "证据中提到小顺的父亲是钟表匠，与断言中的杂货铺伙计的父亲是钟表匠一致。"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_pron_laobai_neck": {
+   "label": "supported",
+   "reason": "全部断言有据（4 条断言：supported 4 / contradicted 0 / not_found 0）",
+   "claims": [
+    "沙暴过后",
+    "巴特尔拍着老白的脖子",
+    "巴特尔夸它",
+    "它比人靠得住"
+   ],
+   "verdicts": [
+    {
+     "claim": "沙暴过后",
+     "label": "supported",
+     "reason": "证据直接说明了沙暴过后"
+    },
+    {
+     "claim": "巴特尔拍着老白的脖子",
+     "label": "supported",
+     "reason": "巴特尔拍着它的脖子，暗示巴特尔拍着老白的脖子"
+    },
+    {
+     "claim": "巴特尔夸它",
+     "label": "supported",
+     "reason": "巴特尔拍着它的脖子说，可以理解为夸它"
+    },
+    {
+     "claim": "它比人靠得住",
+     "label": "supported",
+     "reason": "这畜生比人靠得住直接说明了这一点"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_pron_intern_water": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（4 条断言：supported 3 / contradicted 0 / not_found 1）",
+   "claims": [
+    "实习生第一次进沙漠",
+    "水壶见底",
+    "队长把自己的水匀给他",
+    "匀给他一半"
+   ],
+   "verdicts": [
+    {
+     "claim": "实习生第一次进沙漠",
+     "label": "supported",
+     "reason": "证据直接说明小何第一次进沙漠"
+    },
+    {
+     "claim": "水壶见底",
+     "label": "supported",
+     "reason": "证据明确提到小何的水壶见底"
+    },
+    {
+     "claim": "队长把自己的水匀给他",
+     "label": "not_found",
+     "reason": "证据中未提到队长匀水给小何"
+    },
+    {
+     "claim": "匀给他一半",
+     "label": "supported",
+     "reason": "证据提到陆知微匀给小何一半水"
+    }
+   ],
+   "human_label": "supported"
+  },
+  "x2_pron_who_checked": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 2 / contradicted 0 / not_found 1）",
+   "claims": [
+    "小顺装好平生第一块表",
+    "他父亲检查了半天",
+    "他父亲只在机芯夹板上找到一处多余的划痕"
+   ],
+   "verdicts": [
+    {
+     "claim": "小顺装好平生第一块表",
+     "label": "supported",
+     "reason": "证据直接说明了小顺装好了平生第一块表"
+    },
+    {
+     "claim": "他父亲检查了半天",
+     "label": "not_found",
+     "reason": "证据中没有提到沈砚秋检查，也没有提到他父亲"
+    },
+    {
+     "claim": "他父亲只在机芯夹板上找到一处多余的划痕",
+     "label": "supported",
+     "reason": "证据提到在机芯夹板上找到一处多余的划痕，可以推断是沈砚秋父亲检查的结果"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_pron_zhou_table": {
+   "label": "unsupported",
+   "reason": "存在被证据直接反驳的断言（2 条断言：supported 0 / contradicted 1 / not_found 1）",
+   "claims": [
+    "周掌柜来找沈砚秋修表",
+    "丢的是1897年产的黄铜怀表"
+   ],
+   "verdicts": [
+    {
+     "claim": "周掌柜来找沈砚秋修表",
+     "label": "not_found",
+     "reason": "证据中未提到周掌柜来找沈砚秋修表"
+    },
+    {
+     "claim": "丢的是1897年产的黄铜怀表",
+     "label": "contradicted",
+     "reason": "证据提到丢的是瑞士产的珐琅面怀表，而非1897年产的黄铜怀表"
+    }
+   ],
+   "human_label": "partial"
+  },
+  "x2_pron_speaker_misread": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（2 条断言：supported 1 / contradicted 1 / not_found 0）",
+   "claims": [
+    "说‘芦苇根下面两米就是湿沙层’这句话的是实习生小何",
+    "他对水文很内行"
+   ],
+   "verdicts": [
+    {
+     "claim": "说‘芦苇根下面两米就是湿沙层’这句话的是实习生小何",
+     "label": "contradicted",
+     "reason": "证据中提到说话者为‘他’，而非实习生小何。"
+    },
+    {
+     "claim": "他对水文很内行",
+     "label": "supported",
+     "reason": "证据中提到老白能够通过芦苇根和湿沙层的位置判断承压水的位置，说明他对水文有一定了解。"
+    }
+   ],
+   "human_label": "unsupported"
+  },
+  "x2_pron_roleswap": {
+   "label": "partial",
+   "reason": "部分断言有据、其余不成立（3 条断言：supported 1 / contradicted 1 / not_found 1）",
+   "claims": [
+    "青黛见顾长风几乎不眠不休",
+    "照看自己",
+    "青黛心中十分感激"
+   ],
+   "verdicts": [
+    {
+     "claim": "青黛见顾长风几乎不眠不休",
+     "label": "contradicted",
+     "reason": "证据中提到的人是沈砚之，而非顾长风"
+    },
+    {
+     "claim": "照看自己",
+     "label": "not_found",
+     "reason": "证据中未提到照看自己"
+    },
+    {
+     "claim": "青黛心中十分感激",
+     "label": "supported",
+     "reason": "证据直接表明青黛心中十分感激"
+    }
+   ],
+   "human_label": "unsupported"
+  }
+ }
+}

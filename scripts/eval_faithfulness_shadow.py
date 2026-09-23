@@ -9,6 +9,9 @@
     python scripts/eval_faithfulness_shadow.py \\
         --model glm:glm-4-flash --model two:glm:glm-4-flash   # 同一模型单步 vs 两步走
     python scripts/eval_faithfulness_shadow.py --two-step --model claude:sonnet
+    python scripts/eval_faithfulness_shadow.py --model ollama:qwen2.5:7b --dump-json result.json
+    python scripts/eval_faithfulness_shadow.py --two-step --batch-verdicts \\
+        --model ollama:qwen2.5:7b --dump-json two-step.json
 
 **影子评测结果不阻塞任何线上回答**：本脚本只读 tests/citation_shadow_set.json，
 把每个方法（规则基线和/或若干 LLM Judge）的自动判断与人工标签的混淆矩阵、
@@ -28,6 +31,7 @@ import json
 import os
 import signal
 import sys
+import tempfile
 import time
 from collections import Counter
 from contextlib import contextmanager
@@ -111,7 +115,63 @@ def _build_generate_fn(model: str):
         from backend import claude_cli
 
         return _with_deadline(lambda prompt: claude_cli.generate_stream(prompt, model))
-    raise SystemExit(f"不支持的模型前缀：{model}（影子评测只支持 glm:/claude: 前缀）")
+    if model.startswith("ollama:"):
+        import requests
+
+        ollama_model = model[len("ollama:") :]
+        if not ollama_model:
+            raise SystemExit("ollama: 后必须提供本地模型名，例如 ollama:qwen2.5:7b")
+
+        def generate_local(prompt: str) -> str:
+            response = requests.post(
+                os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434") + "/api/generate",
+                json={
+                    "model": ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    # Every Judge path requests JSON; asking Ollama to constrain its
+                    # decoder avoids malformed/truncated objects in long batch verdicts.
+                    "format": "json",
+                    "options": {"temperature": 0, "num_predict": 1024},
+                },
+                timeout=(5, _CALL_DEADLINE_S),
+            )
+            response.raise_for_status()
+            return response.json()["response"]
+
+        return generate_local
+    raise SystemExit(f"不支持的模型前缀：{model}（支持 ollama:/glm:/claude: 前缀）")
+
+
+def _write_incremental_dump(path: Path, results_by_spec: dict, cases: list[dict]) -> None:
+    """原子更新逐条结果；中断时保留已完成的样本和方法。"""
+    human_labels = {case["id"]: case["human_label"] for case in cases}
+    dump = {
+        method: {
+            case_id: {**result, "human_label": human_labels[case_id]}
+            for case_id, result in results.items()
+        }
+        for method, results in results_by_spec.items()
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp:
+            temp_path = Path(temp.name)
+            json.dump(dump, temp, ensure_ascii=False, indent=1)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def parse_method_spec(spec: str) -> tuple[str, str, bool]:
@@ -120,7 +180,7 @@ def parse_method_spec(spec: str) -> tuple[str, str, bool]:
     规则：
     - ``rule``：规则基线，永远单步；
     - ``two:<model>``：显式给该方法开两步走；
-    - 其余 glm:/claude: 前缀模型按环境变量 ``FAITHFULNESS_JUDGE_MODE``
+    - 其余 ollama:/glm:/claude: 前缀模型按环境变量 ``FAITHFULNESS_JUDGE_MODE``
       （取值 two_step/two/1/true）决定默认模式——env 提供全局开关，
       two: 前缀提供逐方法覆盖。
     """
@@ -128,11 +188,13 @@ def parse_method_spec(spec: str) -> tuple[str, str, bool]:
     env_two_step = mode_env in ("two_step", "two", "1", "true")
     if spec.startswith(TWO_STEP_PREFIX):
         base = spec[len(TWO_STEP_PREFIX) :]
-        if base == "rule" or not base.startswith(("glm:", "claude:")):
-            raise SystemExit(f"两步走只支持 glm:/claude: 前缀模型，收到：{spec}")
+        if base == "rule" or not base.startswith(("ollama:", "glm:", "claude:")):
+            raise SystemExit(f"两步走只支持 ollama:/glm:/claude: 前缀模型，收到：{spec}")
         return spec, base, True
-    if spec != "rule" and not spec.startswith(("glm:", "claude:")):
-        raise SystemExit(f"不支持的方法：{spec}（可选 rule 或 [two:]glm:/claude: 前缀模型）")
+    if spec != "rule" and not spec.startswith(("ollama:", "glm:", "claude:")):
+        raise SystemExit(
+            f"不支持的方法：{spec}（可选 rule 或 [two:]ollama:/glm:/claude: 前缀模型）"
+        )
     return spec, spec, env_two_step
 
 
@@ -265,8 +327,8 @@ def main() -> int:
         default=None,
         help=(
             "评测方法，可重复传入做横向对比：rule 表示规则基线，其余为 "
-            "[two:]glm:/claude: 前缀的模型名——加 two: 前缀表示该方法走"
-            "「先抽断言再逐条核对」的两步走路径（如 two:glm:glm-4-flash）。"
+            "[two:]ollama:/glm:/claude: 前缀的模型名——加 two: 前缀表示该方法走"
+            "「先抽断言再逐条核对」的两步走路径（如 two:ollama:qwen2.5:7b）。"
             "不传该参数时只跑规则基线（与旧版单模型用法向后兼容）"
         ),
     )
@@ -277,11 +339,17 @@ def main() -> int:
         "（也可用环境变量 FAITHFULNESS_JUDGE_MODE=two_step 达到同样效果）",
     )
     parser.add_argument(
+        "--batch-verdicts",
+        action="store_true",
+        help="两步走时在第二步一次性核对全部原子断言；减少本地模型调用数，"
+        "但结果需与逐条核对模式分别解读",
+    )
+    parser.add_argument(
         "--dump-json",
         metavar="PATH",
         default=None,
-        help="把逐条自动判定（含两步走的断言与逐条核对结果）写入 JSON 文件，"
-        "供聚合规则离线重算——改聚合逻辑不需要重跑模型调用",
+        help="把逐条自动判定（含两步走的断言与逐条核对结果）增量写入 JSON 文件，"
+        "供聚合规则离线重算；中断后保留已完成样本",
     )
     args = parser.parse_args()
 
@@ -291,6 +359,9 @@ def main() -> int:
     # 提前解析全部方法描述符：非法前缀在花钱之前就报错。
     # 每个 plan 是 (展示名, 路由模型名, 是否两步走)
     method_plans = [parse_method_spec(spec) for spec in specs or ["rule"]]
+    dump_path = Path(args.dump_json) if args.dump_json else None
+    if dump_path is not None and not dump_path.is_absolute():
+        dump_path = ROOT / dump_path
 
     cases = load_cases()
     print("=" * 64)
@@ -303,9 +374,9 @@ def main() -> int:
             f"{display}(两步走)" if two else display for display, _, two in llm_plans
         )
         print(
-            f"LLM Judge 模型：{mode_note}"
-            f"（每条最多 {1 + _MAX_RETRIES} 次真实调用，两步走按断言数翻倍，"
-            f"间隔≥{_MIN_CALL_INTERVAL_S}s，注意费用）"
+            f"Judge 模型：{mode_note}"
+            f"（每条最多 {1 + _MAX_RETRIES} 次调用，两步走按断言数翻倍，"
+            f"间隔≥{_MIN_CALL_INTERVAL_S}s；云端模型可能产生费用）"
         )
     else:
         print("未指定 --model：只跑规则基线，不调用任何 LLM")
@@ -368,6 +439,8 @@ def main() -> int:
     # ---- 逐方法评测并输出各自的混淆矩阵 ----
     labels_by_spec: dict[str, dict[str, str]] = {"rule": rule_labels}
     results_by_spec: dict[str, dict[str, dict]] = {}
+    if dump_path is not None:
+        _write_incremental_dump(dump_path, results_by_spec, cases)
     failed_counts: Counter = Counter()
     failure_notes: list[str] = []
 
@@ -381,9 +454,11 @@ def main() -> int:
         mismatches: list[dict] = []
         labels_by_spec[display] = {}
         results_by_spec[display] = {}
+        if dump_path is not None:
+            _write_incremental_dump(dump_path, results_by_spec, cases)
         for index, case in enumerate(cases, start=1):
             result, failed = judge_with_retry(
-                case, generate_fn, two_step=two, batch_verdicts=False
+                case, generate_fn, two_step=two, batch_verdicts=args.batch_verdicts
             )
             label = result["label"]
             if failed:
@@ -391,6 +466,8 @@ def main() -> int:
                 failure_notes.append(f"{display} [{case['id']}] {result['reason']}")
             labels_by_spec[display][case["id"]] = label
             results_by_spec[display][case["id"]] = result
+            if dump_path is not None:
+                _write_incremental_dump(dump_path, results_by_spec, cases)
             human = case["human_label"]
             rows.append((label, human))
             if label != human:
@@ -484,18 +561,8 @@ def main() -> int:
     # 影子评测永远返回 0：误判多是预期内的观察结果，不该让 CI 变红。
     print("\n再次提醒：影子评测结果不阻塞任何线上回答；阈值成熟前不接入问答主链路。")
 
-    if args.dump_json:
-        dump = {
-            method: {
-                case_id: {**result, "human_label": human}
-                for case_id, result in results.items()
-            }
-            for method, results in results_by_spec.items()
-        }
-        Path(args.dump_json).write_text(
-            json.dumps(dump, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
-        print(f"逐条判定已写入 {args.dump_json}（聚合规则可离线重算，不必重跑模型）")
+    if dump_path is not None:
+        print(f"逐条判定已增量写入 {dump_path}（聚合规则可离线重算，不必重跑模型调用）")
     return 0
 
 
