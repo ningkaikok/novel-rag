@@ -13,6 +13,10 @@
   Prometheus/Alertmanager 告警和按租户维护发布流程。
 - 评测支持本地 Judge 模型及增量检查点，可在中断后继续运行并保留已完成结果。
 
+### Fixed
+
+- 更新前后端受影响的依赖锁定版本，修复 CI 安全审计发现的已知漏洞。
+
 生产化功能已通过自动化检查；真实 Docker 部署及 PostgreSQL/pgvector 备份恢复演练
 仍待完成，详见 [生产部署说明](docs/production.md)。
 
