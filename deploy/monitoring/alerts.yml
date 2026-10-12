@@ -1,0 +1,58 @@
+groups:
+  - name: novel-rag-production
+    rules:
+      - alert: KnowledgeGatewayDown
+        expr: up{job="novel-rag"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Knowledge gateway scrape failed"}
+      - alert: KnowledgeWorkerDown
+        expr: (novel_rag_worker_up == 0) unless (novel_rag_maintenance == 1)
+        for: 3m
+        labels: {severity: critical}
+        annotations: {summary: "Tenant worker unavailable"}
+      - alert: KnowledgeDatabaseDown
+        expr: (novel_rag_database_up == 0) unless (novel_rag_maintenance == 1)
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Tenant database unavailable"}
+      - alert: KnowledgeStorageNearLimit
+        expr: novel_rag_storage_bytes / novel_rag_storage_limit_bytes > 0.85
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Tenant source storage exceeds 85 percent"}
+      - alert: KnowledgeCallsNearLimit
+        expr: novel_rag_calls_today / novel_rag_calls_limit > 0.9
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Tenant daily call quota exceeds 90 percent"}
+      - alert: KnowledgeUpstreamErrors
+        expr: increase(novel_rag_upstream_errors_total[5m]) >= 3
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Repeated upstream failures"}
+      - alert: KnowledgeQuotaRejections
+        expr: increase(novel_rag_quota_rejections_total[5m]) >= 10
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Repeated quota rejections"}
+      - alert: KnowledgeIndexFailed
+        expr: novel_rag_index_task_failed == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Latest indexing task failed"}
+      - alert: KnowledgeBackupStale
+        expr: time() - novel_rag_backup_timestamp_seconds > 86400
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "Tenant has no successful backup in 24 hours"}
+      - alert: KnowledgeMaintenanceLong
+        expr: novel_rag_maintenance == 1
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "Tenant paused for over one hour"}
+      - alert: KnowledgeLatencyHigh
+        expr: rate(novel_rag_request_duration_seconds_sum[10m]) / rate(novel_rag_requests_total[10m]) > 120
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Average request duration exceeds two minutes"}

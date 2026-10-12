@@ -505,6 +505,19 @@ def delete_novel_index(novel: str, cancel_check: Callable[[], None] | None = Non
     check = cancel_check or (lambda: None)
     with connect() as conn:
         check()
+        context_table = conn.execute("SELECT to_regclass('chunk_contexts') AS name").fetchone()
+        if context_table and context_table["name"]:
+            old_rows = conn.execute(
+                "SELECT text FROM novel_chunks WHERE novel = %s", (novel,)
+            ).fetchall()
+            hashes = [
+                hashlib.sha256(row["text"].encode("utf-8")).hexdigest() for row in old_rows
+            ]
+            if hashes:
+                conn.execute("DELETE FROM chunk_contexts WHERE text_hash = ANY(%s)", (hashes,))
+        graph_table = conn.execute("SELECT to_regclass('graph_characters') AS name").fetchone()
+        if graph_table and graph_table["name"]:
+            conn.execute("DELETE FROM graph_characters WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM chunk_terms WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM novel_chunks WHERE novel = %s", (novel,))
         conn.execute("DELETE FROM character_relations WHERE novel = %s", (novel,))

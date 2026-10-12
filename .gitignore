@@ -27,3 +27,11 @@ data/novels/*
 # Claude Code 本地启动配置（端口/命令因人而异，不入库）
 .claude/
 CLAUDE.local.md
+
+# Tenant credentials, private source volumes, quota databases and backups.
+deploy/private/
+data/tenants/
+backups/
+*.sqlite
+*.sqlite-*
+.cache/

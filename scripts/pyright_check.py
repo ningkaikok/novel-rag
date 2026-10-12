@@ -53,7 +53,7 @@ def fingerprint(diag: dict) -> dict:
     出现多次的情况——对「只拦新增」这个目的来说可接受。
     """
     return {
-        "file": diag["file"].split("novel-rag/")[-1],
+        "file": diag["file"].replace("\\", "/").rsplit("novel-rag/", 1)[-1],
         "rule": diag.get("rule", ""),
         "message": diag["message"][:120],
     }

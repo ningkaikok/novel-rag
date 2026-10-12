@@ -6,10 +6,33 @@
 这里的配置不会和它互相干扰或导致日志打印两遍。
 """
 
+import json
 import logging
+import os
 
 from backend.context import request_id_var
 from config import LOG_LEVEL
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        # Operational records only; request payloads and credentials must never be logged.
+        fields = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
+            "tenant_id": os.environ.get("TENANT_ID", "local"),
+            "log_code": f"{record.module}:{record.lineno}",
+        }
+        if os.environ.get("PRODUCTION_WORKER") != "1":
+            fields["message"] = record.getMessage()
+        # Existing business logs interpolate questions/exception text. In production
+        # only stable code locations and explicitly selected operational fields survive.
+        for key in ("method", "status", "duration_ms"):
+            if hasattr(record, key):
+                fields[key] = getattr(record, key)
+        return json.dumps(fields, ensure_ascii=False)
 
 
 class RequestIDFilter(logging.Filter):
@@ -33,7 +56,11 @@ def configure_logging() -> None:
     handler = logging.StreamHandler()
     handler.addFilter(RequestIDFilter())
     handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s")
+        JSONFormatter()
+        if os.environ.get("LOG_FORMAT") == "json"
+        else logging.Formatter(
+            "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s"
+        )
     )
     logger = logging.getLogger("novel_rag")
     logger.setLevel(level)

@@ -199,7 +199,7 @@ def test_knowledge_document_rebuild_reads_source_and_starts_task(
     client, tmp_path, monkeypatch
 ):
     source = tmp_path / "设计说明.md"
-    source.write_text("# 重建\n\n正文")
+    source.write_text("# 重建\n\n正文", encoding="utf-8", newline="\n")
     monkeypatch.setattr(main, "KNOWLEDGE_DIR", tmp_path)
     monkeypatch.setattr(main, "_v2_document_source", lambda _id: (source.name, "AI 资料"))
     calls = []

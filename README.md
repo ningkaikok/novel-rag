@@ -75,6 +75,7 @@ novel-rag/
 | [**架构决策：是否需要 LangGraph**](docs/architecture-decisions.md) | 当前请求链路为什么保持显式编排、GraphRAG 和 LangGraph 的区别、什么情况下再引入 | 想学习技术选型 |
 | [**Agent 平台化架构**](docs/agent-platform-architecture.md) | Control/Data Plane、Tool/Model Gateway、安全、状态、Trace、MCP 与生产演进 | 想从 Agent Lab 走向生产设计 |
 | [**项目路线图**](docs/roadmap.md) | 已完成能力、后续里程碑和每阶段验收标准 | 想继续完善项目 |
+| [**生产部署与数据运维**](docs/production.md) | 独立租户、鉴权、配额、保留删除、备份恢复和告警 | 准备多用户私有部署 |
 | [**检索实验报告**](docs/experiments/m34-retrieval-matrix.md) | chunk 粒度与 embedding 模型对照的实测数据（含大部头验证） | 改检索参数前先看结论 |
 
 另有两份面试向的整理：[流式中断与 UI 性能](docs/streaming-interview-notes.md)、
@@ -194,7 +195,7 @@ npm run dev
 > 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
 > `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
 >
-> ⚠️ **端口只绑定在本机**（compose 里写的是 `127.0.0.1:8000:8000`）。本项目所有
+> ⚠️ **端口只绑定在本机**（compose 里写的是 `127.0.0.1:8000:8000`）。此单用户入口所有
 > 接口都没有鉴权、也没有限流，如果改成 `8000:8000` 发布到所有网卡，同网段的任何人
 > 都能读你的书架和聊天记录、并无上限地消耗你配置的 Claude/GLM 额度。确需局域网
 > 访问时，请自己补上防火墙或反向代理鉴权。
@@ -205,6 +206,13 @@ npm run dev
 >
 > 不用 Docker 的手动路径：`cd frontend && npm run build` 生成静态文件后，
 > FastAPI 会自动检测 `frontend/dist` 并托管（存在即挂载，开发模式不受影响）。
+
+## 多用户生产部署
+
+多用户生产部署请使用新的认证入口，见 [生产部署与数据运维](docs/production.md)。
+运行 `python scripts/production_init.py --users alice bob` 可生成私有 Compose 部署：
+每位用户独立 worker、PostgreSQL/pgvector 和数据目录，统一认证、配额及监控。
+此前的根目录 Compose 与 `backend.main:app` 仍用于本地单用户运行。
 
 ## 切换生成模型（本地 Ollama / Claude 订阅 / Codex 订阅 / 智谱 GLM）
 

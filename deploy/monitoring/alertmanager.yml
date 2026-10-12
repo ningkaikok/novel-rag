@@ -1,0 +1,16 @@
+route:
+  receiver: operator
+  group_by: [alertname, tenant]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: operator
+    webhook_configs:
+      - url: http://gateway:8000/admin/alerts
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/metrics-token
+    # Additional private receivers belong in deploy/private/alertmanager.yml.
