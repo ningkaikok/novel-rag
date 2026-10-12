@@ -8,6 +8,13 @@ venv
 __pycache__
 *.pyc
 logs
+deploy/private
+data/tenants
+data/knowledge
+backups
+*.sqlite
+*.sqlite-*
+.cache
 
 # 前端：构建产物在镜像内 stage 1 重新生成，依赖单独 COPY 安装
 frontend/node_modules

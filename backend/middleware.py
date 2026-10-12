@@ -61,5 +61,8 @@ class RequestIDMiddleware:
             # status_holder 里没有值说明响应头都没发出去就炸了，记 "?" 而不是猜。
             duration_ms = (time.monotonic() - start) * 1000
             status = status_holder.get("status", "?")
-            logger.info(f"{method} {path} 结束 status={status} 耗时={duration_ms:.0f}ms")
+            logger.info(
+                f"{method} {path} 结束 status={status} 耗时={duration_ms:.0f}ms",
+                extra={"method": method, "status": status, "duration_ms": round(duration_ms)},
+            )
             request_id_var.reset(token)

@@ -101,6 +101,7 @@ from backend.index_tasks import (  # noqa: E402
 )
 from backend.knowledge_catalog import build_v1_catalog, build_v2_catalog  # noqa: E402
 from backend.middleware import RequestIDMiddleware  # noqa: E402
+from backend.operations import operations_router  # noqa: E402
 from backend.query_cache import CacheKey, QueryCache  # noqa: E402
 from backend.schemas import (  # noqa: E402
     AgentAskRequest,
@@ -139,6 +140,7 @@ from backend.schemas import (  # noqa: E402
     VerifyCitationRequest,
     VerifyCitationResult,
 )
+from backend.worker_security import WorkerSecurityMiddleware  # noqa: E402
 from citation_eval import (  # noqa: E402
     evaluate_citations,
     judge_support,
@@ -366,6 +368,8 @@ app.add_middleware(
 # 最后加的中间件在最外层（Starlette 的顺序），让 request-id 覆盖整个请求生命周期
 # （包括 CORS 预检），且不是 BaseHTTPMiddleware——不会缓冲 /api/ask 的 SSE 响应体。
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(WorkerSecurityMiddleware)
+app.include_router(operations_router(connect=connect, index_tasks=index_tasks))
 
 
 # ----------------------------------------------------------------- 书架
