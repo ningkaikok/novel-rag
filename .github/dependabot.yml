@@ -22,6 +22,11 @@ updates:
       interval: weekly
       day: monday
     groups:
+      # vitest 与 @vitest/* 互相锁死精确版本的 peerDependency，拆开升级必然
+      # npm ci ERESOLVE（见 #120/#121）。放在 minor-and-patch 之前：一个依赖
+      # 只归入第一个匹配的组，这样 major 也会合成一个 PR。
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
