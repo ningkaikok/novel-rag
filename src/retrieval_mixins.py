@@ -43,6 +43,7 @@ from postgres import (
 from retrieval_scope import select_legacy_novels
 from tokenizer import query_terms
 from v2_retrieval import V2ReadRepository
+from v2_source_adapter import fuse_v2_hits
 
 
 def _gray_read_enabled(rollout_key: str | None) -> bool:
@@ -124,6 +125,19 @@ class RetrievalMixin:
 
         开关关闭时零开销直接返回空列表。任何异常都退化为空列表——V2 只是
         锦上添花的一路召回，绝不能让它的故障拖垮 V1 小说问答主链路。
+
+        两路必须**按名次融合**，不能拼起来按原始分数排序
+        ------------------------------------------------
+        向量那一路的 ``distance`` 是余弦距离（0～2，越小越近）；关键词那一路
+        存的是**取负号的 BM25 分数**（量级、符号都不固定，常见 −8～−0.5）。
+        旧实现把两个列表拼在一起按 ``hit.distance`` 排序，等于拿余弦距离直接
+        和负 BM25 比大小：BM25 分数动辄 −3，于是关键词命中无条件排在语义
+        命中前面（即使它在关键词那路里排最后一名），而 BM25 分数的绝对值
+        又随语料统计量变化，同一个问题、同样的名次，换一本书就变一个排序。
+
+        现在分开保留两路各自的排名，用 RRF（``1/(k+rank)`` 累加）融合——
+        只看“在各路排第几”，与原始分数量纲无关；稳定去重后再取 top_k。
+        同一个片段被两路同时命中时会拿到两份 RRF 贡献，自然获得融合加分。
         """
         enabled = V2_NATIVE_RETRIEVAL_ENABLED or V2_NATIVE_RETRIEVAL_MODE == "on"
         enabled = enabled or _gray_read_enabled(rollout_key)
@@ -132,24 +146,29 @@ class RetrievalMixin:
         try:
             repository = V2ReadRepository()
             query_embedding = self.embedder.encode([question], normalize_embeddings=True)
-            hits = repository.vector_search(
-                query_embedding[0], top_k=top_k, exclude_legacy_novels=True
-            )
-            hits.extend(
-                repository.keyword_search(
-                    query_terms(question), top_k=top_k, exclude_legacy_novels=True
-                )
-            )
         except Exception:
             return []
-        seen: set[str] = set()
-        sources: list[SourceChunk] = []
-        for hit in sorted(hits, key=lambda h: h.distance):
-            if hit.chunk.id in seen:
-                continue
-            seen.add(hit.chunk.id)
-            sources.append(SourceChunk.from_v2_hit(hit, distance=hit.distance))
-        return sources[:top_k]
+        # 两路各自单独兜底：关键词那一路挂了不应把已经拿到的语义结果一起丢掉。
+        vector_hits = []
+        keyword_hits = []
+        try:
+            vector_hits = repository.vector_search(
+                query_embedding[0], top_k=top_k, exclude_legacy_novels=True
+            )
+        except Exception:
+            vector_hits = []
+        try:
+            keyword_hits = repository.keyword_search(
+                query_terms(question), top_k=top_k, exclude_legacy_novels=True
+            )
+        except Exception:
+            keyword_hits = []
+        # fuse_v2_hits 按 V2 chunk 的全局唯一 id 去重融合，两路列表各自的
+        # 顺序就是各自的排名（repository 已按相关性排好）。
+        return [
+            SourceChunk.from_v2_hit(hit, distance=hit.distance)
+            for hit in fuse_v2_hits(vector_hits, keyword_hits)[:top_k]
+        ]
 
     def keyword_retrieve(
         self,
@@ -462,12 +481,24 @@ class RetrievalMixin:
 
         检索结果仍保留为 top-k，扩展结果只用于生成上下文，避免前端出处卡片
         一次展示大量重复内容。相邻片段通过 PostgreSQL 的书名和片段编号读取。
+
+        **只给 V1 小说命中补邻居**：下游回 ``novel_chunks`` 靠的是
+        ``(novel, chunk_id)``，而 V2 文档片段的这两个字段只是展示投影（文档标题
+        + 片段序号）。拿它去查 V1 表会得到两种错误后果，而且都不报错：
+
+        - 存在同名小说时，V2 命中会被同名小说的 V1 正文**静默替换**，最终
+          prompt 里的证据变成另一本书的内容；
+        - 不存在同名小说时，该 V2 命中根本不在 ``by_key`` 里，被整个丢掉——
+          混合检索时表现为"上传的文档明明召回到了却答不出来"。
+
+        所以非 V1 来源原样透传，位置仍按检索相关性顺序，不参与邻居查询。
         """
         if not sources or neighbors <= 0:
             return sources
 
+        legacy_sources = [source for source in sources if source.is_legacy_novel]
         ranges: list[tuple[str, int, int]] = []
-        for source in sources:
+        for source in legacy_sources:
             ranges.append(
                 (
                     source.novel,
@@ -476,23 +507,39 @@ class RetrievalMixin:
                 )
             )
 
-        conditions = " OR ".join("(novel = %s AND chunk_id BETWEEN %s AND %s)" for _ in ranges)
-        params = [value for item in ranges for value in item]
-        with connect() as conn:
-            rows = conn.execute(
-                f"SELECT novel, chunk_id, chapter_title, text, context "
-                f"FROM novel_chunks WHERE {conditions}",
-                params,
-            ).fetchall()
         by_key: dict[tuple[str, int], SourceChunk] = {}
-        for row in rows:
-            key = (row["novel"], int(row["chunk_id"]))
-            by_key[key] = SourceChunk.from_legacy_row(row)
+        if ranges:
+            conditions = " OR ".join(
+                "(novel = %s AND chunk_id BETWEEN %s AND %s)" for _ in ranges
+            )
+            params = [value for item in ranges for value in item]
+            with connect() as conn:
+                rows = conn.execute(
+                    f"SELECT novel, chunk_id, chapter_title, text, context "
+                    f"FROM novel_chunks WHERE {conditions}",
+                    params,
+                ).fetchall()
+            for row in rows:
+                key = (row["novel"], int(row["chunk_id"]))
+                by_key[key] = SourceChunk.from_legacy_row(row)
+
+        # 把原始命中也放进 by_key（真实 DB 行优先）。邻居区间查询可能是**部分**的
+        # ——索引正在增量重建，或某个邻居片段刚好被删改。那种情况下命中自己没回来，
+        # 如果只靠 by_key 组装，它会被静默丢掉：最终 prompt 里少一条检索真正找到的
+        # 证据，而且不报错。
+        for source in legacy_sources:
+            by_key.setdefault((source.novel, source.chunk_id), source)
 
         expanded: list[SourceChunk] = []
-        seen: set[tuple[str, int]] = set()
+        seen: set[tuple] = set()
         # 按检索相关性保留不同命中簇的顺序；每个命中簇内部按原文顺序排列。
         for source in sources:
+            if not source.is_legacy_novel:
+                # V2 命中：原文/来源/章节信息全部原样保留，只去重不替换
+                if source.identity_key not in seen:
+                    seen.add(source.identity_key)
+                    expanded.append(source)
+                continue
             group = [
                 by_key[(source.novel, chunk_id)]
                 for chunk_id in range(
@@ -500,12 +547,14 @@ class RetrievalMixin:
                 )
                 if (source.novel, chunk_id) in by_key
             ]
+            # 命中自己一定在 group 里（上面已 setdefault 补入），其余能拿到的邻居
+            # 照常补上；顺序由 range 决定，即原文 chunk_id 顺序。
             for item in group:
-                key = (item.novel, item.chunk_id)
+                key = item.identity_key
                 if key not in seen:
                     expanded.append(item)
                     seen.add(key)
-        return expanded or sources
+        return expanded
 
     def build_answer_context(
         self, sources: list[SourceChunk]
@@ -540,7 +589,10 @@ class RetrievalMixin:
 
         1. 把命中按（书名, 章节标题）聚合，组的先后沿用检索相关性顺序；
            跨书天然隔离——书名是分组键的一部分，一本书的章节永远不会把
-           另一本书的内容拉进来。
+           另一本书的内容拉进来。只有 V1 小说命中能按章节回 ``novel_chunks``
+           补正文；V2 文档命中（``origin="v2_document"``）和没有章节标题的
+           命中一样原样透传，不参与章节查询——它们的 novel/chunk_id 只是
+           展示投影，拿回去查 V1 表会把同名小说的正文当成 V2 证据。
         2. 每个章节用「书名 + 章节标题」取回全部片段，按 chunk_id 排序
            （与 agent_lab.get_chapter、层级摘要的章节口径一致）。没有章节
            标题的命中（旧索引 / 无标题 txt）无从谈「章」，退化为只保留命中
@@ -549,6 +601,9 @@ class RetrievalMixin:
            不能被预算挤掉），再从命中的连续区间**向两侧对称生长**——每轮
            比较左右两侧下一个片段的 token 开销，纳入放得下的更便宜的一侧，
            直到两侧都放不下为止。这样截断方向永远是从离命中最远的地方开始丢。
+           **不连续命中之间的中间片段不是免费的**：它们同样要占 prompt 预算，
+           必须从剩余额度里扣；扣不起就不带入（只留命中），否则「为了维持
+           连续区间」白送的中间片段会直接把证据总量顶出预算。
         4. 组装结果：组间按相关性顺序、组内按 chunk_id 原文顺序，并产出
            一条 trace 步骤（mode / evidence_tokens / truncated / 截断原因）。
 
@@ -560,18 +615,32 @@ class RetrievalMixin:
         started = time.perf_counter()
         budget = CHAPTER_EXPANSION_MAX_TOKENS
 
+        if not sources:
+            # 空输入：不要装作"闸门执行了"，也不要凭空报 tokenizer 不可用。
+            return [], {
+                "step": "上下文扩展",
+                "stage_key": "context_expand",
+                "detail": "整章扩展：本轮没有命中片段，无需扩展",
+                "ms": int((time.perf_counter() - started) * 1000),
+                "expansion_mode": CHAPTER_EXPANSION_MODE,
+                "evidence_tokens": 0,
+                "truncated": False,
+                "truncation_reason": None,
+            }
+
         # ---- 第一步：聚合命中。units 保持相关性顺序，元素两种形状：
-        #   ("chapter", (novel, title), [命中 chunk_id])   有章节标题的命中组
-        #   ("single", SourceChunk)                         无章节标题的孤立命中
+        #   ("chapter", (novel, title), [命中 chunk_id])   有章节标题的 V1 命中组
+        #   ("single", SourceChunk)                         直接透传的命中（V2 片段 /
+        #                                                   无章节标题的 V1 片段）
         units: list[tuple] = []
         unit_index: dict[tuple[str, str], int] = {}
-        seen_hit: set[tuple[str, int]] = set()
+        seen_hit: set[tuple] = set()
         for source in sources:
-            key = (source.novel, source.chunk_id)
+            key = source.identity_key
             if key in seen_hit:  # 防御：上游理论上已去重，这里兜底
                 continue
             seen_hit.add(key)
-            if not source.chapter_title:
+            if not source.is_legacy_novel or not source.chapter_title:
                 units.append(("single", source))
                 continue
             group_key = (source.novel, source.chapter_title)
@@ -592,51 +661,73 @@ class RetrievalMixin:
                     "ORDER BY chunk_id",
                     (novel, title),
                 ).fetchall()
-                members = [SourceChunk.from_legacy_row(row) for row in rows] or [
-                    # 章节查不到内容（数据不一致的兜底）：退化为命中片段本身
-                    s
-                    for s in sources
-                    if (s.novel, s.chapter_title) == group_key
-                ]
-                chapters[group_key] = members
+                members = [SourceChunk.from_legacy_row(row) for row in rows]
+                merged: dict[tuple, SourceChunk] = {}
+                for member in members:
+                    merged.setdefault(member.identity_key, member)
+                # 章节查询可能是**部分**的（增量重建、片段被删改、索引与命中不一致）：
+                # 该组里没查回来的原始命中必须按 identity 补回来，再按 chunk_id 排序。
+                # 只靠“整章查不到”的分支兜底是不够的：查到一半时那些没回来的命中
+                # 会从证据里静默消失，而它们才是检索真正找到的片段。
+                # 也只收 **V1** 命中：同名 V2 文档片段的展示标题/章节名可以一模一样，
+                # 但它是透传单位（"single"），收进来会重复输出两次。
+                for source in sources:
+                    if (
+                        source.is_legacy_novel
+                        and (
+                            source.novel,
+                            source.chapter_title,
+                        )
+                        == group_key
+                    ):
+                        merged.setdefault(source.identity_key, source)
+                # 组内顺序稳定：同一章内部永远按原文 chunk_id 排列（与整章查询口径
+                # 一致），不依赖 SQL 返回顺序或补入先后。
+                chapters[group_key] = sorted(merged.values(), key=lambda chunk: chunk.chunk_id)
 
         # ---- 第三步：token 计数与预算闸门 --------------------------------
         def _tokens(chunk: SourceChunk) -> int | None:
             return _token_count(self.embedder, chunk.text)
 
-        all_members: dict[tuple[str, str], list[SourceChunk]] = {
+        all_members: dict[tuple, list[SourceChunk]] = {
             **chapters,
             **{
                 ("single", id(single)): [single]
                 for single in (u[1] for u in units if u[0] == "single")
             },
         }
-        counts = {
-            (member.novel, member.chunk_id): _tokens(member)
-            for members in all_members.values()
-            for member in members
-        }
+        # token 计数的覆盖范围必须包含**所有原始命中**，而不只是章节查询回来的
+        # 成员：章节表与命中不一致时（兜底分支），命中原文也会真的进 prompt，
+        # 不计费就等于白送证据、还把 trace 写成 0 tokens / 未截断。
+        counted: dict[tuple, SourceChunk] = {}
+        for members in all_members.values():
+            for member in members:
+                counted.setdefault(member.identity_key, member)
+        for source in sources:
+            counted.setdefault(source.identity_key, source)
+        counts = {key: _tokens(chunk) for key, chunk in counted.items()}
         tokenizer_usable = bool(counts) and all(c is not None for c in counts.values())
 
-        selected: set[tuple[str, int]] = set()
+        selected: set[tuple] = set()
         truncated = False
         reasons: list[str] = []
         evidence_tokens: int | None
+        # 章节查询没能覆盖到的命中组（数据不一致）：不猜章节边界，只保留命中原文。
+        fallback_groups: dict[tuple, list[SourceChunk]] = {}
 
         if not tokenizer_usable:
             # 无法计数就不执行闸门，但必须在 trace 里说清楚——静默跳过长度
             # 检查正是 M3.3 要消灭的行为。
             reasons.append("embedding tokenizer 不可用，token 预算闸门未执行")
             for members in all_members.values():
-                selected.update((m.novel, m.chunk_id) for m in members)
+                selected.update(m.identity_key for m in members)
             evidence_tokens = None
         else:
-            hit_total = sum(
-                counts[key]
-                for members in all_members.values()
-                for member in members
-                if (key := (member.novel, member.chunk_id)) in seen_hit
-            )
+
+            def _cost(chunk: SourceChunk) -> int:
+                return counts.get(chunk.identity_key) or 0
+
+            hit_total = sum(counts.get(key) or 0 for key in seen_hit)
             if hit_total > budget:
                 # 极端情况：光命中片段本身就超预算。证据不能丢，只能全保留
                 # 并如实记录——这个信号说明该书的章节粒度远超预期，评测时要看。
@@ -655,28 +746,56 @@ class RetrievalMixin:
             for _kind, group_key_or_single, hits in (u for u in units if u[0] == "chapter"):
                 members = chapters[group_key_or_single]
                 positions = {i for i, m in enumerate(members) if m.chunk_id in hits}
+                if not positions:
+                    # 防御：上面的 identity 补入已经保证该组每个命中都在 members 里。
+                    # 真到了这里（数据异常），宁可只保留命中原文，也不丢证据；
+                    # 这些命中已在 hit_total 里计过费，trace 会如实报告总量/超预算。
+                    fallback: dict[tuple, SourceChunk] = {}
+                    for source in sources:
+                        if (
+                            source.is_legacy_novel
+                            and (
+                                source.novel,
+                                source.chapter_title,
+                            )
+                            == group_key_or_single
+                        ):
+                            fallback.setdefault(source.identity_key, source)
+                    fallback_groups[group_key_or_single] = list(fallback.values())
+                    selected.update(fallback)
+                    continue
                 lo, hi = min(positions), max(positions)
                 hlo, hhi = lo, hi
-                for index in range(lo, hi + 1):
-                    selected.add((members[index].novel, members[index].chunk_id))
+                # 命中本身已在 hit_total 里付过账，先只把它们标进 selected。
+                for index in positions:
+                    selected.add(members[index].identity_key)
+                # 命中区间里的非命中片段不是免费的：不连续命中之间的中间片段
+                # 同样占 prompt 预算。付不起就干脆不带（只保留命中本身）。
+                interior = [members[i] for i in range(lo, hi + 1) if i not in positions]
+                interior_cost = sum(_cost(member) for member in interior)
+                if interior_cost > remaining:
+                    truncated = True
+                    reasons.append(
+                        f"命中之间的 {len(interior)} 段中间片段需 {interior_cost} tokens，"
+                        f"超出剩余预算 {remaining}，未带入"
+                    )
+                    continue
+                remaining -= interior_cost
+                selected.update(member.identity_key for member in interior)
                 while remaining > 0 and (lo > 0 or hi < len(members) - 1):
                     candidates = []
                     if lo > 0:
                         left = members[lo - 1]
-                        candidates.append(
-                            (counts[(left.novel, left.chunk_id)], hlo - lo, lo - 1)
-                        )
+                        candidates.append((_cost(left), hlo - lo, lo - 1))
                     if hi < len(members) - 1:
                         right = members[hi + 1]
-                        candidates.append(
-                            (counts[(right.novel, right.chunk_id)], hi - hhi, hi + 1)
-                        )
+                        candidates.append((_cost(right), hi - hhi, hi + 1))
                     fit = [c for c in candidates if c[0] <= remaining]
                     if not fit:
                         break
                     cost, _pending, position = min(fit)
                     chosen = members[position]
-                    selected.add((chosen.novel, chosen.chunk_id))
+                    selected.add(chosen.identity_key)
                     remaining -= cost
                     lo, hi = min(lo, position), max(hi, position)
                 if lo > 0 or hi < len(members) - 1:
@@ -685,19 +804,25 @@ class RetrievalMixin:
                 reasons.append(f"超出 token 预算 {budget}，已从命中片段向两侧截断")
 
             for single in (u[1] for u in units if u[0] == "single"):
-                selected.add((single.novel, single.chunk_id))
+                selected.add(single.identity_key)
 
-            evidence_tokens = sum(counts[key] for key in selected if key in counts)
+            evidence_tokens = sum(counts.get(key) or 0 for key in selected)
 
         # ---- 第四步：组装结果与 trace ------------------------------------
         result: list[SourceChunk] = []
-        emitted: set[tuple[str, int]] = set()
+        emitted: set[tuple] = set()
         for unit in units:
             if unit[0] == "single":
                 result.append(unit[1])
                 continue
+            if unit[1] in fallback_groups:
+                for source in fallback_groups[unit[1]]:
+                    if source.identity_key not in emitted:
+                        result.append(source)
+                        emitted.add(source.identity_key)
+                continue
             for member in chapters[unit[1]]:
-                key = (member.novel, member.chunk_id)
+                key = member.identity_key
                 if key in selected and key not in emitted:
                     result.append(member)
                     emitted.add(key)

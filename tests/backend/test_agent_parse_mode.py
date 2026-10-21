@@ -70,9 +70,9 @@ class _FakeRag:
 class _NoDocumentsConn:
     """假的 postgres 连接：知识库里没有任何 V2 文档。
 
-    兜底检索（``_fallback_search_action``）现在会查一次 ``knowledge_v2.documents``
-    判断问题是不是在问某份已上传文档；这里让它查到"没有文档"，保持本文件
-    "不连数据库"的约定。
+    兜底检索（``_fallback_search_action``）会先 ``to_regclass`` 探测
+    ``knowledge_v2.documents`` 在不在，再读文档标题；这里同时实现两种取行
+    协议，让它看到"表存在但为空"，保持本文件"不连数据库"的约定。
     """
 
     def __enter__(self):
@@ -81,10 +81,18 @@ class _NoDocumentsConn:
     def __exit__(self, *_exc):
         return False
 
-    def execute(self, *_args):
+    def execute(self, *args):
+        self._sql = str(args[0]) if args else ""
         return self
 
+    def fetchone(self):
+        assert "to_regclass" in self._sql, "只有表存在性探测走 fetchone"
+        return {"name": "knowledge_v2.documents"}
+
     def fetchall(self):
+        assert "from knowledge_v2.documents" in self._sql.lower(), (
+            "fetchall 只应该用来读文档标题"
+        )
         return []
 
 

@@ -50,6 +50,7 @@ novel-rag/
 ├── docs/          # 学习文档与实验报告，见下
 ├── tests/         # pytest + 问答评测集与历史基线
 ├── data/novels/   # 放小说 .txt 文件
+├── data/knowledge/  # 网页上传的通用文档源文件（KNOWLEDGE_DIR 默认值）
 ├── Dockerfile     # 多阶段构建：前端 dist + Python 运行时，单镜像部署
 └── docker-compose.yml  # 应用 + pgvector 一键起（模型缓存/文本挂载持久化）
 ```
@@ -134,7 +135,9 @@ novel-rag/
 
 当前前端目录展示已经通用化为“知识库 / 文档”，小说仍是默认的兼容适配器和演示场景。有两种方式，任选其一：
 
-- **网页上传（推荐）**：启动网页后选择 `.txt`/`.md`/`.markdown`/`.pdf` 文件。文件保存后会自动在后台建立增量索引，侧栏显示切分、Embedding、BM25 和入库进度；无需再手动全库重建。
+- **网页上传（推荐）**：启动网页后选择 `.txt`/`.md`/`.markdown`/`.pdf` 文件。文件保存到
+  `data/knowledge/`（可用 `KNOWLEDGE_DIR` 覆盖）后会自动在后台建立增量索引，
+  侧栏显示切分、Embedding、BM25 和入库进度；无需再手动全库重建。
 - **手动放置**：把 `.txt` 文件放进 `data/novels/` 目录，再运行 `python src/ingest.py`。
 
 网页上传走通用的 `/api/knowledge/documents` 入口：TXT/Markdown/PDF 都会被解析、
@@ -192,7 +195,10 @@ npm run dev
 > ```
 >
 > 打开 `http://localhost:8000`——单端口同时服务 API 与前端页面。PostgreSQL(pgvector)、
-> 模型缓存、小说文本分别持久化在独立卷/挂载里；容器内访问宿主机 Ollama 走
+> 模型缓存、小说文本、通用知识库源文件分别持久化在独立卷/挂载里——`data/novels/`
+> 放小说，`data/knowledge/` 放网页上传的通用文档（TXT/Markdown/PDF）。两个目录都
+> 挂在宿主机上，重建/升级容器不会丢掉已上传的源文件，后续重建这些文档的索引时
+> 仍然拿得到原文。容器内访问宿主机 Ollama 走
 > `host.docker.internal`（Linux 由 compose 的 host-gateway 提供）。
 >
 > ⚠️ **端口只绑定在本机**（compose 里写的是 `127.0.0.1:8000:8000`）。此单用户入口所有

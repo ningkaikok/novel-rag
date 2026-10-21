@@ -24,6 +24,9 @@ frontend/blob-report/
 data/novels/*
 !data/novels/雾隐山庄.txt
 
+# 网页上传的通用知识库源文件（KNOWLEDGE_DIR 默认值）：用户自己的文档，不入库
+data/knowledge/
+
 # Claude Code 本地启动配置（端口/命令因人而异，不入库）
 .claude/
 CLAUDE.local.md
