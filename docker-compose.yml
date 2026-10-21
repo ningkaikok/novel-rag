@@ -37,8 +37,12 @@ services:
     volumes:
       # 模型缓存跨容器重建持久化（embedding 95MB + 重排 1.1GB）
       - hf-cache:/cache/hf
-      # 小说文本放宿主机 data/novels/，上传的文件也落在这里
+      # 小说文本放宿主机 data/novels/（手动放置的 .txt 小说，ingest 读这里）
       - ./data/novels:/app/data/novels
+      # 通用知识库上传的源文件（TXT/Markdown/PDF）落在这里，与
+      # KNOWLEDGE_DIR 的默认值 data/knowledge 一致。不挂的话每次重建容器
+      # 都会丢掉源文件，之后想重建这些文档的索引就没有原文了。
+      - ./data/knowledge:/app/data/knowledge
     depends_on:
       db:
         condition: service_healthy
@@ -58,3 +62,6 @@ volumes:
 #   docker compose up --build -d
 #   把 .txt 小说放进 data/novels/ 后执行一次索引：
 #     docker compose exec api uv run python src/ingest.py
+#
+# 挂载约定：宿主机 data/novels/ 与 data/knowledge/ 分别对应容器内同名目录，
+# 后者就是 src/config.py 里 KNOWLEDGE_DIR 的默认值（ROOT_DIR/data/knowledge）。

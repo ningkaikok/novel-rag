@@ -36,8 +36,9 @@ RUN uv sync --frozen --no-dev
 COPY src/ src/
 COPY backend/ backend/
 COPY --from=frontend-build /app/frontend/dist frontend/dist
-# ingest 等入口需要 data/novels 目录存在（compose 里挂载真实数据卷）
-RUN mkdir -p data/novels
+# ingest 等入口需要 data/novels、data/knowledge 目录存在（compose 里挂载真实数据卷）。
+# 两个目录都是约定路径：novels 对应 src/ingest.py，knowledge 对应 KNOWLEDGE_DIR 默认值。
+RUN mkdir -p data/novels data/knowledge
 
 EXPOSE 8000
 # lifespan 里会连库/建表；数据库由 compose 的 depends_on + healthcheck 保证先就绪

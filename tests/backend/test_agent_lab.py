@@ -13,11 +13,11 @@ def _source(chunk_id: int) -> SourceChunk:
 
 
 class _NoDocumentsConn:
-    """假的 postgres 连接：知识库里没有任何 V2 文档。
+    """假的 postgres 连接：V2 文档表存在，但知识库里没有任何 V2 文档。
 
-    ``run_agent`` 的兜底检索现在会查一次 ``knowledge_v2.documents`` 判断问题
-    是不是在问某份已上传文档；这里让它查到"没有文档"，兜底行为回到默认的
-    search_novels，和这份文件"不调用真实 PostgreSQL"的约定保持一致。
+    ``run_agent`` 的兜底检索会先 ``to_regclass`` 探测 ``knowledge_v2.documents``
+    在不在（旧库缺表时必须能降级），再用 ``fetchall`` 读文档标题。这里同时
+    实现两种取行协议，让“表存在但为空”的语义和真库一致。
     """
 
     def __enter__(self):
@@ -26,10 +26,18 @@ class _NoDocumentsConn:
     def __exit__(self, *_exc):
         return False
 
-    def execute(self, *_args):
+    def execute(self, *args):
+        self._sql = str(args[0]) if args else ""
         return self
 
+    def fetchone(self):
+        assert "to_regclass" in self._sql, "只有表存在性探测走 fetchone"
+        return {"name": "knowledge_v2.documents"}
+
     def fetchall(self):
+        assert "from knowledge_v2.documents" in self._sql.lower(), (
+            "fetchall 只应该用来读文档标题"
+        )
         return []
 
 
@@ -372,7 +380,7 @@ def test_repeated_failures_are_blocked_even_when_args_differ(monkeypatch):
 
 
 class _OneDocumentConn:
-    """假的 postgres 连接：知识库里恰好有一份指定标题的 V2 文档。"""
+    """假的 postgres 连接：V2 文档表存在，且恰好有一份指定标题的文档。"""
 
     def __init__(self, title):
         self._title = title
@@ -383,10 +391,18 @@ class _OneDocumentConn:
     def __exit__(self, *_exc):
         return False
 
-    def execute(self, *_args):
+    def execute(self, *args):
+        self._sql = str(args[0]) if args else ""
         return self
 
+    def fetchone(self):
+        assert "to_regclass" in self._sql, "只有表存在性探测走 fetchone"
+        return {"name": "knowledge_v2.documents"}
+
     def fetchall(self):
+        assert "from knowledge_v2.documents" in self._sql.lower(), (
+            "fetchall 只应该用来读文档标题"
+        )
         return [{"title": self._title}]
 
 
@@ -504,3 +520,131 @@ def test_repeated_query_library_picks_are_capped_before_exhausting_budget(monkey
     assert "search_documents" in tool_sequence, "反复卡住后必须换成真正的检索"
     answer = "".join(value for kind, value in events if kind == "token")
     assert answer == "总结内容", "应该真正拿到证据并生成回答，而不是耗光步数后拒答"
+
+
+# ------------------------------------------ 旧数据库：V2 表还没建时兜底仍要可用
+
+
+class _MissingV2TableConn:
+    """假的 postgres 连接：``knowledge_v2`` 尚未迁移（表不存在）。
+
+    ``to_regclass`` 返回 NULL 就是真库里"表不存在"的样子。这里刻意**不允许**
+    再发出任何 ``knowledge_v2.documents`` 查询——旧实现直接查那张表，会抛
+    ``UndefinedTable`` 把整个 ``run_agent`` 生成器带崩。
+    """
+
+    def __init__(self):
+        self.queries: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, *args):
+        self._sql = str(args[0]) if args else ""
+        self.queries.append(" ".join(self._sql.split()))
+        return self
+
+    def fetchone(self):
+        return {"name": None}
+
+    def fetchall(self):
+        raise AssertionError("表不存在时不应该继续查 knowledge_v2.documents")
+
+
+class _RaceDroppedV2TableConn:
+    """表存在性检查通过、真正查询时表已经被删掉的竞态。"""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, *_args):
+        return self
+
+    def fetchone(self):
+        return {"name": "knowledge_v2.documents"}
+
+    def fetchall(self):
+        from psycopg import errors as pg_errors
+
+        raise pg_errors.UndefinedTable("relation does not exist")
+
+
+def test_fallback_search_defaults_to_novels_when_v2_table_missing(monkeypatch):
+    """V2 表还不存在时，兜底检索回退到 search_novels，而不是把 Agent 带崩。"""
+    conn = _MissingV2TableConn()
+    monkeypatch.setattr(agent_lab, "connect", lambda: conn)
+
+    action = agent_lab._fallback_search_action("庄主是谁", "测试")
+
+    assert action["tool"] == "search_novels"
+    assert conn.queries and "to_regclass" in conn.queries[0]
+    assert all("from knowledge_v2.documents" not in query.lower() for query in conn.queries)
+
+
+def test_question_mentions_known_document_is_false_when_v2_table_missing(monkeypatch):
+    monkeypatch.setattr(agent_lab, "connect", lambda: _MissingV2TableConn())
+    assert agent_lab._question_mentions_known_document("方案C历史推演 内容总结") is False
+
+
+def test_missing_table_race_is_treated_as_no_known_document(monkeypatch):
+    """检查通过但查询时表已被删：按"没有已知文档"降级，不向上冒泡。"""
+    monkeypatch.setattr(agent_lab, "connect", lambda: _RaceDroppedV2TableConn())
+
+    assert agent_lab._fallback_search_action("庄主是谁", "测试")["tool"] == "search_novels"
+
+
+def test_real_database_failure_is_not_disguised_as_missing_documents(monkeypatch):
+    """连不上库这类故障不能被静默当成"没有文档"，否则排障时线索全丢。"""
+    from psycopg import errors as pg_errors
+
+    def _broken_connect():
+        raise pg_errors.OperationalError("connection refused")
+
+    monkeypatch.setattr(agent_lab, "connect", _broken_connect)
+
+    with pytest.raises(pg_errors.OperationalError):
+        agent_lab._fallback_search_action("庄主是谁", "测试")
+
+
+def test_run_agent_survives_missing_v2_table_and_searches_novels(monkeypatch):
+    """完整路径：规划输出无效 + V2 表缺失 + 暂无证据，仍要能检索并正常结束。
+
+    旧实现在这里直接抛 ``UndefinedTable``：SSE 生成器异常中断，前端拿不到
+    ``done`` 事件，界面上一直转圈。
+    """
+    calls: list[str] = []
+
+    class _Toolbox:
+        def __init__(self, _rag):
+            pass
+
+        def execute(self, name, _args):
+            calls.append(name)
+            assert name == "search_novels"
+            return agent_lab.ToolResult("找到两个片段", [_source(2), _source(3)])
+
+    monkeypatch.setattr(agent_lab, "connect", lambda: _MissingV2TableConn())
+    monkeypatch.setattr(agent_lab, "AgentToolbox", _Toolbox)
+
+    events = list(
+        agent_lab.run_agent(
+            "庄主是谁",
+            rag=_FakeRag(),
+            planner=lambda _prompt: "这不是 JSON",
+            answerer=lambda _prompt: iter(["顾长风"]),
+            max_steps=3,
+        )
+    )
+
+    steps = [value for kind, value in events if kind == "agent_step"]
+    assert steps[0]["tool"] == "search_novels", "缺表时应回退到小说检索"
+    assert steps[0]["status"] == "complete"
+    assert calls == ["search_novels"]
+    assert events[-1] == ("done", {})
+    assert "".join(value for kind, value in events if kind == "token") == "顾长风"

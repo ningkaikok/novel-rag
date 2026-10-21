@@ -18,6 +18,9 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
+from psycopg import DatabaseError
+from psycopg import errors as pg_errors
+
 from config import AGENT_TOOL_MAX_CHARS
 from domain_models import RetrievalScope
 from postgres import connect
@@ -602,16 +605,47 @@ def _question_mentions_known_document(question: str) -> bool:
     只在**明确匹配到已知文档标题**时才改选 ``search_documents``；匹配不上
     仍然默认小说——这是绝大多数问题的实际归属，也是本函数改动前的行为，
     不应该因为加了文档检索就反过来对普通小说问题变得不确定。
+
+    旧数据库 / 尚未迁移的环境里 ``knowledge_v2.documents`` 可能根本不存在。
+    那种情况下这条查询会抛 ``UndefinedTable``，把整个 ``run_agent`` 生成器
+    带崩——兜底检索本来就是为了"别的路都不通时还能搜一下"，不能反成新的
+    崩溃点。所以先用 ``to_regclass`` 探一下表在不在，缺表直接当作"没有已知
+    文档"回退到小说检索。检查与查询之间的表被删竞态用窄异常兜底；其他数据库
+    故障（连不上、权限不对）继续抛出，不允许被伪装成"没有文档"。
     """
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT title FROM knowledge_v2.documents WHERE metadata->>'legacy_novel' IS NULL"
-        ).fetchall()
+    if not _knowledge_v2_documents_exists():
+        return False
+    try:
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT title FROM knowledge_v2.documents WHERE metadata->>'legacy_novel' IS NULL"
+            ).fetchall()
+    except DatabaseError as exc:
+        if not _is_missing_table_error(exc):
+            raise
+        # to_regclass 说表在，查的时候已经被删了：同样的降级处理。
+        return False
     for row in rows:
         title = _document_display_title(str(row["title"]))
         if title and _shares_long_substring(question, title):
             return True
     return False
+
+
+def _knowledge_v2_documents_exists() -> bool:
+    """V2 文档表是否存在；用 ``to_regclass`` 避免直接查不存在的表。"""
+
+    with connect() as conn:
+        row = conn.execute("SELECT to_regclass('knowledge_v2.documents') AS name").fetchone()
+    return bool(row and row["name"])
+
+
+def _is_missing_table_error(exc: BaseException) -> bool:
+    """是否是"表根本不存在"这一类错误（而不是连接/权限等故障）。"""
+
+    return (
+        isinstance(exc, pg_errors.UndefinedTable) or getattr(exc, "sqlstate", None) == "42P01"
+    )
 
 
 def _fallback_search_action(question: str, reason: str) -> dict:
@@ -924,8 +958,7 @@ def run_agent(
                     (
                         sid
                         for sid, existing in source_registry.items()
-                        if (existing.novel, existing.chunk_id)
-                        == (source.novel, source.chunk_id)
+                        if existing.identity_key == source.identity_key
                     ),
                     None,
                 )

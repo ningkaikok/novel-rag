@@ -242,3 +242,113 @@ def test_chapter_mode_keeps_untitled_hits_without_guessing_bounds(monkeypatch):
     assert [(c.novel, c.chunk_id) for c in result] == [("旧索引书", 7)]
     assert step["expansion_mode"] == "chapter"
     assert step["evidence_tokens"] == 4
+
+
+def test_chapter_mode_counts_chunks_between_discontiguous_hits(monkeypatch):
+    """不连续命中之间的中间片段也必须占预算，不能为了「维持连续区间」白送。
+
+    场景（计划指定的回归场景）：一章 10 段、每段 10 tokens，命中第 1 段和第 10 段，
+    预算 35。两个命中本身已经 20 tokens，只剩 15；把它们之间的 8 段全带进来
+    需要 80 tokens——旧实现把这 8 段当成「连续区间的一部分」免费塞入，最终
+    证据总量 100 tokens，比预算 35 超出近两倍，闸门形同虚设。
+    """
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MODE", "chapter")
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MAX_TOKENS", 35)
+    chapters = {("长章之书", "第二章"): _rows(range(10), width=10)}
+    conn = _FakeConn(chapters)
+    service = _service()
+    sources = [
+        _source("长章之书", 0, "第二章", width=10),
+        _source("长章之书", 9, "第二章", width=10),
+    ]
+
+    with patch.object(retrieval_mixins, "connect", lambda: conn):
+        result, step = service.build_answer_context(sources)
+
+    assert [c.chunk_id for c in result] == [0, 9], "付不起中间片段时只保留命中本身"
+    assert step["evidence_tokens"] == 20
+    assert step["evidence_tokens"] <= 35, "硬性闸门：不允许因中间片段突破预算"
+    assert step["truncated"] is True
+    assert "中间片段" in (step["truncation_reason"] or "")
+
+
+def test_chapter_mode_pays_for_interior_chunks_when_budget_allows(monkeypatch):
+    """预算充足时中间片段要真的带上，且它们的 token 也要计入证据总量。"""
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MODE", "chapter")
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MAX_TOKENS", 50)
+    chapters = {("长章之书", "第二章"): _rows(range(10), width=10)}
+    conn = _FakeConn(chapters)
+    service = _service()
+    sources = [
+        _source("长章之书", 3, "第二章", width=10),
+        _source("长章之书", 5, "第二章", width=10),
+    ]
+
+    with patch.object(retrieval_mixins, "connect", lambda: conn):
+        result, step = service.build_answer_context(sources)
+
+    # 命中 {3, 5} 本身 20 tokens，中间 4 号 10 tokens → 30；剩 20 再向两侧各延一段 → 50
+    assert [c.chunk_id for c in result] == [2, 3, 4, 5, 6]
+    assert step["evidence_tokens"] == 50
+    assert step["evidence_tokens"] <= 50
+
+
+def test_chapter_mode_shares_one_budget_across_chapters(monkeypatch):
+    """多章节共用同一份预算：靠前的相关章节先拿到余量，总证据不得超预算。"""
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MODE", "chapter")
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MAX_TOKENS", 40)
+    chapters = {
+        ("甲书", "第一章"): _rows(range(5), width=10),
+        ("乙书", "第二章"): _rows(range(10, 15), width=10),
+    }
+    conn = _FakeConn(chapters)
+    service = _service()
+    sources = [
+        _source("甲书", 2, "第一章", width=10),
+        _source("乙书", 12, "第二章", width=10),
+    ]
+
+    with patch.object(retrieval_mixins, "connect", lambda: conn):
+        result, step = service.build_answer_context(sources)
+
+    assert step["evidence_tokens"] <= 40, "两个章节加起来的证据也要守同一个预算"
+    assert [c.novel for c in result][:3] == ["甲书", "甲书", "甲书"]
+    assert ("乙书", 12) in [(c.novel, c.chunk_id) for c in result]
+    assert step["truncated"] is True, "乙书只剩命中、没能延展，应如实记为截断"
+
+
+def test_chapter_mode_single_hit_in_one_chunk_chapter_is_not_truncated(monkeypatch):
+    """单命中且章节只有一个片段：正好在预算内，不截断也不报假截断。"""
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MODE", "chapter")
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MAX_TOKENS", 10)
+    conn = _FakeConn({("短章之书", "第一章"): _rows([0], width=10)})
+    service = _service()
+    sources = [_source("短章之书", 0, "第一章", width=10)]
+
+    with patch.object(retrieval_mixins, "connect", lambda: conn):
+        result, step = service.build_answer_context(sources)
+
+    assert [c.chunk_id for c in result] == [0]
+    assert step["evidence_tokens"] == 10
+    assert step["truncated"] is False
+    assert step["truncation_reason"] is None
+
+
+def test_chapter_mode_empty_input_reports_no_evidence_without_fake_gate(monkeypatch):
+    """空输入：返回空证据，但不能谎称"tokenizer 不可用导致闸门没执行"。"""
+    monkeypatch.setattr(retrieval_mixins, "CHAPTER_EXPANSION_MODE", "chapter")
+    conn = _FakeConn({})
+    service = _service()
+
+    with patch.object(retrieval_mixins, "connect", lambda: conn):
+        result, step = service.build_answer_context([])
+
+    assert result == []
+    assert step["evidence_tokens"] == 0
+    assert step["truncated"] is False
+    assert step["truncation_reason"] is None
+    assert conn.calls == [], "没有命中就不该发起任何章节查询"
+
+    from backend.schemas import TraceStep
+
+    TraceStep(**step).model_dump()

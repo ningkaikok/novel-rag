@@ -630,13 +630,19 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             },
         )
 
-        # Reciprocal Rank Fusion：把多路召回合并成一个候选池。
-        # RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
-        # 分数量纲完全不同，没法直接相加。这让它简单又稳健，但也意味着它对
-        # 「这段话到底有没有回答问题」一无所知，那是下面重排要做的事。
+        #  Reciprocal Rank Fusion：把多路召回合并成一个候选池。
+        #  RRF 只看「在各路里排第几」，不看各路的原始分数——因为语义距离和 BM25
+        #  分数量纲完全不同，没法直接相加。这让它简单又稳健，但也意味着它对
+        #  「这段话到底有没有回答问题」一无所知，那是下面重排要做的事。
+        #
+        #  去重键用 ``identity_key`` 而不是 ``(novel, chunk_id)``：V2 文档的
+        #  novel/chunk_id 只是「文档标题 + 片段序号」的展示投影，和 V1 小说的
+        #  (书名, 片段号) 属于两套不同 ID 空间。用展示字段当键的话，一份名叫
+        #  《雾隐山庄.txt》的上传文档会和自己同名的 V1 小说片段互相覆盖正文——
+        #  最终 prompt 里就只剩其中一边的原文。
         rrf_k = 60
-        scores: dict[tuple[str, int], float] = {}
-        items: dict[tuple[str, int], SourceChunk] = {}
+        scores: dict[tuple, float] = {}
+        items: dict[tuple, SourceChunk] = {}
         for ranked_sources in (
             semantic_sources,
             keyword_sources,
@@ -645,7 +651,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
             v2_native_sources,
         ):
             for rank, source in enumerate(ranked_sources, start=1):
-                key = (source.novel, source.chunk_id)
+                key = source.identity_key
                 scores[key] = scores.get(key, 0.0) + 1 / (rrf_k + rank)
                 items.setdefault(key, source)
 
@@ -698,11 +704,9 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 scored = rerank_with_scores(question, candidates, len(candidates))
                 scored_final = scored
                 reranked = [source for source, _score in scored]
-                rerank_scores = {
-                    (source.novel, source.chunk_id): score for source, score in scored
-                }
+                rerank_scores = {source.identity_key: score for source, score in scored}
                 previous_ranks = {
-                    (source.novel, source.chunk_id): rank
+                    source.identity_key: rank
                     for rank, source in enumerate(candidates, start=1)
                 }
                 result = reranked[:top_k]
@@ -867,9 +871,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
 
         # 对每个变体复用完整混合检索主链路。top_k 取候选池规模而不是最终条数：
         # 反正后面还要对合并后的池子整体重排一次，多捞几个给重排留挑选余地。
-        merged: dict[tuple[str, int], SourceChunk] = {
-            (c.novel, c.chunk_id): c for c in candidates
-        }
+        merged: dict[tuple, SourceChunk] = {c.identity_key: c for c in candidates}
         for variant in variants:
             for kind, payload in self.retrieve_hybrid_stream(
                 variant, top_k=RECALL_K, _allow_expand=False
@@ -877,7 +879,7 @@ class NovelRAG(RetrievalMixin, GenerationMixin):
                 if kind == "result":
                     if isinstance(payload, list):
                         for chunk in payload:
-                            merged.setdefault((chunk.novel, chunk.chunk_id), chunk)
+                            merged.setdefault(chunk.identity_key, chunk)
                     break  # 变体的 trace 步骤不并入主 trace，避免刷屏
 
         pool = list(merged.values())
